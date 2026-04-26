@@ -1,4 +1,4 @@
-#include "wann/NsgaSort.h"
+#include "../include/wann/NsgaSort.h"
 
 #include <algorithm>
 #include <cmath>

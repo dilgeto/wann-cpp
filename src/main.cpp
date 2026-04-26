@@ -6,12 +6,12 @@
 // Implement ITask (see include/wann/Task.h) and wire it into evalPop() below
 // to connect the algorithm to any environment.
 
-#include "wann/DataGatherer.h"
-#include "wann/Hyperparams.h"
-#include "wann/Ind.h"
-#include "wann/Random.h"
-#include "wann/Task.h"
-#include "wann/Wann.h"
+#include "../include/wann/DataGatherer.h"
+#include "../include/wann/Hyperparams.h"
+#include "../include/wann/Ind.h"
+#include "../include/wann/Random.h"
+#include "../include/wann/Task.h"
+#include "../include/wann/Wann.h"
 
 #include <cstdlib>
 #include <filesystem>

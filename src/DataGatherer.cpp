@@ -1,5 +1,5 @@
-#include "wann/DataGatherer.h"
-#include "wann/Ind.h"
+#include "../include/wann/DataGatherer.h"
+#include "../include/wann/Ind.h"
 
 #include <algorithm>
 #include <cmath>

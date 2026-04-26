@@ -1,6 +1,6 @@
-#include "wann/Wann.h"
-#include "wann/NsgaSort.h"
-#include "wann/Random.h"
+#include "../include/wann/Wann.h"
+#include "../include/wann/NsgaSort.h"
+#include "../include/wann/Random.h"
 
 #include <algorithm>
 #include <cmath>

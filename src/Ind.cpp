@@ -1,4 +1,4 @@
-#include "wann/Ind.h"
+#include "../include/wann/Ind.h"
 
 #include <algorithm>
 #include <cmath>
