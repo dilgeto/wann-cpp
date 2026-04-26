@@ -1,0 +1,13 @@
+{
+    "task":             "swingup",
+    "maxGen":           1024,
+    "alg_nReps":        3,
+    "popSize":          192,
+    "select_eliteRatio":0.2,
+    "select_tournSize": 8,
+    "ann_nInput":       5,
+    "ann_nOutput":      1,
+    "ann_initAct":      1,
+    "ann_actRange":     [1,2,3,4,5,6,7,8,9,10],
+    "ann_absWCap":      2.0
+}
