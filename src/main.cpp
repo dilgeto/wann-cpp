@@ -37,6 +37,7 @@ evalPop(const std::vector<wann::Ind>& pop,
     const int n = static_cast<int>(pop.size());
     std::vector<std::vector<double>> reward(n);
 
+    #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < n; ++i) {
         if (task) {
             reward[i] = task->getDistFitness(pop[i].wVec, pop[i].aVec, seed);

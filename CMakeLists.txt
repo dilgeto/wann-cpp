@@ -52,6 +52,12 @@ target_compile_options(wann_lib PRIVATE
 )
 
 # ---------------------------------------------------------------------------
+# OpenMP – parallelise population evaluation
+# ---------------------------------------------------------------------------
+find_package(OpenMP REQUIRED)
+target_link_libraries(wann_lib PUBLIC OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
 # Executable: wann_train
 # ---------------------------------------------------------------------------
 add_executable(wann_train src/main.cpp)
