@@ -223,7 +223,8 @@ Ind Wann::crossover(const Ind& parentA, const Ind& parentB) {
         // Search parentB for matching innovation.
         for (const auto& cb : parentB.conns) {
             if (cb.innov == innovA && randDouble() < 0.5) {
-                child.conns[ia].weight = cb.weight;
+                child.conns[ia].weight     = cb.weight;
+                child.conns[ia].excitatory = cb.excitatory;
                 break;
             }
         }
@@ -368,26 +369,41 @@ void Wann::mutAddNode(std::vector<ConnGene>& conns,
 }
 
 // =========================================================================
+// mutToggleExcitatory – flip the excitatory/inhibitory polarity of one
+// randomly chosen enabled connection.
+// =========================================================================
+void Wann::mutToggleExcitatory(std::vector<ConnGene>& conns) {
+    std::vector<int> active;
+    for (int i = 0; i < static_cast<int>(conns.size()); ++i)
+        if (conns[i].enabled) active.push_back(i);
+    if (active.empty()) return;
+    int idx = active[randInt(0, static_cast<int>(active.size()) - 1)];
+    conns[idx].excitatory = !conns[idx].excitatory;
+}
+
+// =========================================================================
 // topoMutate – choose exactly one topological mutation via roulette wheel.
-// Mirrors Python _variation.py::topoMutate.
+// Options: [addConn, addNode, enable, mutAct, toggleExcitatory]
 // =========================================================================
 void Wann::topoMutate(Ind& child) {
     auto& conns = child.conns;
     auto& nodes = child.nodes;
 
-    // Roulette weights: [addConn, addNode, enable, mutAct]
-    double weights[4] = {
+    // Roulette weights: [addConn, addNode, enable, mutAct, toggleExcitatory]
+    double weights[5] = {
         p.prob_addConn,
         p.prob_addNode,
         p.prob_enable,
-        p.prob_mutAct
+        p.prob_mutAct,
+        p.prob_toggleExcitatory
     };
-    double total = weights[0] + weights[1] + weights[2] + weights[3];
+    double total = weights[0]+weights[1]+weights[2]+weights[3]+weights[4];
     double spin  = randDouble(0.0, total);
 
-    int choice = 4;
+    // Default = last option (toggleExcitatory); loop checks first 4 slots.
+    int choice = 5;
     double slot = weights[0];
-    for (int i = 1; i < 4; ++i) {
+    for (int i = 1; i < 5; ++i) {
         if (spin < slot) { choice = i; break; }
         slot += weights[i];
     }
@@ -411,13 +427,11 @@ void Wann::topoMutate(Ind& child) {
         }
 
         case 4: { // Mutate activation of a hidden node
-            // Hidden nodes start after bias + inputs + outputs in the nodes array.
             int start = 1 + child.nInput + child.nOutput;
             int end   = static_cast<int>(nodes.size());
             if (start < end) {
                 int mutIdx = randInt(start, end - 1);
                 int curAct = nodes[mutIdx].activation;
-                // Pick an activation different from the current one.
                 const auto& actRange = p.ann_actRange;
                 std::vector<int> pool;
                 for (int a : actRange) if (a != curAct) pool.push_back(a);
@@ -426,6 +440,10 @@ void Wann::topoMutate(Ind& child) {
             }
             break;
         }
+
+        case 5:  // Toggle excitatory/inhibitory polarity of one connection
+            mutToggleExcitatory(conns);
+            break;
 
         default: break;
     }

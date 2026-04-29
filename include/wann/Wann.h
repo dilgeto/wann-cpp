@@ -57,10 +57,11 @@ private:
 
     Ind    crossover   (const Ind& parentA, const Ind& parentB);
     void   topoMutate  (Ind& child);
-    void   mutAddConn  (std::vector<ConnGene>& conns,
-                        const std::vector<NodeGene>& nodes);
-    void   mutAddNode  (std::vector<ConnGene>& conns,
-                        std::vector<NodeGene>& nodes);
+    void   mutAddConn          (std::vector<ConnGene>& conns,
+                                const std::vector<NodeGene>& nodes);
+    void   mutAddNode          (std::vector<ConnGene>& conns,
+                                std::vector<NodeGene>& nodes);
+    void   mutToggleExcitatory (std::vector<ConnGene>& conns);
 };
 
 } // namespace wann

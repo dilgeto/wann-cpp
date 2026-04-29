@@ -18,12 +18,13 @@ struct Hyperparams {
     int    popSize            = 128;
 
     // --- mutation probabilities ---
-    double prob_crossover     = 0.0;
-    double prob_mutAct        = 0.50;
-    double prob_addNode       = 0.25;
-    double prob_addConn       = 0.20;
-    double prob_enable        = 0.05;
-    double prob_initEnable    = 0.5;
+    double prob_crossover          = 0.0;
+    double prob_mutAct             = 0.50;
+    double prob_addNode            = 0.25;
+    double prob_addConn            = 0.20;
+    double prob_enable             = 0.05;
+    double prob_initEnable         = 0.5;
+    double prob_toggleExcitatory   = 0.10;
 
     // --- selection ---
     double select_cullRatio   = 0.2;
@@ -65,9 +66,10 @@ inline Hyperparams loadHyp(const std::string& fname) {
     get(p.prob_mutAct,       "prob_mutAct");
     get(p.prob_addNode,      "prob_addNode");
     get(p.prob_addConn,      "prob_addConn");
-    get(p.prob_enable,       "prob_enable");
-    get(p.prob_initEnable,   "prob_initEnable");
-    get(p.select_cullRatio,  "select_cullRatio");
+    get(p.prob_enable,              "prob_enable");
+    get(p.prob_initEnable,          "prob_initEnable");
+    get(p.prob_toggleExcitatory,    "prob_toggleExcitatory");
+    get(p.select_cullRatio,         "select_cullRatio");
     get(p.select_eliteRatio, "select_eliteRatio");
     get(p.select_tournSize,  "select_tournSize");
     get(p.save_mod,          "save_mod");
@@ -102,9 +104,10 @@ inline void updateHyp(Hyperparams& p, const std::string& fname) {
     get(p.prob_mutAct,       "prob_mutAct");
     get(p.prob_addNode,      "prob_addNode");
     get(p.prob_addConn,      "prob_addConn");
-    get(p.prob_enable,       "prob_enable");
-    get(p.prob_initEnable,   "prob_initEnable");
-    get(p.select_cullRatio,  "select_cullRatio");
+    get(p.prob_enable,              "prob_enable");
+    get(p.prob_initEnable,          "prob_initEnable");
+    get(p.prob_toggleExcitatory,    "prob_toggleExcitatory");
+    get(p.select_cullRatio,         "select_cullRatio");
     get(p.select_eliteRatio, "select_eliteRatio");
     get(p.select_tournSize,  "select_tournSize");
     get(p.save_mod,          "save_mod");

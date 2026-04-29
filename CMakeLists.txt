@@ -58,7 +58,53 @@ find_package(OpenMP REQUIRED)
 target_link_libraries(wann_lib PUBLIC OpenMP::OpenMP_CXX)
 
 # ---------------------------------------------------------------------------
-# Executable: wann_train
+# Executable: wann_train  (standalone, no task)
 # ---------------------------------------------------------------------------
 add_executable(wann_train src/main.cpp)
 target_link_libraries(wann_train PRIVATE wann_lib)
+
+# ---------------------------------------------------------------------------
+# SNN Simulator – link against pre-built static libraries.
+# Build the simulator first:  cd ../snn-simulator && ./build.sh
+# ---------------------------------------------------------------------------
+set(SNN_DIR   ${CMAKE_CURRENT_SOURCE_DIR}/../snn-simulator)
+set(SNN_BUILD ${SNN_DIR}/build_cmake)
+
+add_library(snn_core_imp STATIC IMPORTED GLOBAL)
+set_target_properties(snn_core_imp PROPERTIES
+    IMPORTED_LOCATION             ${SNN_BUILD}/libsnn_core.a
+    INTERFACE_INCLUDE_DIRECTORIES ${SNN_DIR}/include)
+
+add_library(snn_encoding_imp STATIC IMPORTED GLOBAL)
+set_target_properties(snn_encoding_imp PROPERTIES
+    IMPORTED_LOCATION             ${SNN_BUILD}/libsnn_encoding.a
+    INTERFACE_INCLUDE_DIRECTORIES ${SNN_DIR}/include)
+
+add_library(snn_engine_imp STATIC IMPORTED GLOBAL)
+set_target_properties(snn_engine_imp PROPERTIES
+    IMPORTED_LOCATION             ${SNN_BUILD}/libsnn_engine.a
+    INTERFACE_INCLUDE_DIRECTORIES ${SNN_DIR}/include)
+
+# rl-tools is header-only (bundled inside snn-simulator/external/)
+add_library(rl_tools_iface INTERFACE)
+target_include_directories(rl_tools_iface INTERFACE
+    ${SNN_DIR}/external/rl-tools/include)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_snn – WANN + SNN simulator + rl-tools Pendulum
+# ---------------------------------------------------------------------------
+add_executable(wann_snn
+    src/main_snn.cpp
+    src/SnnPendulumTask.cpp)
+
+target_include_directories(wann_snn PRIVATE include)
+
+# Link order: engine depends on core + encoding, list them after engine so the
+# linker can resolve symbols in a single left-to-right pass.
+target_link_libraries(wann_snn PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)

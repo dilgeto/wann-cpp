@@ -1,8 +1,6 @@
 #pragma once
 #include <vector>
 #include <string>
-#include <cmath>
-#include <limits>
 #include <tuple>
 #include <utility>
 
@@ -20,10 +18,11 @@ struct NodeGene {
 
 struct ConnGene {
     int    innov;
-    int    src;     // source node ID
-    int    dst;     // destination node ID
-    double weight;  // may be NaN when disabled (to preserve structure)
+    int    src;                // source node ID
+    int    dst;                // destination node ID
+    double weight;             // may be NaN when disabled (to preserve structure)
     bool   enabled;
+    bool   excitatory = true;  // true = excitatory, false = inhibitory
 };
 
 // Tracks structural innovations across the population (NE-style).
