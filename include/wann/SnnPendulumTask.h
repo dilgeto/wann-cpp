@@ -3,6 +3,7 @@
 #include "Task.h"
 #include "Hyperparams.h"
 #include "Ind.h"
+#include "SnnConfig.h"
 
 #include <core/network.hpp>   // Network, NeuronType
 
@@ -45,9 +46,11 @@ public:
     int numWeightVals() const override { return N_WEIGHTS; }
 
 private:
-    int nInput_;
-    int nOutput_;
-    int nReps_;
+    int        nInput_;
+    int        nOutput_;
+    int        nReps_;
+    SnnEncoder encoder_;
+    SnnDecoder decoder_;
 
     static NeuronType wannActToNeuronType(int actId);
 

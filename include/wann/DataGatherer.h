@@ -24,6 +24,9 @@ public:
     //   gen = current generation index (used for per-generation best file).
     void save(int gen = -1);
 
+    // Save a population snapshot (fitness, fitMax, nConn) for Pareto visualisation.
+    void savePareto(const std::vector<Ind>& pop, int gen);
+
     // ---- read-only accessors (for checkBest logic in main) ----
     bool newBest() const { return newBest_; }
     const Ind& bestInd() const { return best_.back(); }

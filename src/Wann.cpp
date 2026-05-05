@@ -426,11 +426,11 @@ void Wann::topoMutate(Ind& child) {
             break;
         }
 
-        case 4: { // Mutate activation of a hidden node
-            int start = 1 + child.nInput + child.nOutput;
-            int end   = static_cast<int>(nodes.size());
-            if (start < end) {
-                int mutIdx = randInt(start, end - 1);
+        case 4: { // Mutate activation (NeuronType) of any node
+            // In the SNN context every neuron type is meaningful (Izhikevich
+            // parameters differ), so we target all nodes, not just hidden ones.
+            if (!nodes.empty()) {
+                int mutIdx = randInt(0, static_cast<int>(nodes.size()) - 1);
                 int curAct = nodes[mutIdx].activation;
                 const auto& actRange = p.ann_actRange;
                 std::vector<int> pool;

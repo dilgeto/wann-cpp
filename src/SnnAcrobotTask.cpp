@@ -1,42 +1,41 @@
-#include "../include/wann/SnnPendulumTask.h"
+#include "../include/wann/SnnAcrobotTask.h"
 
-// SNN simulator
 #include <core/simulator.hpp>
 #include <decoding/rlDecoder.hpp>
 
-// rl-tools pendulum
 #include <rl_tools/operations/cpu.h>
-#include <rl_tools/rl/environments/pendulum/operations_cpu.h>
+#include <rl_tools/rl/environments/acrobot/operations_cpu.h>
 
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <unordered_map>
 
 namespace rlt = rl_tools;
 
-// rl-tools type aliases (matching pendulum_eval.cpp)
-using T      = double;
-using TI     = size_t;
-using DEVICE = rlt::devices::DefaultCPU;
-using PendSpec  = rlt::rl::environments::pendulum::Specification<T, TI>;
-using Env       = rlt::rl::environments::Pendulum<PendSpec>;
+using T         = double;
+using TI        = size_t;
+using DEVICE    = rlt::devices::DefaultCPU;
+using AcrobotSpec = rlt::rl::environments::acrobot::Specification<T, TI>;
+using Env       = rlt::rl::environments::Acrobot<AcrobotSpec>;
 using RNG       = typename rlt::devices::random::CPU::ENGINE<>;
-using ObsMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 3, false>>;
+// 6-dimensional observation: cos θ₁, sin θ₁, cos θ₂, sin θ₂, θ₁_dot, θ₂_dot
+using ObsMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 6, false>>;
 using ActMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 1, false>>;
 
 namespace wann {
 
-const double SnnPendulumTask::WEIGHT_VALS[N_WEIGHTS] = {
+const double SnnAcrobotTask::WEIGHT_VALS[N_WEIGHTS] = {
     1.0, 2.0, 5.0, 10.0, 15.0, 20.0
 };
 
-SnnPendulumTask::SnnPendulumTask(const Hyperparams& hyp)
+SnnAcrobotTask::SnnAcrobotTask(const Hyperparams& hyp)
     : nInput_(hyp.ann_nInput), nOutput_(hyp.ann_nOutput), nReps_(hyp.alg_nReps)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
 {}
 
-NeuronType SnnPendulumTask::wannActToNeuronType(int actId) {
+NeuronType SnnAcrobotTask::wannActToNeuronType(int actId) {
     switch (actId) {
         case 1:  return NeuronType::REGULAR_SPIKING;
         case 2:  return NeuronType::FAST_SPIKING;
@@ -53,26 +52,12 @@ NeuronType SnnPendulumTask::wannActToNeuronType(int actId) {
 }
 
 // -------------------------------------------------------------------------
-// buildNetwork (from raw genome)
-//
-// Builds the SNN Network directly from the WANN genome, preserving the
-// excitatory/inhibitory polarity stored in each ConnGene.
-//
-// Node type mapping:
-//   type 4 (bias)   → addInputNeuron   (driven by constant BIAS_CURRENT)
-//   type 1 (input)  → addInputNeuron
-//   type 3 (hidden) → addHiddenNeuron
-//   type 2 (output) → addOutputNeuron
-//
-// Only enabled connections are added as synapses.
-// The insertion order of input neurons must match the currents vector in
-// runEpisode: bias first, then inputs 1..nInput_ in NodeGene order.
+// buildNetwork (from raw genome – preserves excitatory/inhibitory polarity)
 // -------------------------------------------------------------------------
-Network SnnPendulumTask::buildNetwork(const Ind& ind) const
+Network SnnAcrobotTask::buildNetwork(const Ind& ind) const
 {
-    Network net(1.0 /*dt=1ms*/, true /*allow_recurrent*/);
+    Network net(1.0, true);
 
-    // Map node gene ID → SNN neuron ID
     std::unordered_map<int,int> snn_id;
     snn_id.reserve(ind.nodes.size());
 
@@ -103,12 +88,12 @@ Network SnnPendulumTask::buildNetwork(const Ind& ind) const
 // -------------------------------------------------------------------------
 // buildNetwork (from wVec/aVec – ITask fallback, all synapses excitatory)
 // -------------------------------------------------------------------------
-Network SnnPendulumTask::buildNetwork(const std::vector<double>& wVec,
-                                      const std::vector<int>&    aVec) const
+Network SnnAcrobotTask::buildNetwork(const std::vector<double>& wVec,
+                                     const std::vector<int>&    aVec) const
 {
     const int N = static_cast<int>(std::sqrt(static_cast<double>(wVec.size())));
 
-    Network net(1.0 /*dt=1ms*/, true /*allow_recurrent*/);
+    Network net(1.0, true);
 
     std::vector<int> snn_id(N, -1);
     snn_id[0] = net.addInputNeuron(NeuronType::REGULAR_SPIKING);  // bias
@@ -131,7 +116,7 @@ Network SnnPendulumTask::buildNetwork(const std::vector<double>& wVec,
     return net;
 }
 
-double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
+double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
 {
     DEVICE device;
     Env env;
@@ -140,18 +125,19 @@ double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episod
     rlt::init(device, rng, static_cast<typename DEVICE::index_t>(episodeSeed));
     rlt::initial_parameters(device, env, params);
 
-    rlt::rl::environments::pendulum::ObservationFourier<TI> obs_type;
+    rlt::rl::environments::acrobot::Observation<TI> obs_type;
     ObsMatrix obs_mat;
     ActMatrix action_mat;
 
     Env::State state, next_state;
     rlt::sample_initial_state(device, env, params, state, rng);
 
-    constexpr double MAX_THETA_DOT = 8.0;
-    const int        window_steps  = static_cast<int>(SIM_WINDOW_MS);
-    const int        n_channels    = nInput_ + 1;  // bias + observations
+    constexpr double MAX_VEL_1  = 4.0 * M_PI;
+    constexpr double MAX_VEL_2  = 9.0 * M_PI;
+    const int        window_steps = static_cast<int>(SIM_WINDOW_MS);
+    const int        n_channels   = nInput_ + 1;  // bias + observations
 
-    // --- Poisson encoder setup ---
+    // --- Poisson encoder setup (only used when encoder_ == POISSON) ---
     constexpr double MAX_RATE   = 100.0;  // Hz
     constexpr double REF_PERIOD = 2.0;   // ms
     constexpr double DT         = 1.0;   // ms
@@ -159,6 +145,7 @@ double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episod
     std::uniform_real_distribution<double> udist(0.0, 1.0);
 
     // --- Decoder setup ---
+    // RLDecoder is used for RATE and FIRST_SPIKE; SPIKE_COUNT uses raw count.
     const bool use_rldecoder = (decoder_ != SnnDecoder::SPIKE_COUNT);
     const RLDecoder::DecodingType dec_type = (decoder_ == SnnDecoder::FIRST_SPIKE)
         ? RLDecoder::DecodingType::FIRST_SPIKE
@@ -175,12 +162,17 @@ double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episod
         std::vector<double> output_spikes;
 
         if (encoder_ == SnnEncoder::POISSON) {
+            // Normalize to [0,1]
             std::vector<double> norm(n_channels, 0.0);
             norm[0] = 1.0;
             if (nInput_ >= 1) norm[1] = (rlt::get(obs_mat, 0, 0) + 1.0) * 0.5;
             if (nInput_ >= 2) norm[2] = (rlt::get(obs_mat, 0, 1) + 1.0) * 0.5;
-            if (nInput_ >= 3) norm[3] = (rlt::get(obs_mat, 0, 2) / MAX_THETA_DOT + 1.0) * 0.5;
+            if (nInput_ >= 3) norm[3] = (rlt::get(obs_mat, 0, 2) + 1.0) * 0.5;
+            if (nInput_ >= 4) norm[4] = (rlt::get(obs_mat, 0, 3) + 1.0) * 0.5;
+            if (nInput_ >= 5) norm[5] = (rlt::get(obs_mat, 0, 4) / MAX_VEL_1 + 1.0) * 0.5;
+            if (nInput_ >= 6) norm[6] = (rlt::get(obs_mat, 0, 5) / MAX_VEL_2 + 1.0) * 0.5;
 
+            // Poisson spike trains (same algorithm as PoissonEncoder::encode)
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch) {
                 double rate    = std::clamp(norm[ch], 0.0, 1.0) * MAX_RATE;
@@ -202,12 +194,15 @@ double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episod
                     output_spikes.push_back(static_cast<double>(t));
             }
         } else {
-            // CURRENT: map observations to [0, 20] mA
+            // CURRENT: map observations to [0, 20] mA and inject directly
             std::vector<double> currents(n_channels, 0.0);
             currents[0] = BIAS_CURRENT;
             if (nInput_ >= 1) currents[1] = (rlt::get(obs_mat, 0, 0) + 1.0) * 10.0;
             if (nInput_ >= 2) currents[2] = (rlt::get(obs_mat, 0, 1) + 1.0) * 10.0;
-            if (nInput_ >= 3) currents[3] = (rlt::get(obs_mat, 0, 2) / MAX_THETA_DOT + 1.0) * 10.0;
+            if (nInput_ >= 3) currents[3] = (rlt::get(obs_mat, 0, 2) + 1.0) * 10.0;
+            if (nInput_ >= 4) currents[4] = (rlt::get(obs_mat, 0, 3) + 1.0) * 10.0;
+            if (nInput_ >= 5) currents[5] = (rlt::get(obs_mat, 0, 4) / MAX_VEL_1 + 1.0) * 10.0;
+            if (nInput_ >= 6) currents[6] = (rlt::get(obs_mat, 0, 5) / MAX_VEL_2 + 1.0) * 10.0;
 
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);
@@ -230,17 +225,17 @@ double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episod
         rlt::step(device, env, params, state, action_mat, next_state, rng);
         total_reward += rlt::reward(device, env, params, state, action_mat, next_state, rng);
         state = next_state;
+
+        if (rlt::terminated(device, env, params, state, rng)) break;
     }
 
     return total_reward;
 }
 
 // -------------------------------------------------------------------------
-// evaluate – preferred entry point.  Uses the raw genome so that
-// ConnGene.excitatory is correctly reflected as synapse polarity.
-// Thread-safe: all objects are function-local.
+// evaluate – preferred entry point (full genome, with polarity)
 // -------------------------------------------------------------------------
-std::vector<double> SnnPendulumTask::evaluate(const Ind& ind, int seed)
+std::vector<double> SnnAcrobotTask::evaluate(const Ind& ind, int seed)
 {
     Network net = buildNetwork(ind);
 
@@ -257,10 +252,9 @@ std::vector<double> SnnPendulumTask::evaluate(const Ind& ind, int seed)
 }
 
 // -------------------------------------------------------------------------
-// getDistFitness – ITask fallback.  Builds without polarity info (all
-// synapses excitatory).  Provided for interface compatibility only.
+// getDistFitness – ITask fallback (all synapses excitatory)
 // -------------------------------------------------------------------------
-std::vector<double> SnnPendulumTask::getDistFitness(
+std::vector<double> SnnAcrobotTask::getDistFitness(
         const std::vector<double>& wVec,
         const std::vector<int>&    aVec,
         int seed)

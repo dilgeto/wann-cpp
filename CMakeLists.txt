@@ -108,3 +108,37 @@ target_link_libraries(wann_snn PRIVATE
     snn_core_imp
     rl_tools_iface
     OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_acrobot – WANN + SNN simulator + rl-tools Acrobot
+# ---------------------------------------------------------------------------
+add_executable(wann_acrobot
+    src/main_acrobot.cpp
+    src/SnnAcrobotTask.cpp)
+
+target_include_directories(wann_acrobot PRIVATE include)
+
+target_link_libraries(wann_acrobot PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_mountain_car – WANN + SNN simulator + rl-tools MountainCar
+# ---------------------------------------------------------------------------
+add_executable(wann_mountain_car
+    src/main_mountain_car.cpp
+    src/SnnMountainCarTask.cpp)
+
+target_include_directories(wann_mountain_car PRIVATE include)
+
+target_link_libraries(wann_mountain_car PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)

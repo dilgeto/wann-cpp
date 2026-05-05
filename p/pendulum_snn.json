@@ -21,5 +21,7 @@
     "select_eliteRatio": 0.20,
     "select_tournSize":  8,
     "save_mod":       10,
-    "bestReps":       20
+    "bestReps":       20,
+    "snn_encoder":    "poisson",
+    "snn_decoder":    "rate"
 }

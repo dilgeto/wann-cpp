@@ -121,6 +121,21 @@ void DataGatherer::save(int gen) {
     }
 }
 
+void DataGatherer::savePareto(const std::vector<Ind>& pop, int gen) {
+    std::string folder = prefix_ + "_pareto/";
+    fs::create_directories(folder);
+    std::ostringstream fname;
+    fname << folder << std::setw(4) << std::setfill('0') << gen << ".out";
+
+    std::vector<std::vector<double>> rows;
+    rows.reserve(pop.size());
+    for (const auto& ind : pop)
+        rows.push_back({ind.fitness, ind.fitMax,
+                        static_cast<double>(ind.nConn),
+                        static_cast<double>(ind.nNodes)});
+    lsave(fname.str(), rows);
+}
+
 void DataGatherer::revertBest(int saveMod) {
     // When the new best turns out to be unlucky, roll back the last saveMod
     // entries of best_ and fit_top_ to the previous best value.

@@ -41,82 +41,79 @@ struct Hyperparams {
     int    ann_initAct        = 1;
     std::vector<int> ann_actRange = {1,2,3,4,5,6,7,8,9,10};
     double ann_absWCap        = 2.0;
+
+    // --- SNN interface ---
+    // Encoder: "current" | "poisson"
+    // Decoder: "spike_count" | "rate" | "first_spike"
+    std::string snn_encoder   = "poisson";
+    std::string snn_decoder   = "rate";
+
+    // --- reward shaping ---
+    // Potential-based shaping: F(s,s') = scale * (phi(s') - phi(s))
+    // where phi(s) = sin(3 * position).  Set to 0 to disable.
+    double reward_shaping_scale = 0.0;
 };
 
-// Load base hyperparameters from a JSON file.
-inline Hyperparams loadHyp(const std::string& fname) {
-    std::ifstream f(fname);
-    if (!f) throw std::runtime_error("Cannot open hyperparameter file: " + fname);
-    nlohmann::json j;
-    f >> j;
+namespace detail {
 
-    Hyperparams p;
+inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     auto get = [&](auto& field, const char* key) {
         if (j.contains(key))
             field = j.at(key).get<std::remove_reference_t<decltype(field)>>();
     };
-    get(p.task,              "task");
-    get(p.alg_wDist,         "alg_wDist");
-    get(p.alg_nVals,         "alg_nVals");
-    get(p.alg_nReps,         "alg_nReps");
-    get(p.alg_probMoo,       "alg_probMoo");
-    get(p.maxGen,            "maxGen");
-    get(p.popSize,           "popSize");
-    get(p.prob_crossover,    "prob_crossover");
-    get(p.prob_mutAct,       "prob_mutAct");
-    get(p.prob_addNode,      "prob_addNode");
-    get(p.prob_addConn,      "prob_addConn");
-    get(p.prob_enable,              "prob_enable");
-    get(p.prob_initEnable,          "prob_initEnable");
-    get(p.prob_toggleExcitatory,    "prob_toggleExcitatory");
-    get(p.select_cullRatio,         "select_cullRatio");
-    get(p.select_eliteRatio, "select_eliteRatio");
-    get(p.select_tournSize,  "select_tournSize");
-    get(p.save_mod,          "save_mod");
-    get(p.bestReps,          "bestReps");
-    get(p.ann_nInput,        "ann_nInput");
-    get(p.ann_nOutput,       "ann_nOutput");
-    get(p.ann_initAct,       "ann_initAct");
-    get(p.ann_actRange,      "ann_actRange");
-    get(p.ann_absWCap,       "ann_absWCap");
+    get(p.task,                   "task");
+    get(p.alg_wDist,              "alg_wDist");
+    get(p.alg_nVals,              "alg_nVals");
+    get(p.alg_nReps,              "alg_nReps");
+    get(p.alg_probMoo,            "alg_probMoo");
+    get(p.maxGen,                 "maxGen");
+    get(p.popSize,                "popSize");
+    get(p.prob_crossover,         "prob_crossover");
+    get(p.prob_mutAct,            "prob_mutAct");
+    get(p.prob_addNode,           "prob_addNode");
+    get(p.prob_addConn,           "prob_addConn");
+    get(p.prob_enable,            "prob_enable");
+    get(p.prob_initEnable,        "prob_initEnable");
+    get(p.prob_toggleExcitatory,  "prob_toggleExcitatory");
+    get(p.select_cullRatio,       "select_cullRatio");
+    get(p.select_eliteRatio,      "select_eliteRatio");
+    get(p.select_tournSize,       "select_tournSize");
+    get(p.save_mod,               "save_mod");
+    get(p.bestReps,               "bestReps");
+    get(p.ann_nInput,             "ann_nInput");
+    get(p.ann_nOutput,            "ann_nOutput");
+    get(p.ann_initAct,            "ann_initAct");
+    get(p.ann_actRange,           "ann_actRange");
+    get(p.ann_absWCap,            "ann_absWCap");
+    get(p.snn_encoder,            "snn_encoder");
+    get(p.snn_decoder,            "snn_decoder");
+    get(p.reward_shaping_scale,   "reward_shaping_scale");
+}
+
+// Parse a string that is either a file path or an inline JSON object.
+inline nlohmann::json parseFileOrInline(const std::string& s) {
+    if (!s.empty() && s.front() == '{')
+        return nlohmann::json::parse(s);
+    std::ifstream f(s);
+    if (!f) throw std::runtime_error("Cannot open hyperparameter file: " + s);
+    nlohmann::json j;
+    f >> j;
+    return j;
+}
+
+} // namespace detail
+
+// Load base hyperparameters. Accepts a file path or an inline JSON string.
+inline Hyperparams loadHyp(const std::string& src) {
+    Hyperparams p;
+    detail::applyJson(p, detail::parseFileOrInline(src));
     return p;
 }
 
-// Merge overrides from a second JSON file into an existing Hyperparams.
-inline void updateHyp(Hyperparams& p, const std::string& fname) {
-    std::ifstream f(fname);
-    if (!f) throw std::runtime_error("Cannot open hyperparameter file: " + fname);
-    nlohmann::json j;
-    f >> j;
-
-    auto get = [&](auto& field, const char* key) {
-        if (j.contains(key))
-            field = j.at(key).get<std::remove_reference_t<decltype(field)>>();
-    };
-    get(p.task,              "task");
-    get(p.alg_wDist,         "alg_wDist");
-    get(p.alg_nVals,         "alg_nVals");
-    get(p.alg_nReps,         "alg_nReps");
-    get(p.alg_probMoo,       "alg_probMoo");
-    get(p.maxGen,            "maxGen");
-    get(p.popSize,           "popSize");
-    get(p.prob_crossover,    "prob_crossover");
-    get(p.prob_mutAct,       "prob_mutAct");
-    get(p.prob_addNode,      "prob_addNode");
-    get(p.prob_addConn,      "prob_addConn");
-    get(p.prob_enable,              "prob_enable");
-    get(p.prob_initEnable,          "prob_initEnable");
-    get(p.prob_toggleExcitatory,    "prob_toggleExcitatory");
-    get(p.select_cullRatio,         "select_cullRatio");
-    get(p.select_eliteRatio, "select_eliteRatio");
-    get(p.select_tournSize,  "select_tournSize");
-    get(p.save_mod,          "save_mod");
-    get(p.bestReps,          "bestReps");
-    get(p.ann_nInput,        "ann_nInput");
-    get(p.ann_nOutput,       "ann_nOutput");
-    get(p.ann_initAct,       "ann_initAct");
-    get(p.ann_actRange,      "ann_actRange");
-    get(p.ann_absWCap,       "ann_absWCap");
+// Merge overrides into an existing Hyperparams.
+// Accepts a file path or an inline JSON string (e.g. '{"maxGen":1}').
+inline void updateHyp(Hyperparams& p, const std::string& src) {
+    detail::applyJson(p, detail::parseFileOrInline(src));
 }
 
 } // namespace wann
