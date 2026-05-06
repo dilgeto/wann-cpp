@@ -34,6 +34,7 @@ SnnMountainCarTask::SnnMountainCarTask(const Hyperparams& hyp)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
     , shapingScale_(hyp.reward_shaping_scale)
+    , resetBetweenSteps_(hyp.snn_reset_between_steps)
 {}
 
 NeuronType SnnMountainCarTask::wannActToNeuronType(int actId) {
@@ -152,7 +153,7 @@ double SnnMountainCarTask::runEpisode(Network& net, double sharedWeight, int epi
     for (TI step = 0; step < Env::EPISODE_STEP_LIMIT; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
 
-        net.fastReset();
+        if (resetBetweenSteps_) net.fastReset();
         std::vector<double> output_spikes;
 
         if (encoder_ == SnnEncoder::POISSON) {

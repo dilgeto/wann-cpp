@@ -52,6 +52,11 @@ struct Hyperparams {
     // Potential-based shaping: F(s,s') = scale * (phi(s') - phi(s))
     // where phi(s) = sin(3 * position).  Set to 0 to disable.
     double reward_shaping_scale = 0.0;
+
+    // --- SNN state persistence ---
+    // true  → reset membrane potentials before each env step (stateless)
+    // false → carry membrane state across env steps (stateful/recurrent)
+    bool snn_reset_between_steps = true;
 };
 
 namespace detail {
@@ -87,7 +92,8 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.ann_absWCap,            "ann_absWCap");
     get(p.snn_encoder,            "snn_encoder");
     get(p.snn_decoder,            "snn_decoder");
-    get(p.reward_shaping_scale,   "reward_shaping_scale");
+    get(p.reward_shaping_scale,      "reward_shaping_scale");
+    get(p.snn_reset_between_steps,   "snn_reset_between_steps");
 }
 
 // Parse a string that is either a file path or an inline JSON object.

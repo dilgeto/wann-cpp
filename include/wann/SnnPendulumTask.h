@@ -24,7 +24,7 @@ namespace wann {
 // match the default alg_nVals=6 in the hyperparameters.
 class SnnPendulumTask : public ITask {
 public:
-    static constexpr int    N_WEIGHTS       = 6;
+    static constexpr int    N_WEIGHTS       = 4;
     // Positive SNN conductance values (replaces WANN's standard {-2..2} range)
     static const     double WEIGHT_VALS[N_WEIGHTS];
     static constexpr double BIAS_CURRENT    = 50.0;  // mA — keeps bias neuron spiking every step

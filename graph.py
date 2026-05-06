@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-data = np.loadtxt("log/snn_mountain_car_pareto/0680.out", delimiter=",")
+data = np.loadtxt("log/snn_mountain_car_pareto/1020.out", delimiter=",")
 fitness, fitmax, nconn, _ = data.T
 
 plt.scatter(nconn, fitness, alpha=0.5, s=10)

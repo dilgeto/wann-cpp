@@ -27,7 +27,7 @@ using ActMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 1, false>>;
 namespace wann {
 
 const double SnnPendulumTask::WEIGHT_VALS[N_WEIGHTS] = {
-    1.0, 2.0, 5.0, 10.0, 15.0, 20.0
+    1.0, 2.0, 5.0, 10.0
 };
 
 SnnPendulumTask::SnnPendulumTask(const Hyperparams& hyp)

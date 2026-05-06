@@ -28,7 +28,7 @@ namespace wann {
 //   index  N-1       = output neuron (torque)
 class SnnAcrobotTask : public ITask {
 public:
-    static constexpr int    N_WEIGHTS     = 6;
+    static constexpr int    N_WEIGHTS     = 4;
     static const     double WEIGHT_VALS[N_WEIGHTS];
     static constexpr double BIAS_CURRENT  = 50.0;   // mA
     static constexpr double SIM_WINDOW_MS = 20.0;   // SNN sim duration per env step
