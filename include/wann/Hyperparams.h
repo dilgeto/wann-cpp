@@ -53,9 +53,8 @@ struct Hyperparams {
     // where phi(s) = sin(3 * position).  Set to 0 to disable.
     double reward_shaping_scale = 0.0;
 
-    // --- SNN state persistence ---
-    // true  → reset membrane potentials before each env step (stateless)
-    // false → carry membrane state across env steps (stateful/recurrent)
+    // When true (default): reset SNN membrane state before each env step.
+    // When false: state persists across steps (implicit recurrence).
     bool snn_reset_between_steps = true;
 };
 

@@ -127,6 +127,23 @@ target_link_libraries(wann_acrobot PRIVATE
     OpenMP::OpenMP_CXX)
 
 # ---------------------------------------------------------------------------
+# Executable: wann_car – WANN + SNN simulator + rl-tools CarTrack
+# ---------------------------------------------------------------------------
+add_executable(wann_car
+    src/main_car.cpp
+    src/SnnCarTask.cpp)
+
+target_include_directories(wann_car PRIVATE include)
+
+target_link_libraries(wann_car PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
 # Executable: wann_mountain_car – WANN + SNN simulator + rl-tools MountainCar
 # ---------------------------------------------------------------------------
 add_executable(wann_mountain_car

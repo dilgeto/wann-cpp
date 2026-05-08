@@ -1,0 +1,69 @@
+#pragma once
+
+#include "Task.h"
+#include "Hyperparams.h"
+#include "Ind.h"
+#include "SnnConfig.h"
+
+#include <core/network.hpp>
+
+#include <vector>
+
+namespace wann {
+
+// ITask implementation: WANN + SNN simulator + rl-tools Car (CarTrack variant).
+//
+// Observation (9 dims):
+//   x, y           – car position in track frame (m)
+//   mu             – heading angle (rad)
+//   vx, vy         – longitudinal / lateral velocity (m/s)
+//   omega          – yaw rate (rad/s)
+//   lidar_L, lidar_C, lidar_R – normalised distance to track boundary
+//                    (0 = wall immediately, 1 = full lidar range ≈ 1.25 m)
+//
+// Action (2 dims):
+//   throttle_break ∈ [-1, 1]
+//   delta (steering angle) ∈ [-1, 1]
+//
+// Reward:   vx (forward velocity, dense)
+// Terminal: car leaves the track or exceeds EPISODE_STEPS
+class SnnCarTask : public ITask {
+public:
+    static constexpr int    N_WEIGHTS     = 6;
+    static const     double WEIGHT_VALS[N_WEIGHTS];
+    static constexpr double BIAS_CURRENT  = 50.0;    // mA
+    static constexpr double SIM_WINDOW_MS = 20.0;    // ms per env step
+    static constexpr int    EPISODE_STEPS = 500;     // max env steps per episode
+    static constexpr double VX_MAX        = 3.0;     // m/s – normalisation bound
+    static constexpr double VY_MAX        = 2.0;     // m/s
+    static constexpr double OMEGA_MAX     = 10.0;    // rad/s
+
+    explicit SnnCarTask(const Hyperparams& hyp);
+
+    std::vector<double> evaluate(const Ind& ind, int seed = -1);
+
+    std::vector<double> getDistFitness(
+            const std::vector<double>& wVec,
+            const std::vector<int>&    aVec,
+            int seed = -1) override;
+
+    int numWeightVals() const override { return N_WEIGHTS; }
+
+private:
+    int        nInput_;
+    int        nOutput_;
+    int        nReps_;
+    SnnEncoder encoder_;
+    SnnDecoder decoder_;
+    bool       resetBetweenSteps_;
+
+    static NeuronType wannActToNeuronType(int actId);
+
+    Network buildNetwork(const Ind& ind) const;
+    Network buildNetwork(const std::vector<double>& wVec,
+                         const std::vector<int>&    aVec) const;
+
+    double runEpisode(Network& net, double sharedWeight, int episodeSeed) const;
+};
+
+} // namespace wann
