@@ -53,6 +53,7 @@ private:
     int        nReps_;
     SnnEncoder encoder_;
     SnnDecoder decoder_;
+    bool       resetBetweenSteps_;
 
     static NeuronType wannActToNeuronType(int actId);
 

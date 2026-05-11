@@ -26,13 +26,14 @@ using ActMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 1, false>>;
 namespace wann {
 
 const double SnnAcrobotTask::WEIGHT_VALS[N_WEIGHTS] = {
-    1.0, 2.0, 5.0, 10.0
+    0.5, 1.0, 1.5, 2.0
 };
 
 SnnAcrobotTask::SnnAcrobotTask(const Hyperparams& hyp)
     : nInput_(hyp.ann_nInput), nOutput_(hyp.ann_nOutput), nReps_(hyp.alg_nReps)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
+    , resetBetweenSteps_(hyp.snn_reset_between_steps)
 {}
 
 NeuronType SnnAcrobotTask::wannActToNeuronType(int actId) {
@@ -158,7 +159,7 @@ double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episode
     for (TI step = 0; step < Env::EPISODE_STEP_LIMIT; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
 
-        net.fastReset();
+        if (resetBetweenSteps_) net.fastReset();
         std::vector<double> output_spikes;
 
         if (encoder_ == SnnEncoder::POISSON) {

@@ -25,5 +25,5 @@
     "snn_encoder":           "poisson",
     "snn_decoder":           "rate",
     "reward_shaping_scale":  10.0,
-    "snn_reset_between_steps": false
+    "snn_reset_between_steps": true
 }

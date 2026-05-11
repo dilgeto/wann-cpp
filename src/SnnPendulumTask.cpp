@@ -34,6 +34,7 @@ SnnPendulumTask::SnnPendulumTask(const Hyperparams& hyp)
     : nInput_(hyp.ann_nInput), nOutput_(hyp.ann_nOutput), nReps_(hyp.alg_nReps)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
+    , resetBetweenSteps_(hyp.snn_reset_between_steps)
 {}
 
 NeuronType SnnPendulumTask::wannActToNeuronType(int actId) {
@@ -171,7 +172,7 @@ double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episod
     for (TI step = 0; step < Env::EPISODE_STEP_LIMIT; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
 
-        net.fastReset();
+        if (resetBetweenSteps_) net.fastReset();
         std::vector<double> output_spikes;
 
         if (encoder_ == SnnEncoder::POISSON) {

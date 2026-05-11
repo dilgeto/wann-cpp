@@ -23,5 +23,6 @@
     "save_mod":              10,
     "bestReps":              20,
     "snn_encoder":           "poisson",
-    "snn_decoder":           "rate"
+    "snn_decoder":           "rate",
+    "snn_reset_between_steps": true
 }

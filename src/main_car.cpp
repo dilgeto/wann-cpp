@@ -11,9 +11,11 @@
 #include "../include/wann/SnnDebug.h"
 #include "../include/wann/Wann.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -88,6 +90,9 @@ int main(int argc, char* argv[]) {
     wann::Wann         alg(hyp);
     wann::DataGatherer data(outPrefix, hyp);
 
+    using Clock = std::chrono::steady_clock;
+    auto t_start = Clock::now();
+
     for (int gen = 0; gen < hyp.maxGen; ++gen) {
         auto& pop    = alg.ask();
         auto  reward = evalPop(pop, task, static_cast<int>(seed));
@@ -106,6 +111,18 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+
+    double total_s = std::chrono::duration<double>(Clock::now() - t_start).count();
+    double per_gen = total_s / hyp.maxGen;
+
+    std::ofstream tlog("log/" + outPrefix + "_time.log");
+    tlog << std::fixed << std::setprecision(3)
+         << "total_s   " << total_s           << '\n'
+         << "per_gen_s " << per_gen            << '\n'
+         << "maxGen    " << hyp.maxGen         << '\n'
+         << "popSize   " << hyp.popSize        << '\n';
+    std::cout << "Time: " << total_s << " s  ("
+              << per_gen << " s/gen)\n";
 
     data.save();
     std::cout << "Done. Results written to log/" << outPrefix << "_*\n";
