@@ -159,3 +159,24 @@ target_link_libraries(wann_mountain_car PRIVATE
     snn_core_imp
     rl_tools_iface
     OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_ant – WANN + SNN simulator + rl-tools Ant-v4 (MuJoCo)
+# ---------------------------------------------------------------------------
+find_library(MUJOCO_LIB mujoco REQUIRED)
+find_path(MUJOCO_INCLUDE mujoco/mujoco.h REQUIRED)
+
+add_executable(wann_ant
+    src/main_ant.cpp
+    src/SnnAntTask.cpp)
+
+target_include_directories(wann_ant PRIVATE include ${MUJOCO_INCLUDE})
+
+target_link_libraries(wann_ant PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    ${MUJOCO_LIB}
+    OpenMP::OpenMP_CXX)
