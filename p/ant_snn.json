@@ -1,6 +1,6 @@
 {
     "task":                  "snn_ant",
-    "maxGen":                1024,
+    "maxGen":                2048,
     "popSize":               128,
     "alg_nVals":             4,
     "alg_nReps":             2,
@@ -25,5 +25,5 @@
     "snn_encoder":           "poisson",
     "snn_decoder":           "rate",
     "reward_shaping_scale":  0.0,
-    "snn_reset_between_steps": true
+    "snn_reset_between_steps": false
 }
