@@ -91,8 +91,8 @@ TASK_DEFAULTS: dict[str, dict] = {
         "executable":  "./build/wann_acrobot",
         "base_config": "p/acrobot_snn.json",
         "fidelity": {
-            "maxGen":    64,
-            "popSize":   64,
+            "maxGen":    128,
+            "popSize":   96,
             "alg_nVals": 4,
             "alg_nReps": 2,
             "bestReps":  5,
@@ -103,10 +103,10 @@ TASK_DEFAULTS: dict[str, dict] = {
         "executable":  "./build/wann_car",
         "base_config": "p/car_snn.json",
         "fidelity": {
-            "maxGen":    128,
-            "popSize":   64,
+            "maxGen":    512,
+            "popSize":   128,
             "alg_nVals": 4,
-            "alg_nReps": 2,
+            "alg_nReps": 3,
             "bestReps":  5,
             "save_mod":  99999,
         },
@@ -259,8 +259,10 @@ def cmd_analyse(task: str, n_top: int) -> None:
             sys.exit(1)
 
     manifest = pd.read_csv(manifest_path)
-    peaks    = pd.read_csv(peaks_path, header=None, names=["idx", "peak_fitness"])
+    peaks    = pd.read_csv(peaks_path, header=None,
+                           names=["idx", "peak_fitness", "elapsed_s"])
     peaks["peak_fitness"] = pd.to_numeric(peaks["peak_fitness"], errors="coerce")
+    peaks["elapsed_s"]    = pd.to_numeric(peaks["elapsed_s"],    errors="coerce")
 
     df = manifest.merge(peaks, on="idx", how="left")
 

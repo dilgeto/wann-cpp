@@ -132,11 +132,11 @@ run_one() {
                 END { print m }
             ' "$stats_file")
         fi
-        echo "$peak" > "$pks_file"
-        printf "  OK   #%s  peak=%-12s  (%ds)\n" \
-            "$idx" "$peak" $(( SECONDS - t_start ))
+        local elapsed=$(( SECONDS - t_start ))
+        echo "$peak,$elapsed" > "$pks_file"
+        printf "  OK   #%s  peak=%-12s  (%ds)\n" "$idx" "$peak" "$elapsed"
     else
-        echo "nan" > "$pks_file"
+        echo "nan,0" > "$pks_file"
         printf "  FAIL #%s\n" "$idx"
     fi
 }
@@ -169,14 +169,33 @@ PEAKS_CSV="screening/$TASK/peaks.csv"
 {
     for pks_file in "$PKS_DIR"/*.txt; do
         idx=$(basename "$pks_file" .txt)
-        peak=$(cat "$pks_file")
-        echo "${idx},${peak}"
+        echo "${idx},$(cat "$pks_file")"
     done
 } | sort -t, -k1,1n > "$PEAKS_CSV"
 
 N_OK=$(awk -F',' '$2 != "nan" && $2 != "" {c++} END {print c+0}' "$PEAKS_CSV")
-echo "Results: ${N_OK}/${N_CONFIGS} successful runs"
+TOTAL_MIN=$(( ELAPSED / 60 ))
+TOTAL_SEC=$(( ELAPSED % 60 ))
+
+echo "Results  : ${N_OK}/${N_CONFIGS} successful runs"
+echo "Wall time: ${ELAPSED}s  (${TOTAL_MIN}m ${TOTAL_SEC}s)"
 echo "Peaks CSV → $PEAKS_CSV"
+
+# Summary timing file
+TIMING_FILE="screening/$TASK/timing.txt"
+{
+    echo "task        $TASK"
+    echo "n_configs   $N_CONFIGS"
+    echo "n_ok        $N_OK"
+    echo "jobs        $JOBS"
+    echo "omp         $OMP"
+    echo "wall_s      $ELAPSED"
+    echo "wall_min    $(echo "scale=2; $ELAPSED/60" | bc)"
+    awk -F',' '$3 != "" && $3 != "0" {sum+=$3; n++} END {
+        if (n>0) printf "mean_run_s  %.1f\nmax_run_s   %.0f\n", sum/n, max
+    } $3>max{max=$3}' "$PEAKS_CSV"
+} > "$TIMING_FILE"
+echo "Timing    → $TIMING_FILE"
 echo ""
 echo "Transfer to your local machine:"
 echo "  rsync -av cluster:$(pwd)/screening/$TASK/peaks.csv screening/$TASK/"
