@@ -7,7 +7,6 @@
 
 #include <core/network.hpp>
 
-#include <atomic>
 #include <vector>
 
 namespace wann {
@@ -57,17 +56,6 @@ public:
                           double weight, int seed,
                           const std::string& outFile) const;
 
-    void resetStepStats() {
-        maxStepsReached_.store(0, std::memory_order_relaxed);
-        totalStepsReached_.store(0, std::memory_order_relaxed);
-        totalEpisodes_.store(0, std::memory_order_relaxed);
-    }
-    int    getMaxSteps() const { return maxStepsReached_.load(std::memory_order_relaxed); }
-    double getAvgSteps() const {
-        int n = totalEpisodes_.load(std::memory_order_relaxed);
-        return n > 0 ? static_cast<double>(totalStepsReached_.load(std::memory_order_relaxed)) / n : 0.0;
-    }
-
 private:
     int        nInput_;
     int        nOutput_;
@@ -75,9 +63,6 @@ private:
     SnnEncoder encoder_;
     SnnDecoder decoder_;
     bool       resetBetweenSteps_;
-    mutable std::atomic<int>       maxStepsReached_{0};
-    mutable std::atomic<long long> totalStepsReached_{0};
-    mutable std::atomic<int>       totalEpisodes_{0};
 
     static NeuronType wannActToNeuronType(int actId);
 
