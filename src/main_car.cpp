@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
 
     for (int gen = 0; gen < hyp.maxGen; ++gen) {
         auto& pop    = alg.ask();
-        auto  reward = evalPop(pop, task, static_cast<int>(seed));
+        auto  reward = evalPop(pop, task, static_cast<int>(seed) + gen);
         alg.tell(reward);
 
         data.gatherData(pop);

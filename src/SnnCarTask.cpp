@@ -10,7 +10,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <iomanip>
 #include <random>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace rlt = rl_tools;
@@ -273,6 +276,153 @@ std::vector<double> SnnCarTask::getDistFitness(
         rewards[wi] = total / static_cast<double>(nReps_);
     }
     return rewards;
+}
+
+void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
+                                   const std::vector<int>&    aVec,
+                                   double weight, int seed,
+                                   const std::string& outFile) const
+{
+    std::ofstream csv(outFile);
+    if (!csv) throw std::runtime_error("Cannot write: " + outFile);
+    csv << std::fixed << std::setprecision(6);
+    csv << "step,x,y,mu,vx,vy,omega,lidar_l,lidar_c,lidar_r,"
+           "throttle,steering,reward\n";
+
+    Network net = buildNetwork(wVec, aVec);
+
+    DEVICE device;
+    Env env;
+    Env::Parameters params;
+    RNG rng;
+    rlt::init(device, rng, static_cast<typename DEVICE::index_t>(seed));
+    rlt::init(device, env);
+    rlt::initial_parameters(device, env, params);
+
+    rlt::rl::environments::car::ObservationCarTrack<TI> obs_type;
+    ObsMatrix obs_mat;
+    ActMatrix action_mat;
+
+    Env::State state, next_state;
+    rlt::sample_initial_state(device, env, params, state, rng);
+
+    constexpr double BOUND = CarSpec::TRACK_SCALE * 100 / 2.0;
+    const int  window_steps = static_cast<int>(SIM_WINDOW_MS);
+    const int  n_channels   = nInput_ + 1;
+
+    constexpr double MAX_RATE   = 100.0;
+    constexpr double REF_PERIOD = 2.0;
+    constexpr double DT         = 1.0;
+    std::mt19937 enc_rng(static_cast<uint32_t>(seed) ^ 0xDEADBEEFu);
+    std::uniform_real_distribution<double> udist(0.0, 1.0);
+
+    const bool use_rldecoder = (decoder_ != SnnDecoder::SPIKE_COUNT);
+    const RLDecoder::DecodingType dec_type = (decoder_ == SnnDecoder::FIRST_SPIKE)
+        ? RLDecoder::DecodingType::FIRST_SPIKE
+        : RLDecoder::DecodingType::RATE;
+    RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
+    const double max_spikes = static_cast<double>(window_steps) / 2.0;
+
+    for (int step = 0; step < EPISODE_STEPS; ++step) {
+        rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
+
+        double x       = rlt::get(obs_mat, 0, 0);
+        double y       = rlt::get(obs_mat, 0, 1);
+        double mu      = rlt::get(obs_mat, 0, 2);
+        double vx      = rlt::get(obs_mat, 0, 3);
+        double vy      = rlt::get(obs_mat, 0, 4);
+        double omega   = rlt::get(obs_mat, 0, 5);
+        double lidar_l = rlt::get(obs_mat, 0, 6);
+        double lidar_c = rlt::get(obs_mat, 0, 7);
+        double lidar_r = rlt::get(obs_mat, 0, 8);
+
+        if (resetBetweenSteps_) net.fastReset();
+
+        std::vector<double> out_spikes0, out_spikes1;
+
+        if (encoder_ == SnnEncoder::POISSON) {
+            std::vector<double> norm(n_channels, 0.0);
+            norm[0] = 1.0;
+            if (nInput_ >= 1) norm[1] = (x + BOUND) / (2.0 * BOUND);
+            if (nInput_ >= 2) norm[2] = (y + BOUND) / (2.0 * BOUND);
+            if (nInput_ >= 3) norm[3] = (mu + M_PI) / (2.0 * M_PI);
+            if (nInput_ >= 4) norm[4] = (vx + VX_MAX) / (2.0 * VX_MAX);
+            if (nInput_ >= 5) norm[5] = (vy + VY_MAX) / (2.0 * VY_MAX);
+            if (nInput_ >= 6) norm[6] = (omega + OMEGA_MAX) / (2.0 * OMEGA_MAX);
+            if (nInput_ >= 7) norm[7] = lidar_l;
+            if (nInput_ >= 8) norm[8] = lidar_c;
+            if (nInput_ >= 9) norm[9] = lidar_r;
+
+            std::vector<std::vector<double>> spike_trains(n_channels);
+            for (int ch = 0; ch < n_channels; ++ch) {
+                double rate    = std::clamp(norm[ch], 0.0, 1.0) * MAX_RATE;
+                double sp_prob = (rate / 1000.0) * DT;
+                double last_t  = -REF_PERIOD - 1.0;
+                for (int t = 0; t < window_steps; ++t) {
+                    double ct = static_cast<double>(t);
+                    if ((ct - last_t) >= REF_PERIOD && udist(enc_rng) < sp_prob) {
+                        spike_trains[ch].push_back(ct);
+                        last_t = ct;
+                    }
+                }
+            }
+            for (int t = 0; t < window_steps; ++t) {
+                net.applyInputSpikes(spike_trains, net.getCurrentTime());
+                net.step(weight);
+                const auto& out = net.getOutputSpikes();
+                if (out.size() > 0 && out[0]) out_spikes0.push_back(static_cast<double>(t));
+                if (out.size() > 1 && out[1]) out_spikes1.push_back(static_cast<double>(t));
+            }
+        } else {
+            std::vector<double> currents(n_channels, 0.0);
+            currents[0] = BIAS_CURRENT;
+            if (nInput_ >= 1) currents[1] = (x + BOUND) / (2.0 * BOUND) * 20.0;
+            if (nInput_ >= 2) currents[2] = (y + BOUND) / (2.0 * BOUND) * 20.0;
+            if (nInput_ >= 3) currents[3] = (mu + M_PI) / (2.0 * M_PI) * 20.0;
+            if (nInput_ >= 4) currents[4] = (vx + VX_MAX) / (2.0 * VX_MAX) * 20.0;
+            if (nInput_ >= 5) currents[5] = (vy + VY_MAX) / (2.0 * VY_MAX) * 20.0;
+            if (nInput_ >= 6) currents[6] = (omega + OMEGA_MAX) / (2.0 * OMEGA_MAX) * 20.0;
+            if (nInput_ >= 7) currents[7] = lidar_l * 20.0;
+            if (nInput_ >= 8) currents[8] = lidar_c * 20.0;
+            if (nInput_ >= 9) currents[9] = lidar_r * 20.0;
+
+            for (int t = 0; t < window_steps; ++t) {
+                net.setInputCurrents(currents);
+                net.step(weight);
+                const auto& out = net.getOutputSpikes();
+                if (out.size() > 0 && out[0]) out_spikes0.push_back(static_cast<double>(t));
+                if (out.size() > 1 && out[1]) out_spikes1.push_back(static_cast<double>(t));
+            }
+        }
+
+        double throttle, steering;
+        if (use_rldecoder) {
+            throttle = rl_decoder.decodeContinuousAction(out_spikes0) * 2.0 - 1.0;
+            steering = rl_decoder.decodeContinuousAction(out_spikes1) * 2.0 - 1.0;
+        } else {
+            throttle = static_cast<double>(out_spikes0.size()) / max_spikes * 2.0 - 1.0;
+            steering = static_cast<double>(out_spikes1.size()) / max_spikes * 2.0 - 1.0;
+        }
+        throttle = std::clamp(throttle, -1.0, 1.0);
+        steering = std::clamp(steering, -1.0, 1.0);
+
+        rlt::set(action_mat, 0, 0, throttle);
+        rlt::set(action_mat, 0, 1, steering);
+
+        rlt::step(device, env, params, state, action_mat, next_state, rng);
+        double reward = rlt::reward(device, env, params, state, action_mat, next_state, rng);
+        state = next_state;
+
+        csv << step    << ','
+            << x       << ',' << y       << ',' << mu    << ','
+            << vx      << ',' << vy      << ',' << omega << ','
+            << lidar_l << ',' << lidar_c << ',' << lidar_r << ','
+            << throttle << ',' << steering << ',' << reward << '\n';
+
+        if (rlt::terminated(device, env, params, state, rng)) break;
+    }
+
+    std::cout << "Trayectoria guardada en: " << outFile << '\n';
 }
 
 } // namespace wann

@@ -49,6 +49,13 @@ public:
 
     int numWeightVals() const override { return N_WEIGHTS; }
 
+    // Run one episode and write trajectory CSV.
+    // Columns: step,x,y,mu,vx,vy,omega,lidar_l,lidar_c,lidar_r,throttle,steering,reward
+    void exportTrajectory(const std::vector<double>& wVec,
+                          const std::vector<int>&    aVec,
+                          double weight, int seed,
+                          const std::string& outFile) const;
+
 private:
     int        nInput_;
     int        nOutput_;
