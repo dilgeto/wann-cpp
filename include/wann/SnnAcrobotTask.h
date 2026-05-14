@@ -17,7 +17,7 @@ namespace wann {
 // Observation (6 dims):
 //   cos(θ₁), sin(θ₁), cos(θ₂), sin(θ₂), θ₁_dot, θ₂_dot
 //
-// Action (1 dim): continuous torque ∈ [-5, 5] N·m
+// Action (1 dim): continuous torque ∈ [-1, 1] N·m (same scale as Gymnasium Acrobot-v1)
 //
 // Episode ends at step 500 or when rlt::terminated() is true (tip above pivot).
 //
@@ -32,7 +32,7 @@ public:
     static const     double WEIGHT_VALS[N_WEIGHTS];
     static constexpr double BIAS_CURRENT  = 50.0;   // mA
     static constexpr double SIM_WINDOW_MS = 20.0;   // SNN sim duration per env step
-    static constexpr double MAX_TORQUE    = 5.0;    // Acrobot torque range ±5 N·m
+    static constexpr double MAX_TORQUE    = 1.0;    // Acrobot torque range ±1 N·m (Gymnasium scale)
 
     explicit SnnAcrobotTask(const Hyperparams& hyp);
 

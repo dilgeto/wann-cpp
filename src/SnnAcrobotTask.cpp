@@ -19,7 +19,13 @@ namespace rlt = rl_tools;
 using T         = double;
 using TI        = size_t;
 using DEVICE    = rlt::devices::DefaultCPU;
-using AcrobotSpec = rlt::rl::environments::acrobot::Specification<T, TI>;
+
+// Torque range ±1 N·m to match Gymnasium Acrobot-v1 (default rl-tools uses ±5 N·m)
+struct GymAcrobotParams : rlt::rl::environments::acrobot::DefaultParameters<T> {
+    static constexpr T MIN_TORQUE = -1.0;
+    static constexpr T MAX_TORQUE = +1.0;
+};
+using AcrobotSpec = rlt::rl::environments::acrobot::Specification<T, TI, GymAcrobotParams>;
 using Env       = rlt::rl::environments::Acrobot<AcrobotSpec>;
 using RNG       = typename rlt::devices::random::CPU::ENGINE<>;
 // 6-dimensional observation: cos θ₁, sin θ₁, cos θ₂, sin θ₂, θ₁_dot, θ₂_dot
