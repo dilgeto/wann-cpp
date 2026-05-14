@@ -33,7 +33,7 @@ using ActMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 2, false>>;
 namespace wann {
 
 const double SnnCarTask::WEIGHT_VALS[N_WEIGHTS] = {
-    1.0, 2.0, 5.0, 10.0, 15.0, 20.0
+    0.5, 1.0, 2.0, 3.0, 5.0, 8.0
 };
 
 SnnCarTask::SnnCarTask(const Hyperparams& hyp)
