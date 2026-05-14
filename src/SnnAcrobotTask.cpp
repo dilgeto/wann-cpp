@@ -239,7 +239,7 @@ double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episode
         }
         action = std::clamp(action, -MAX_TORQUE, MAX_TORQUE);
 
-        rlt::set(action_mat, 0, 0, action);
+        rlt::set(action_mat, 0, 0, action / MAX_TORQUE);  // normalizar a [-1,1] para rl-tools
         rlt::step(device, env, params, state, action_mat, next_state, rng);
         total_reward += rlt::reward(device, env, params, state, action_mat, next_state, rng);
         state = next_state;
@@ -417,7 +417,7 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
         }
         action = std::clamp(action, -MAX_TORQUE, MAX_TORQUE);
 
-        rlt::set(action_mat, 0, 0, action);
+        rlt::set(action_mat, 0, 0, action / MAX_TORQUE);  // normalizar a [-1,1] para rl-tools
         rlt::step(device, env, params, state, action_mat, next_state, rng);
         double reward = rlt::reward(device, env, params, state, action_mat, next_state, rng);
         state = next_state;
