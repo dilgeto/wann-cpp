@@ -148,7 +148,12 @@ export EXE BASE TASK PKS_DIR LOG_DIR SEED OMP
 T_WALL=$SECONDS
 
 for cfg_file in "${cfg_files[@]}"; do
-    # Wait until a slot is free
+    idx=$(basename "$cfg_file" .json)
+    # Skip configs that already have results (multi-round support)
+    if [[ -f "${PKS_DIR}/${idx}.txt" ]]; then
+        echo "  SKIP #${idx} (already done)"
+        continue
+    fi
     while (( $(jobs -rp | wc -l) >= JOBS )); do
         sleep 0.3
     done
