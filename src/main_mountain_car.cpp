@@ -11,6 +11,7 @@
 #include "../include/wann/SnnMountainCarTask.h"
 #include "../include/wann/Wann.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -21,6 +22,8 @@
 #include <vector>
 
 namespace fs = std::filesystem;
+
+static constexpr int REPLAY_INTERVAL = 256;
 
 static std::vector<std::vector<double>>
 evalPop(const std::vector<wann::Ind>& pop,
@@ -76,6 +79,9 @@ int main(int argc, char* argv[]) {
     wann::seedRng(seed);
     fs::create_directories("log");
 
+    const std::string replayDir = "log/" + outPrefix + "_replay";
+    fs::create_directories(replayDir);
+
     std::ofstream dbgFile;
     if (debugLog) {
         std::string dbgPath = "log/" + outPrefix + "_debug.log";
@@ -95,8 +101,13 @@ int main(int argc, char* argv[]) {
 
     for (int gen = 0; gen < hyp.maxGen; ++gen) {
         auto& pop    = alg.ask();
-        auto  reward = evalPop(pop, task, static_cast<int>(seed));
+        auto  reward = evalPop(pop, task, static_cast<int>(seed) + gen);
         alg.tell(reward);
+
+        int eliteIdx = static_cast<int>(
+            std::max_element(pop.begin(), pop.end(),
+                [](const wann::Ind& a, const wann::Ind& b){ return a.fitness < b.fitness; })
+            - pop.begin());
 
         data.gatherData(pop);
         std::cout << gen << "\t - \t" << data.display() << '\n';
@@ -110,6 +121,26 @@ int main(int argc, char* argv[]) {
                 dbgFile.flush();
             }
         }
+
+        if ((gen % REPLAY_INTERVAL == 0 || gen == hyp.maxGen - 1)
+                && !pop[eliteIdx].wVec.empty()) {
+            const auto& rw = reward[eliteIdx];
+            int bestWi = static_cast<int>(
+                std::max_element(rw.begin(), rw.end()) - rw.begin());
+
+            std::ostringstream fname;
+            fname << replayDir << "/gen_"
+                  << std::setw(4) << std::setfill('0') << gen << ".csv";
+            try {
+                task.exportTrajectory(pop[eliteIdx].wVec, pop[eliteIdx].aVec,
+                                      wann::SnnMountainCarTask::WEIGHT_VALS[bestWi],
+                                      static_cast<int>(seed) + gen,
+                                      fname.str());
+            } catch (const std::exception& e) {
+                std::cerr << "Warning: no se pudo guardar replay gen " << gen
+                          << ": " << e.what() << '\n';
+            }
+        }
     }
 
     double total_s = std::chrono::duration<double>(Clock::now() - t_start).count();
@@ -117,12 +148,11 @@ int main(int argc, char* argv[]) {
 
     std::ofstream tlog("log/" + outPrefix + "_time.log");
     tlog << std::fixed << std::setprecision(3)
-         << "total_s   " << total_s           << '\n'
-         << "per_gen_s " << per_gen            << '\n'
-         << "maxGen    " << hyp.maxGen         << '\n'
-         << "popSize   " << hyp.popSize        << '\n';
-    std::cout << "Time: " << total_s << " s  ("
-              << per_gen << " s/gen)\n";
+         << "total_s   " << total_s    << '\n'
+         << "per_gen_s " << per_gen    << '\n'
+         << "maxGen    " << hyp.maxGen  << '\n'
+         << "popSize   " << hyp.popSize << '\n';
+    std::cout << "Time: " << total_s << " s  (" << per_gen << " s/gen)\n";
 
     data.save();
     std::cout << "Done. Results written to log/" << outPrefix << "_*\n";

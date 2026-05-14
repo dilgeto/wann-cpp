@@ -40,6 +40,12 @@ public:
 
     int numWeightVals() const override { return N_WEIGHTS; }
 
+    // Columns: step,position,velocity,action,reward
+    void exportTrajectory(const std::vector<double>& wVec,
+                          const std::vector<int>&    aVec,
+                          double weight, int seed,
+                          const std::string& outFile) const;
+
 private:
     int        nInput_;
     int        nOutput_;

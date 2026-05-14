@@ -2,7 +2,7 @@
     "task":                  "snn_acrobot",
     "maxGen":                1024,
     "popSize":               192,
-    "alg_nVals":             4,
+    "alg_nVals":             6,
     "alg_nReps":             6,
     "alg_probMoo":           0.5,
     "ann_nInput":            6,

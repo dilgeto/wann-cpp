@@ -8,7 +8,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <iomanip>
 #include <random>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace rlt = rl_tools;
@@ -286,6 +289,149 @@ std::vector<double> SnnAcrobotTask::getDistFitness(
         rewards[wi] = total / static_cast<double>(nReps_);
     }
     return rewards;
+}
+
+void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
+                                      const std::vector<int>&    aVec,
+                                      double weight, int seed,
+                                      const std::string& outFile) const
+{
+    std::ofstream csv(outFile);
+    if (!csv) throw std::runtime_error("Cannot write: " + outFile);
+    csv << std::fixed << std::setprecision(6);
+    csv << "step,cos_th1,sin_th1,cos_th2,sin_th2,dth1,dth2,action,reward\n";
+
+    Network net = buildNetwork(wVec, aVec);
+
+    DEVICE device;
+    Env env;
+    Env::Parameters params;
+    RNG rng;
+    rlt::init(device, rng, static_cast<typename DEVICE::index_t>(seed));
+    rlt::initial_parameters(device, env, params);
+
+    rlt::rl::environments::acrobot::Observation<TI> obs_type;
+    ObsMatrix obs_mat;
+    ActMatrix action_mat;
+
+    Env::State state, next_state;
+    rlt::sample_initial_state(device, env, params, state, rng);
+
+    constexpr double MAX_VEL_1  = 4.0 * M_PI;
+    constexpr double MAX_VEL_2  = 9.0 * M_PI;
+    const int        window_steps = static_cast<int>(SIM_WINDOW_MS);
+    const int        n_channels   = nInput_ + 1;
+
+    constexpr double MAX_RATE   = 100.0;
+    constexpr double REF_PERIOD = 2.0;
+    constexpr double DT         = 1.0;
+    std::mt19937 enc_rng(static_cast<uint32_t>(seed) ^ 0xDEADBEEFu);
+    std::uniform_real_distribution<double> udist(0.0, 1.0);
+
+    const bool use_rldecoder = (decoder_ != SnnDecoder::SPIKE_COUNT);
+    const RLDecoder::DecodingType dec_type = (decoder_ == SnnDecoder::FIRST_SPIKE)
+        ? RLDecoder::DecodingType::FIRST_SPIKE
+        : RLDecoder::DecodingType::RATE;
+    RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
+    const double max_spikes = static_cast<double>(window_steps) / 2.0;
+
+    for (TI step = 0; step < Env::EPISODE_STEP_LIMIT; ++step) {
+        rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
+
+        double cos_th1 = rlt::get(obs_mat, 0, 0);
+        double sin_th1 = rlt::get(obs_mat, 0, 1);
+        double cos_th2 = rlt::get(obs_mat, 0, 2);
+        double sin_th2 = rlt::get(obs_mat, 0, 3);
+        double dth1    = rlt::get(obs_mat, 0, 4);
+        double dth2    = rlt::get(obs_mat, 0, 5);
+
+        if (resetBetweenSteps_) net.fastReset();
+        std::vector<double> output_spikes;
+
+        if (encoder_ != SnnEncoder::CURRENT) {
+            std::vector<double> norm(n_channels, 0.0);
+            norm[0] = 1.0;
+            if (nInput_ >= 1) norm[1] = (cos_th1 + 1.0) * 0.5;
+            if (nInput_ >= 2) norm[2] = (sin_th1 + 1.0) * 0.5;
+            if (nInput_ >= 3) norm[3] = (cos_th2 + 1.0) * 0.5;
+            if (nInput_ >= 4) norm[4] = (sin_th2 + 1.0) * 0.5;
+            if (nInput_ >= 5) norm[5] = (dth1 / MAX_VEL_1 + 1.0) * 0.5;
+            if (nInput_ >= 6) norm[6] = (dth2 / MAX_VEL_2 + 1.0) * 0.5;
+
+            std::vector<std::vector<double>> spike_trains(n_channels);
+            for (int ch = 0; ch < n_channels; ++ch) {
+                double v = std::clamp(norm[ch], 0.0, 1.0);
+                if (encoder_ == SnnEncoder::POISSON) {
+                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
+                    double last_t  = -REF_PERIOD - 1.0;
+                    for (int t = 0; t < window_steps; ++t) {
+                        double ct = static_cast<double>(t);
+                        if ((ct - last_t) >= REF_PERIOD && udist(enc_rng) < sp_prob) {
+                            spike_trains[ch].push_back(ct);
+                            last_t = ct;
+                        }
+                    }
+                } else if (encoder_ == SnnEncoder::RATE) {
+                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
+                    for (int t = 0; t < window_steps; ++t) {
+                        if (udist(enc_rng) < sp_prob)
+                            spike_trains[ch].push_back(static_cast<double>(t));
+                    }
+                } else {
+                    if (v < 1e-9) continue;
+                    double t_spike = (encoder_ == SnnEncoder::TTFS_LOG)
+                        ? (1.0 - std::log1p(v * (M_E - 1.0))) * (window_steps - 1)
+                        : (1.0 - v) * (window_steps - 1);
+                    spike_trains[ch].push_back(std::round(std::clamp(
+                        t_spike, 0.0, static_cast<double>(window_steps - 1))));
+                }
+            }
+            for (int t = 0; t < window_steps; ++t) {
+                net.applyInputSpikes(spike_trains, net.getCurrentTime());
+                net.step(weight);
+                if (net.getOutputSpikes()[0])
+                    output_spikes.push_back(static_cast<double>(t));
+            }
+        } else {
+            std::vector<double> currents(n_channels, 0.0);
+            currents[0] = BIAS_CURRENT;
+            if (nInput_ >= 1) currents[1] = (cos_th1 + 1.0) * 10.0;
+            if (nInput_ >= 2) currents[2] = (sin_th1 + 1.0) * 10.0;
+            if (nInput_ >= 3) currents[3] = (cos_th2 + 1.0) * 10.0;
+            if (nInput_ >= 4) currents[4] = (sin_th2 + 1.0) * 10.0;
+            if (nInput_ >= 5) currents[5] = (dth1 / MAX_VEL_1 + 1.0) * 10.0;
+            if (nInput_ >= 6) currents[6] = (dth2 / MAX_VEL_2 + 1.0) * 10.0;
+            for (int t = 0; t < window_steps; ++t) {
+                net.setInputCurrents(currents);
+                net.step(weight);
+                if (net.getOutputSpikes()[0])
+                    output_spikes.push_back(static_cast<double>(t));
+            }
+        }
+
+        double action;
+        if (use_rldecoder) {
+            action = (rl_decoder.decodeContinuousAction(output_spikes) * 2.0 - 1.0) * MAX_TORQUE;
+        } else {
+            action = (static_cast<double>(output_spikes.size()) / max_spikes - 1.0) * MAX_TORQUE;
+        }
+        action = std::clamp(action, -MAX_TORQUE, MAX_TORQUE);
+
+        rlt::set(action_mat, 0, 0, action);
+        rlt::step(device, env, params, state, action_mat, next_state, rng);
+        double reward = rlt::reward(device, env, params, state, action_mat, next_state, rng);
+        state = next_state;
+
+        csv << step    << ','
+            << cos_th1 << ',' << sin_th1 << ','
+            << cos_th2 << ',' << sin_th2 << ','
+            << dth1    << ',' << dth2    << ','
+            << action  << ',' << reward  << '\n';
+
+        if (rlt::terminated(device, env, params, state, rng)) break;
+    }
+
+    std::cout << "Trayectoria guardada en: " << outFile << '\n';
 }
 
 } // namespace wann
