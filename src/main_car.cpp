@@ -95,11 +95,14 @@ int main(int argc, char* argv[]) {
 
     for (int gen = 0; gen < hyp.maxGen; ++gen) {
         auto& pop    = alg.ask();
+        task.resetStepStats();
         auto  reward = evalPop(pop, task, static_cast<int>(seed) + gen);
         alg.tell(reward);
 
         data.gatherData(pop);
-        std::cout << gen << "\t - \t" << data.display() << '\n';
+        std::cout << gen << "\t - \t" << data.display()
+                  << "  steps(avg=" << std::fixed << std::setprecision(1) << task.getAvgSteps()
+                  << " max=" << task.getMaxSteps() << ")\n";
 
         if (gen % hyp.save_mod == 0) {
             data.save(gen);

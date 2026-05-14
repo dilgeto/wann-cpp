@@ -151,6 +151,7 @@ double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed
     const double max_spikes = static_cast<double>(window_steps) / 2.0;
 
     double total_reward = 0.0;
+    int stepsReached = 0;
 
     for (int step = 0; step < EPISODE_STEPS; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
@@ -251,9 +252,16 @@ double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed
         rlt::step(device, env, params, state, action_mat, next_state, rng);
         total_reward += rlt::reward(device, env, params, state, action_mat, next_state, rng);
         state = next_state;
+        stepsReached = step + 1;
 
         if (rlt::terminated(device, env, params, state, rng)) break;
     }
+
+    int prev = maxStepsReached_.load(std::memory_order_relaxed);
+    while (stepsReached > prev &&
+           !maxStepsReached_.compare_exchange_weak(prev, stepsReached, std::memory_order_relaxed)) {}
+    totalStepsReached_.fetch_add(stepsReached, std::memory_order_relaxed);
+    totalEpisodes_.fetch_add(1, std::memory_order_relaxed);
 
     return total_reward;
 }
