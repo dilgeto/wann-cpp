@@ -29,7 +29,7 @@ using ActMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 1, false>>;
 namespace wann {
 
 const double SnnAcrobotTask::WEIGHT_VALS[N_WEIGHTS] = {
-    0.5, 1.0, 1.5, 2.0
+    0.5, 1.0, 1.5, 2.0, 2.5, 3.0
 };
 
 SnnAcrobotTask::SnnAcrobotTask(const Hyperparams& hyp)
