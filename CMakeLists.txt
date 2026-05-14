@@ -159,3 +159,19 @@ target_link_libraries(wann_mountain_car PRIVATE
     snn_core_imp
     rl_tools_iface
     OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_car_replay – corre la mejor red y exporta trayectoria CSV
+# ---------------------------------------------------------------------------
+add_executable(wann_car_replay
+    src/main_replay.cpp
+    src/SnnCarTask.cpp)
+
+target_include_directories(wann_car_replay PRIVATE include)
+
+target_link_libraries(wann_car_replay PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface)

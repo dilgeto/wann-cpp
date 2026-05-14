@@ -156,7 +156,7 @@ double SnnMountainCarTask::runEpisode(Network& net, double sharedWeight, int epi
         if (resetBetweenSteps_) net.fastReset();
         std::vector<double> output_spikes;
 
-        if (encoder_ == SnnEncoder::POISSON) {
+        if (encoder_ != SnnEncoder::CURRENT) {
             // position ∈ [POS_MIN, POS_MAX] → [0, 1]
             // velocity ∈ [-VEL_MAX, VEL_MAX] → [0, 1]
             std::vector<double> norm(n_channels, 0.0);
@@ -168,15 +168,30 @@ double SnnMountainCarTask::runEpisode(Network& net, double sharedWeight, int epi
 
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch) {
-                double rate    = std::clamp(norm[ch], 0.0, 1.0) * MAX_RATE;
-                double sp_prob = (rate / 1000.0) * DT;
-                double last_t  = -REF_PERIOD - 1.0;
-                for (int t = 0; t < window_steps; ++t) {
-                    double ct = static_cast<double>(t);
-                    if ((ct - last_t) >= REF_PERIOD && udist(enc_rng) < sp_prob) {
-                        spike_trains[ch].push_back(ct);
-                        last_t = ct;
+                double v = std::clamp(norm[ch], 0.0, 1.0);
+                if (encoder_ == SnnEncoder::POISSON) {
+                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
+                    double last_t  = -REF_PERIOD - 1.0;
+                    for (int t = 0; t < window_steps; ++t) {
+                        double ct = static_cast<double>(t);
+                        if ((ct - last_t) >= REF_PERIOD && udist(enc_rng) < sp_prob) {
+                            spike_trains[ch].push_back(ct);
+                            last_t = ct;
+                        }
                     }
+                } else if (encoder_ == SnnEncoder::RATE) {
+                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
+                    for (int t = 0; t < window_steps; ++t) {
+                        if (udist(enc_rng) < sp_prob)
+                            spike_trains[ch].push_back(static_cast<double>(t));
+                    }
+                } else {
+                    if (v < 1e-9) continue;
+                    double t_spike = (encoder_ == SnnEncoder::TTFS_LOG)
+                        ? (1.0 - std::log1p(v * (M_E - 1.0))) * (window_steps - 1)
+                        : (1.0 - v) * (window_steps - 1);
+                    spike_trains[ch].push_back(std::round(std::clamp(
+                        t_spike, 0.0, static_cast<double>(window_steps - 1))));
                 }
             }
 

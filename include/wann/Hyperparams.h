@@ -43,7 +43,7 @@ struct Hyperparams {
     double ann_absWCap        = 2.0;
 
     // --- SNN interface ---
-    // Encoder: "current" | "poisson"
+    // Encoder: "current" | "poisson" | "rate" | "ttfs" | "ttfs_log"
     // Decoder: "spike_count" | "rate" | "first_spike"
     std::string snn_encoder   = "poisson";
     std::string snn_decoder   = "rate";
