@@ -295,7 +295,7 @@ std::vector<double> SnnCarTask::getDistFitness(
 
 void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
                                    const std::vector<int>&    aVec,
-                                   double weight, int seed,
+                                   int bestWi, int evalSeed,
                                    const std::string& outFile) const
 {
     std::ofstream csv(outFile);
@@ -306,11 +306,20 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
 
     Network net = buildNetwork(wVec, aVec);
 
+    // Reproduce the SNN state from training: run warm-up episodes for all
+    // weights before bestWi using the same seeds as evaluate() would have used.
+    for (int wi = 0; wi < bestWi; ++wi)
+        for (int rep = 0; rep < nReps_; ++rep)
+            runEpisode(net, WEIGHT_VALS[wi], evalSeed * 10000 + wi * 100 + rep);
+
+    const int    episodeSeed = evalSeed * 10000 + bestWi * 100 + 0;
+    const double weight      = WEIGHT_VALS[bestWi];
+
     DEVICE device;
     Env env;
     Env::Parameters params;
     RNG rng;
-    rlt::init(device, rng, static_cast<typename DEVICE::index_t>(seed));
+    rlt::init(device, rng, static_cast<typename DEVICE::index_t>(episodeSeed));
     rlt::init(device, env);
     rlt::initial_parameters(device, env, params);
 
@@ -328,7 +337,7 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
     constexpr double MAX_RATE   = 100.0;
     constexpr double REF_PERIOD = 2.0;
     constexpr double DT         = 1.0;
-    std::mt19937 enc_rng(static_cast<uint32_t>(seed) ^ 0xDEADBEEFu);
+    std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
     std::uniform_real_distribution<double> udist(0.0, 1.0);
 
     const bool use_rldecoder = (decoder_ != SnnDecoder::SPIKE_COUNT);

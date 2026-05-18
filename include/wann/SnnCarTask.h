@@ -51,9 +51,12 @@ public:
 
     // Run one episode and write trajectory CSV.
     // Columns: step,x,y,mu,vx,vy,omega,lidar_l,lidar_c,lidar_r,throttle,steering,reward
+    // bestWi: index into WEIGHT_VALS used for the logged episode.
+    // evalSeed: the seed passed to evaluate() for this individual (not the episode seed).
+    // Warm-up episodes for wi < bestWi are run first to reproduce the SNN state from training.
     void exportTrajectory(const std::vector<double>& wVec,
                           const std::vector<int>&    aVec,
-                          double weight, int seed,
+                          int bestWi, int evalSeed,
                           const std::string& outFile) const;
 
 private:
