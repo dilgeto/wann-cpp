@@ -132,9 +132,10 @@ int main(int argc, char* argv[]) {
             fname << replayDir << "/gen_"
                   << std::setw(4) << std::setfill('0') << gen << ".csv";
             try {
+                // evalSeed must match what evalPop() used for this individual.
+                int evalSeed = (static_cast<int>(seed) + gen) * 10000 + eliteIdx;
                 task.exportTrajectory(pop[eliteIdx].wVec, pop[eliteIdx].aVec,
-                                      wann::SnnAcrobotTask::WEIGHT_VALS[bestWi],
-                                      static_cast<int>(seed) + gen,
+                                      bestWi, evalSeed,
                                       fname.str());
             } catch (const std::exception& e) {
                 std::cerr << "Warning: no se pudo guardar replay gen " << gen

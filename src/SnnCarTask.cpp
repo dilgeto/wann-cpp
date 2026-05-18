@@ -235,10 +235,13 @@ double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed
         }
 
         double throttle, steering;
-        if (use_rldecoder) {
+        if (decoder_ == SnnDecoder::FIRST_SPIKE) {
             throttle = rl_decoder.decodeContinuousAction(out_spikes0) * 2.0 - 1.0;
             steering = rl_decoder.decodeContinuousAction(out_spikes1) * 2.0 - 1.0;
         } else {
+            // RATE and SPIKE_COUNT: normalize by max_spikes.
+            // RLDecoder::decodeContinuousAction(RATE) caps at 100 Hz which saturates
+            // at 2 spikes in a 20 ms window, collapsing output to {-1, 0, +1}.
             throttle = static_cast<double>(out_spikes0.size()) / max_spikes * 2.0 - 1.0;
             steering = static_cast<double>(out_spikes1.size()) / max_spikes * 2.0 - 1.0;
         }
@@ -435,10 +438,13 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
         }
 
         double throttle, steering;
-        if (use_rldecoder) {
+        if (decoder_ == SnnDecoder::FIRST_SPIKE) {
             throttle = rl_decoder.decodeContinuousAction(out_spikes0) * 2.0 - 1.0;
             steering = rl_decoder.decodeContinuousAction(out_spikes1) * 2.0 - 1.0;
         } else {
+            // RATE and SPIKE_COUNT: normalize by max_spikes.
+            // RLDecoder::decodeContinuousAction(RATE) caps at 100 Hz which saturates
+            // at 2 spikes in a 20 ms window, collapsing output to {-1, 0, +1}.
             throttle = static_cast<double>(out_spikes0.size()) / max_spikes * 2.0 - 1.0;
             steering = static_cast<double>(out_spikes1.size()) / max_spikes * 2.0 - 1.0;
         }

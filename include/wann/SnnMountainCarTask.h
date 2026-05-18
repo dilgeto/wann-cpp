@@ -41,9 +41,11 @@ public:
     int numWeightVals() const override { return N_WEIGHTS; }
 
     // Columns: step,position,velocity,action,reward
+    // bestWi: index into WEIGHT_VALS used for the logged episode.
+    // evalSeed: the seed passed to evaluate() for this individual (not the episode seed).
     void exportTrajectory(const std::vector<double>& wVec,
                           const std::vector<int>&    aVec,
-                          double weight, int seed,
+                          int bestWi, int evalSeed,
                           const std::string& outFile) const;
 
 private:
