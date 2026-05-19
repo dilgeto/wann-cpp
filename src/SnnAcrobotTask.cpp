@@ -120,7 +120,7 @@ Network SnnAcrobotTask::buildNetwork(const std::vector<double>& wVec,
         for (int j = 0; j < N; ++j) {
             if (snn_id[j] < 0 || i == j) continue;
             if (wVec[i * N + j] != 0.0)
-                net.addSynapse(snn_id[i], snn_id[j], true);
+                net.addSynapse(snn_id[i], snn_id[j], wVec[i * N + j] > 0.0);
         }
     }
 
