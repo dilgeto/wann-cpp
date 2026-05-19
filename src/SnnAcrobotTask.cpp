@@ -157,12 +157,15 @@ double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episode
     std::uniform_real_distribution<double> udist(0.0, 1.0);
 
     // --- Decoder setup ---
-    // RLDecoder is used for RATE and FIRST_SPIKE; SPIKE_COUNT uses raw count.
-    const bool use_rldecoder = (decoder_ != SnnDecoder::SPIKE_COUNT);
+    const bool use_discrete  = (decoder_ == SnnDecoder::VOTING || decoder_ == SnnDecoder::WTA);
+    const bool use_rldecoder = !use_discrete && (decoder_ != SnnDecoder::SPIKE_COUNT);
     const RLDecoder::DecodingType dec_type = (decoder_ == SnnDecoder::FIRST_SPIKE)
         ? RLDecoder::DecodingType::FIRST_SPIKE
         : RLDecoder::DecodingType::RATE;
     RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
+    const RLDecoder::DecodingType disc_type = (decoder_ == SnnDecoder::VOTING)
+        ? RLDecoder::DecodingType::VOTING : RLDecoder::DecodingType::WINNER_TAKES_ALL;
+    RLDecoder disc_decoder(disc_type, SIM_WINDOW_MS, 5);
     const double max_spikes = static_cast<double>(window_steps) / 2.0;
 
     double total_reward = 0.0;
@@ -171,7 +174,8 @@ double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episode
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
 
         if (resetBetweenSteps_) net.fastReset();
-        std::vector<double> output_spikes;
+        std::vector<double>              output_spikes;
+        std::vector<std::vector<double>> multi_spikes(nOutput_);
 
         if (encoder_ != SnnEncoder::CURRENT) {
             // Normalize to [0,1]
@@ -216,8 +220,14 @@ double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episode
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
                 net.step(sharedWeight);
-                if (net.getOutputSpikes()[0])
-                    output_spikes.push_back(static_cast<double>(t));
+                const auto& out = net.getOutputSpikes();
+                if (use_discrete) {
+                    for (int o = 0; o < nOutput_ && o < (int)out.size(); ++o)
+                        if (out[o]) multi_spikes[o].push_back(static_cast<double>(t));
+                } else {
+                    if (!out.empty() && out[0])
+                        output_spikes.push_back(static_cast<double>(t));
+                }
             }
         } else {
             // CURRENT: map observations to [0, 20] mA and inject directly
@@ -233,13 +243,23 @@ double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episode
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);
                 net.step(sharedWeight);
-                if (net.getOutputSpikes()[0])
-                    output_spikes.push_back(static_cast<double>(t));
+                const auto& out = net.getOutputSpikes();
+                if (use_discrete) {
+                    for (int o = 0; o < nOutput_ && o < (int)out.size(); ++o)
+                        if (out[o]) multi_spikes[o].push_back(static_cast<double>(t));
+                } else {
+                    if (!out.empty() && out[0])
+                        output_spikes.push_back(static_cast<double>(t));
+                }
             }
         }
 
         double action;
-        if (use_rldecoder) {
+        if (use_discrete) {
+            // winner ∈ {0,1,2} → torque ∈ {-1, 0, +1} N·m
+            int winner = disc_decoder.decodeDiscreteAction(multi_spikes);
+            action = static_cast<double>(winner) - 1.0;
+        } else if (use_rldecoder) {
             double val = rl_decoder.decodeContinuousAction(output_spikes);
             action = (val * 2.0 - 1.0) * MAX_TORQUE;
         } else {
@@ -363,11 +383,15 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
     std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
     std::uniform_real_distribution<double> udist(0.0, 1.0);
 
-    const bool use_rldecoder = (decoder_ != SnnDecoder::SPIKE_COUNT);
+    const bool use_discrete  = (decoder_ == SnnDecoder::VOTING || decoder_ == SnnDecoder::WTA);
+    const bool use_rldecoder = !use_discrete && (decoder_ != SnnDecoder::SPIKE_COUNT);
     const RLDecoder::DecodingType dec_type = (decoder_ == SnnDecoder::FIRST_SPIKE)
         ? RLDecoder::DecodingType::FIRST_SPIKE
         : RLDecoder::DecodingType::RATE;
     RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
+    const RLDecoder::DecodingType disc_type = (decoder_ == SnnDecoder::VOTING)
+        ? RLDecoder::DecodingType::VOTING : RLDecoder::DecodingType::WINNER_TAKES_ALL;
+    RLDecoder disc_decoder(disc_type, SIM_WINDOW_MS, 5);
     const double max_spikes = static_cast<double>(window_steps) / 2.0;
 
     for (TI step = 0; step < Env::EPISODE_STEP_LIMIT; ++step) {
@@ -381,7 +405,8 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
         double dth2    = rlt::get(obs_mat, 0, 5);
 
         if (resetBetweenSteps_) net.fastReset();
-        std::vector<double> output_spikes;
+        std::vector<double>              output_spikes;
+        std::vector<std::vector<double>> multi_spikes(nOutput_);
 
         if (encoder_ != SnnEncoder::CURRENT) {
             std::vector<double> norm(n_channels, 0.0);
@@ -424,8 +449,14 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
                 net.step(weight);
-                if (net.getOutputSpikes()[0])
-                    output_spikes.push_back(static_cast<double>(t));
+                const auto& out = net.getOutputSpikes();
+                if (use_discrete) {
+                    for (int o = 0; o < nOutput_ && o < (int)out.size(); ++o)
+                        if (out[o]) multi_spikes[o].push_back(static_cast<double>(t));
+                } else {
+                    if (!out.empty() && out[0])
+                        output_spikes.push_back(static_cast<double>(t));
+                }
             }
         } else {
             std::vector<double> currents(n_channels, 0.0);
@@ -439,13 +470,22 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);
                 net.step(weight);
-                if (net.getOutputSpikes()[0])
-                    output_spikes.push_back(static_cast<double>(t));
+                const auto& out = net.getOutputSpikes();
+                if (use_discrete) {
+                    for (int o = 0; o < nOutput_ && o < (int)out.size(); ++o)
+                        if (out[o]) multi_spikes[o].push_back(static_cast<double>(t));
+                } else {
+                    if (!out.empty() && out[0])
+                        output_spikes.push_back(static_cast<double>(t));
+                }
             }
         }
 
         double action;
-        if (use_rldecoder) {
+        if (use_discrete) {
+            int winner = disc_decoder.decodeDiscreteAction(multi_spikes);
+            action = static_cast<double>(winner) - 1.0;  // {0,1,2} → {-1,0,+1} N·m
+        } else if (use_rldecoder) {
             action = (rl_decoder.decodeContinuousAction(output_spikes) * 2.0 - 1.0) * MAX_TORQUE;
         } else {
             action = (static_cast<double>(output_spikes.size()) / max_spikes - 1.0) * MAX_TORQUE;

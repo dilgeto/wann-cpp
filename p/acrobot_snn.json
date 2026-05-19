@@ -6,7 +6,7 @@
     "alg_nReps":             6,
     "alg_probMoo":           0.5,
     "ann_nInput":            6,
-    "ann_nOutput":           1,
+    "ann_nOutput":           3,
     "ann_initAct":           1,
     "ann_actRange":          [1, 2, 3, 4, 5, 6],
     "ann_absWCap":           20.0,
@@ -23,7 +23,7 @@
     "save_mod":              10,
     "bestReps":              20,
     "snn_encoder":           "poisson",
-    "snn_decoder":           "rate",
+    "snn_decoder":           "voting",
     "snn_reset_between_steps": true,
     "reward_shaping_scale":  1.0
 }
