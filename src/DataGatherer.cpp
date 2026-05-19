@@ -106,8 +106,11 @@ void DataGatherer::save(int gen) {
     if (!best_.empty()) {
         const Ind& b = (gen >= 0 && gen < static_cast<int>(best_.size()))
                        ? best_[gen] : best_.back();
-        if (!b.wMat.empty())
+        if (!b.wMat.empty()) {
             exportNet(prefix_ + "_best.out", b.wMat, b.nNodes, b.aVec);
+            std::ofstream wif(prefix_ + "_best.wi");
+            wif << bestWi_ << '\n';
+        }
 
         // Per-generation snapshot.
         if (gen > 1) {

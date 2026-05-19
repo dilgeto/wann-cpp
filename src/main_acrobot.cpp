@@ -109,6 +109,11 @@ int main(int argc, char* argv[]) {
                 [](const wann::Ind& a, const wann::Ind& b){ return a.fitness < b.fitness; })
             - pop.begin());
 
+        const auto& rw = reward[eliteIdx];
+        int bestWi = static_cast<int>(
+            std::max_element(rw.begin(), rw.end()) - rw.begin());
+
+        data.setBestWi(bestWi);
         data.gatherData(pop);
         std::cout << gen << "\t - \t" << data.display() << '\n';
 
@@ -124,9 +129,6 @@ int main(int argc, char* argv[]) {
 
         if ((gen % REPLAY_INTERVAL == 0 || gen == hyp.maxGen - 1)
                 && !pop[eliteIdx].wVec.empty()) {
-            const auto& rw = reward[eliteIdx];
-            int bestWi = static_cast<int>(
-                std::max_element(rw.begin(), rw.end()) - rw.begin());
 
             std::ostringstream fname;
             fname << replayDir << "/gen_"

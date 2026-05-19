@@ -49,6 +49,12 @@ public:
 
     int numWeightVals() const override { return N_WEIGHTS; }
 
+    // Run nEpisodes with the given shared weight; returns per-episode rewards.
+    std::vector<double> evalEpisodes(const std::vector<double>& wVec,
+                                     const std::vector<int>&    aVec,
+                                     double weight, int nEpisodes,
+                                     int baseSeed) const;
+
     // Run one episode and write trajectory CSV.
     // Columns: step,x,y,mu,vx,vy,omega,lidar_l,lidar_c,lidar_r,throttle,steering,reward
     // bestWi: index into WEIGHT_VALS used for the logged episode.

@@ -40,6 +40,12 @@ public:
 
     int numWeightVals() const override { return N_WEIGHTS; }
 
+    // Run nEpisodes with the given shared weight; returns per-episode rewards.
+    std::vector<double> evalEpisodes(const std::vector<double>& wVec,
+                                     const std::vector<int>&    aVec,
+                                     double weight, int nEpisodes,
+                                     int baseSeed) const;
+
     // Columns: step,position,velocity,action,reward
     // bestWi: index into WEIGHT_VALS used for the logged episode.
     // evalSeed: the seed passed to evaluate() for this individual (not the episode seed).

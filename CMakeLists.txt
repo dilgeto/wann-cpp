@@ -175,3 +175,51 @@ target_link_libraries(wann_car_replay PRIVATE
     snn_encoding_imp
     snn_core_imp
     rl_tools_iface)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_acrobot_eval – evalúa N episodios con la mejor red Acrobot
+# ---------------------------------------------------------------------------
+add_executable(wann_acrobot_eval
+    src/main_eval_acrobot.cpp
+    src/SnnAcrobotTask.cpp)
+
+target_include_directories(wann_acrobot_eval PRIVATE include)
+
+target_link_libraries(wann_acrobot_eval PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_mountain_car_eval – evalúa N episodios con la mejor red MountainCar
+# ---------------------------------------------------------------------------
+add_executable(wann_mountain_car_eval
+    src/main_eval_mountain_car.cpp
+    src/SnnMountainCarTask.cpp)
+
+target_include_directories(wann_mountain_car_eval PRIVATE include)
+
+target_link_libraries(wann_mountain_car_eval PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_car_eval – evalúa N episodios con la mejor red Car
+# ---------------------------------------------------------------------------
+add_executable(wann_car_eval
+    src/main_eval_car.cpp
+    src/SnnCarTask.cpp)
+
+target_include_directories(wann_car_eval PRIVATE include)
+
+target_link_libraries(wann_car_eval PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface)

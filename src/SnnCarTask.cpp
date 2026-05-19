@@ -297,6 +297,18 @@ std::vector<double> SnnCarTask::getDistFitness(
     return rewards;
 }
 
+std::vector<double> SnnCarTask::evalEpisodes(
+        const std::vector<double>& wVec,
+        const std::vector<int>&    aVec,
+        double weight, int nEpisodes, int baseSeed) const
+{
+    Network net = buildNetwork(wVec, aVec);
+    std::vector<double> rewards(nEpisodes);
+    for (int i = 0; i < nEpisodes; ++i)
+        rewards[i] = runEpisode(net, weight, baseSeed + i);
+    return rewards;
+}
+
 void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
                                    const std::vector<int>&    aVec,
                                    int bestWi, int evalSeed,
