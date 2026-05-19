@@ -115,6 +115,7 @@ Network SnnMountainCarTask::buildNetwork(const std::vector<double>& wVec,
 
 double SnnMountainCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
 {
+    net.fastReset();
     DEVICE device;
     Env env;
     Env::Parameters params;

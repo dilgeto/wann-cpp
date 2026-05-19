@@ -24,5 +24,6 @@
     "bestReps":              20,
     "snn_encoder":           "poisson",
     "snn_decoder":           "rate",
-    "snn_reset_between_steps": true
+    "snn_reset_between_steps": true,
+    "reward_shaping_scale":  1.0
 }

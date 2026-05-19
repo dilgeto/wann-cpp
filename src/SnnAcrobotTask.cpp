@@ -42,6 +42,7 @@ SnnAcrobotTask::SnnAcrobotTask(const Hyperparams& hyp)
     : nInput_(hyp.ann_nInput), nOutput_(hyp.ann_nOutput), nReps_(hyp.alg_nReps)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
+    , shapingScale_(hyp.reward_shaping_scale)
     , resetBetweenSteps_(hyp.snn_reset_between_steps)
 {}
 
@@ -128,6 +129,7 @@ Network SnnAcrobotTask::buildNetwork(const std::vector<double>& wVec,
 
 double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
 {
+    net.fastReset();
     DEVICE device;
     Env env;
     Env::Parameters params;
@@ -248,6 +250,12 @@ double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episode
         rlt::set(action_mat, 0, 0, action / MAX_TORQUE);  // normalizar a [-1,1] para rl-tools
         rlt::step(device, env, params, state, action_mat, next_state, rng);
         total_reward += rlt::reward(device, env, params, state, action_mat, next_state, rng);
+
+        if (shapingScale_ != 0.0)
+            total_reward += shapingScale_ * (
+                -std::cos(next_state.theta_1) - std::cos(next_state.theta_1 + next_state.theta_2)
+                + std::cos(state.theta_1)     + std::cos(state.theta_1 + state.theta_2));
+
         state = next_state;
 
         if (rlt::terminated(device, env, params, state, rng)) break;
@@ -435,6 +443,12 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
         rlt::set(action_mat, 0, 0, action / MAX_TORQUE);  // normalizar a [-1,1] para rl-tools
         rlt::step(device, env, params, state, action_mat, next_state, rng);
         double reward = rlt::reward(device, env, params, state, action_mat, next_state, rng);
+
+        if (shapingScale_ != 0.0)
+            reward += shapingScale_ * (
+                -std::cos(next_state.theta_1) - std::cos(next_state.theta_1 + next_state.theta_2)
+                + std::cos(state.theta_1)     + std::cos(state.theta_1 + state.theta_2));
+
         state = next_state;
 
         csv << step    << ','
