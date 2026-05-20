@@ -297,7 +297,8 @@ std::vector<double> SnnMountainCarTask::evalEpisodes(
 void SnnMountainCarTask::exportTrajectory(const std::vector<double>& wVec,
                                           const std::vector<int>&    aVec,
                                           int bestWi, int evalSeed,
-                                          const std::string& outFile) const
+                                          const std::string& outFile,
+                                          bool directSeed) const
 {
     std::ofstream csv(outFile);
     if (!csv) throw std::runtime_error("Cannot write: " + outFile);
@@ -306,14 +307,16 @@ void SnnMountainCarTask::exportTrajectory(const std::vector<double>& wVec,
 
     Network net = buildNetwork(wVec, aVec);
 
-    // Reproduce the SNN state from training: run warm-up episodes for all
-    // weights before bestWi using the same seeds as evaluate() would have used.
-    for (int wi = 0; wi < bestWi; ++wi)
-        for (int rep = 0; rep < nReps_; ++rep)
-            runEpisode(net, WEIGHT_VALS[wi], evalSeed * 10000 + wi * 100 + rep);
-
-    const int    episodeSeed = evalSeed * 10000 + bestWi * 100 + 0;
-    const double weight      = WEIGHT_VALS[bestWi];
+    int episodeSeed;
+    if (directSeed) {
+        episodeSeed = evalSeed;
+    } else {
+        for (int wi = 0; wi < bestWi; ++wi)
+            for (int rep = 0; rep < nReps_; ++rep)
+                runEpisode(net, WEIGHT_VALS[wi], evalSeed * 10000 + wi * 100 + rep);
+        episodeSeed = evalSeed * 10000 + bestWi * 100 + 0;
+    }
+    const double weight = WEIGHT_VALS[bestWi];
 
     DEVICE device;
     Env env;

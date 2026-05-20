@@ -55,11 +55,12 @@ public:
 
     // Columns: step,cos_th1,sin_th1,cos_th2,sin_th2,dth1,dth2,action,reward
     // bestWi: index into WEIGHT_VALS used for the logged episode.
-    // evalSeed: the seed passed to evaluate() for this individual (not the episode seed).
+    // evalSeed: training evaluate() seed (directSeed=false) or direct episode seed (directSeed=true).
     void exportTrajectory(const std::vector<double>& wVec,
                           const std::vector<int>&    aVec,
                           int bestWi, int evalSeed,
-                          const std::string& outFile) const;
+                          const std::string& outFile,
+                          bool directSeed = false) const;
 
 private:
     int        nInput_;

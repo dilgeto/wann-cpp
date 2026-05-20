@@ -40,6 +40,8 @@ public:
 
     explicit SnnCarTask(const Hyperparams& hyp);
 
+    void setEpisodeSteps(int n) { episodeSteps_ = n; }
+
     std::vector<double> evaluate(const Ind& ind, int seed = -1);
 
     std::vector<double> getDistFitness(
@@ -58,17 +60,18 @@ public:
     // Run one episode and write trajectory CSV.
     // Columns: step,x,y,mu,vx,vy,omega,lidar_l,lidar_c,lidar_r,throttle,steering,reward
     // bestWi: index into WEIGHT_VALS used for the logged episode.
-    // evalSeed: the seed passed to evaluate() for this individual (not the episode seed).
-    // Warm-up episodes for wi < bestWi are run first to reproduce the SNN state from training.
+    // evalSeed: training evaluate() seed (directSeed=false) or direct episode seed (directSeed=true).
     void exportTrajectory(const std::vector<double>& wVec,
                           const std::vector<int>&    aVec,
                           int bestWi, int evalSeed,
-                          const std::string& outFile) const;
+                          const std::string& outFile,
+                          bool directSeed = false) const;
 
 private:
     int        nInput_;
     int        nOutput_;
     int        nReps_;
+    int        episodeSteps_ = EPISODE_STEPS;
     SnnEncoder encoder_;
     SnnDecoder decoder_;
     bool       resetBetweenSteps_;
