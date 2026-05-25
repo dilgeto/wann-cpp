@@ -110,6 +110,8 @@ void DataGatherer::save(int gen) {
             exportNet(prefix_ + "_best.out", b.wMat, b.nNodes, b.aVec);
             std::ofstream wif(prefix_ + "_best.wi");
             wif << bestWi_ << '\n';
+            std::ofstream gf(prefix_ + "_best.gen");
+            gf << gen << '\n';
         }
 
         // Per-generation snapshot.

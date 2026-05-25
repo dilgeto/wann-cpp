@@ -112,6 +112,35 @@ Network SnnCarTask::buildNetwork(const std::vector<double>& wVec,
     return net;
 }
 
+// Decode two output spike trains into (throttle, steering) ∈ [-1, 1].
+// FIRST_SPIKE: latency → [0,1] → [-1,1].
+// SPIKE_COUNT: min(1, n/10)*2-1 (RLDecoder handles saturation).
+// default (RATE/TTFS/POISSON/WTA/VOTING): n_spikes / max_spikes → [-1,1].
+static std::pair<double,double> decodeActions(
+    const std::vector<double>& spikes0,
+    const std::vector<double>& spikes1,
+    SnnDecoder decoder,
+    const RLDecoder& rl_decoder,
+    double max_spikes)
+{
+    double t, s;
+    switch (decoder) {
+        case SnnDecoder::FIRST_SPIKE:
+            t = rl_decoder.decodeContinuousAction(spikes0) * 2.0 - 1.0;
+            s = rl_decoder.decodeContinuousAction(spikes1) * 2.0 - 1.0;
+            break;
+        case SnnDecoder::SPIKE_COUNT:
+            t = rl_decoder.decodeContinuousAction(spikes0);
+            s = rl_decoder.decodeContinuousAction(spikes1);
+            break;
+        default:
+            t = static_cast<double>(spikes0.size()) / max_spikes * 2.0 - 1.0;
+            s = static_cast<double>(spikes1.size()) / max_spikes * 2.0 - 1.0;
+            break;
+    }
+    return { std::clamp(t, -1.0, 1.0), std::clamp(s, -1.0, 1.0) };
+}
+
 double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
 {
     net.fastReset();
@@ -144,10 +173,10 @@ double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed
     std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
     std::uniform_real_distribution<double> udist(0.0, 1.0);
 
-    const bool use_rldecoder = (decoder_ != SnnDecoder::SPIKE_COUNT);
-    const RLDecoder::DecodingType dec_type = (decoder_ == SnnDecoder::FIRST_SPIKE)
-        ? RLDecoder::DecodingType::FIRST_SPIKE
-        : RLDecoder::DecodingType::RATE;
+    const RLDecoder::DecodingType dec_type =
+        (decoder_ == SnnDecoder::FIRST_SPIKE) ? RLDecoder::DecodingType::FIRST_SPIKE :
+        (decoder_ == SnnDecoder::SPIKE_COUNT) ? RLDecoder::DecodingType::SPIKE_COUNT :
+                                                RLDecoder::DecodingType::RATE;
     RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
     const double max_spikes = static_cast<double>(window_steps) / 2.0;
 
@@ -235,19 +264,8 @@ double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed
             }
         }
 
-        double throttle, steering;
-        if (decoder_ == SnnDecoder::FIRST_SPIKE) {
-            throttle = rl_decoder.decodeContinuousAction(out_spikes0) * 2.0 - 1.0;
-            steering = rl_decoder.decodeContinuousAction(out_spikes1) * 2.0 - 1.0;
-        } else {
-            // RATE and SPIKE_COUNT: normalize by max_spikes.
-            // RLDecoder::decodeContinuousAction(RATE) caps at 100 Hz which saturates
-            // at 2 spikes in a 20 ms window, collapsing output to {-1, 0, +1}.
-            throttle = static_cast<double>(out_spikes0.size()) / max_spikes * 2.0 - 1.0;
-            steering = static_cast<double>(out_spikes1.size()) / max_spikes * 2.0 - 1.0;
-        }
-        throttle = std::clamp(throttle, -1.0, 1.0);
-        steering = std::clamp(steering, -1.0, 1.0);
+        auto [throttle, steering] = decodeActions(
+            out_spikes0, out_spikes1, decoder_, rl_decoder, max_spikes);
 
         rlt::set(action_mat, 0, 0, throttle);
         rlt::set(action_mat, 0, 1, steering);
@@ -327,9 +345,6 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
     if (directSeed) {
         episodeSeed = evalSeed;
     } else {
-        for (int wi = 0; wi < bestWi; ++wi)
-            for (int rep = 0; rep < nReps_; ++rep)
-                runEpisode(net, WEIGHT_VALS[wi], evalSeed * 10000 + wi * 100 + rep);
         episodeSeed = evalSeed * 10000 + bestWi * 100 + 0;
     }
     const double weight = WEIGHT_VALS[bestWi];
@@ -359,10 +374,10 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
     std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
     std::uniform_real_distribution<double> udist(0.0, 1.0);
 
-    const bool use_rldecoder = (decoder_ != SnnDecoder::SPIKE_COUNT);
-    const RLDecoder::DecodingType dec_type = (decoder_ == SnnDecoder::FIRST_SPIKE)
-        ? RLDecoder::DecodingType::FIRST_SPIKE
-        : RLDecoder::DecodingType::RATE;
+    const RLDecoder::DecodingType dec_type =
+        (decoder_ == SnnDecoder::FIRST_SPIKE) ? RLDecoder::DecodingType::FIRST_SPIKE :
+        (decoder_ == SnnDecoder::SPIKE_COUNT) ? RLDecoder::DecodingType::SPIKE_COUNT :
+                                                RLDecoder::DecodingType::RATE;
     RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
     const double max_spikes = static_cast<double>(window_steps) / 2.0;
 
@@ -453,19 +468,8 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
             }
         }
 
-        double throttle, steering;
-        if (decoder_ == SnnDecoder::FIRST_SPIKE) {
-            throttle = rl_decoder.decodeContinuousAction(out_spikes0) * 2.0 - 1.0;
-            steering = rl_decoder.decodeContinuousAction(out_spikes1) * 2.0 - 1.0;
-        } else {
-            // RATE and SPIKE_COUNT: normalize by max_spikes.
-            // RLDecoder::decodeContinuousAction(RATE) caps at 100 Hz which saturates
-            // at 2 spikes in a 20 ms window, collapsing output to {-1, 0, +1}.
-            throttle = static_cast<double>(out_spikes0.size()) / max_spikes * 2.0 - 1.0;
-            steering = static_cast<double>(out_spikes1.size()) / max_spikes * 2.0 - 1.0;
-        }
-        throttle = std::clamp(throttle, -1.0, 1.0);
-        steering = std::clamp(steering, -1.0, 1.0);
+        auto [throttle, steering] = decodeActions(
+            out_spikes0, out_spikes1, decoder_, rl_decoder, max_spikes);
 
         rlt::set(action_mat, 0, 0, throttle);
         rlt::set(action_mat, 0, 1, steering);

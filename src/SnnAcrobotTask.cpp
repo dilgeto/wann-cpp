@@ -354,9 +354,6 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
     if (directSeed) {
         episodeSeed = evalSeed;
     } else {
-        for (int wi = 0; wi < bestWi; ++wi)
-            for (int rep = 0; rep < nReps_; ++rep)
-                runEpisode(net, WEIGHT_VALS[wi], evalSeed * 10000 + wi * 100 + rep);
         episodeSeed = evalSeed * 10000 + bestWi * 100 + 0;
     }
     const double weight = WEIGHT_VALS[bestWi];
