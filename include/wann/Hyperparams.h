@@ -43,10 +43,11 @@ struct Hyperparams {
     double ann_absWCap        = 2.0;
 
     // --- SNN interface ---
-    // Encoder: "current" | "poisson" | "rate" | "ttfs" | "ttfs_log"
+    // Encoder: "current" | "poisson" | "rate" | "ttfs" | "ttfs_log" | "small" | "large"
     // Decoder: "spike_count" | "rate" | "first_spike"
     std::string snn_encoder   = "poisson";
     std::string snn_decoder   = "rate";
+    int         snn_neurons_per_var = 5;
 
     // --- reward shaping ---
     // Potential-based shaping: F(s,s') = scale * (phi(s') - phi(s))
@@ -91,6 +92,7 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.ann_absWCap,            "ann_absWCap");
     get(p.snn_encoder,            "snn_encoder");
     get(p.snn_decoder,            "snn_decoder");
+    get(p.snn_neurons_per_var,    "snn_neurons_per_var");
     get(p.reward_shaping_scale,      "reward_shaping_scale");
     get(p.snn_reset_between_steps,   "snn_reset_between_steps");
 }

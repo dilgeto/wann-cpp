@@ -4,7 +4,7 @@
 
 namespace wann {
 
-enum class SnnEncoder { CURRENT, POISSON, RATE, TTFS, TTFS_LOG };
+enum class SnnEncoder { CURRENT, POISSON, RATE, TTFS, TTFS_LOG, SMALL, LARGE };
 enum class SnnDecoder { SPIKE_COUNT, RATE, FIRST_SPIKE, VOTING, WTA };
 
 inline SnnEncoder parseEncoder(const std::string& s) {
@@ -13,8 +13,10 @@ inline SnnEncoder parseEncoder(const std::string& s) {
     if (s == "rate")     return SnnEncoder::RATE;
     if (s == "ttfs")     return SnnEncoder::TTFS;
     if (s == "ttfs_log") return SnnEncoder::TTFS_LOG;
+    if (s == "small")    return SnnEncoder::SMALL;
+    if (s == "large")    return SnnEncoder::LARGE;
     throw std::runtime_error("Unknown snn_encoder: \"" + s +
-                             "\" (valid: current, poisson, rate, ttfs, ttfs_log)");
+        "\" (valid: current, poisson, rate, ttfs, ttfs_log, small, large)");
 }
 
 inline SnnDecoder parseDecoder(const std::string& s) {

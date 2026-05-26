@@ -71,6 +71,7 @@ private:
     int        nInput_;
     int        nOutput_;
     int        nReps_;
+    int        neuronsPerVar_;
     int        episodeSteps_ = EPISODE_STEPS;
     SnnEncoder encoder_;
     SnnDecoder decoder_;

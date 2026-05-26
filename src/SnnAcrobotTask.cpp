@@ -2,6 +2,11 @@
 
 #include <core/simulator.hpp>
 #include <decoding/rlDecoder.hpp>
+#include <encoding/rateEncoder.hpp>
+#include <encoding/poissonEncoder.hpp>
+#include <encoding/ttfsEncoder.hpp>
+#include <encoding/rlEncoder.hpp>
+#include <memory>
 
 #include <rl_tools/operations/cpu.h>
 #include <rl_tools/rl/environments/acrobot/operations_cpu.h>
@@ -10,7 +15,6 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
-#include <random>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -32,6 +36,34 @@ using RNG       = typename rlt::devices::random::CPU::ENGINE<>;
 using ObsMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 6, false>>;
 using ActMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 1, false>>;
 
+namespace {
+std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed) {
+    constexpr double MAX_RATE   = 100.0;
+    constexpr double REF_PERIOD = 2.0;
+    switch (type) {
+        case wann::SnnEncoder::POISSON: {
+            auto e = std::make_unique<PoissonEncoder>(MAX_RATE, true, REF_PERIOD);
+            e->reseed(seed);
+            return e;
+        }
+        case wann::SnnEncoder::RATE: {
+            auto e = std::make_unique<RateEncoder>(MAX_RATE);
+            e->reseed(seed);
+            return e;
+        }
+        case wann::SnnEncoder::TTFS:
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LINEAR, 1e-9);
+        case wann::SnnEncoder::TTFS_LOG:
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LOGARITHMIC, 1e-9);
+        case wann::SnnEncoder::SMALL:
+        case wann::SnnEncoder::LARGE:
+            return nullptr;  // current injection, not spike trains
+        default:
+            return nullptr;  // CURRENT handled separately
+    }
+}
+} // anonymous namespace
+
 namespace wann {
 
 const double SnnAcrobotTask::WEIGHT_VALS[N_WEIGHTS] = {
@@ -40,6 +72,7 @@ const double SnnAcrobotTask::WEIGHT_VALS[N_WEIGHTS] = {
 
 SnnAcrobotTask::SnnAcrobotTask(const Hyperparams& hyp)
     : nInput_(hyp.ann_nInput), nOutput_(hyp.ann_nOutput), nReps_(hyp.alg_nReps)
+    , neuronsPerVar_(hyp.snn_neurons_per_var)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
     , shapingScale_(hyp.reward_shaping_scale)
@@ -149,12 +182,8 @@ double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episode
     const int        window_steps = static_cast<int>(SIM_WINDOW_MS);
     const int        n_channels   = nInput_ + 1;  // bias + observations
 
-    // --- Poisson encoder setup (only used when encoder_ == POISSON) ---
-    constexpr double MAX_RATE   = 100.0;  // Hz
-    constexpr double REF_PERIOD = 2.0;   // ms
-    constexpr double DT         = 1.0;   // ms
-    std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
-    std::uniform_real_distribution<double> udist(0.0, 1.0);
+    constexpr double DT = 1.0;
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
 
     // --- Decoder setup ---
     const bool use_discrete  = (decoder_ == SnnDecoder::VOTING || decoder_ == SnnDecoder::WTA);
@@ -177,7 +206,7 @@ double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episode
         std::vector<double>              output_spikes;
         std::vector<std::vector<double>> multi_spikes(nOutput_);
 
-        if (encoder_ != SnnEncoder::CURRENT) {
+        if (encoder_ != SnnEncoder::CURRENT && encoder_ != SnnEncoder::SMALL && encoder_ != SnnEncoder::LARGE) {
             // Normalize to [0,1]
             std::vector<double> norm(n_channels, 0.0);
             norm[0] = 1.0;
@@ -191,30 +220,7 @@ double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episode
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch) {
                 double v = std::clamp(norm[ch], 0.0, 1.0);
-                if (encoder_ == SnnEncoder::POISSON) {
-                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
-                    double last_t  = -REF_PERIOD - 1.0;
-                    for (int t = 0; t < window_steps; ++t) {
-                        double ct = static_cast<double>(t);
-                        if ((ct - last_t) >= REF_PERIOD && udist(enc_rng) < sp_prob) {
-                            spike_trains[ch].push_back(ct);
-                            last_t = ct;
-                        }
-                    }
-                } else if (encoder_ == SnnEncoder::RATE) {
-                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
-                    for (int t = 0; t < window_steps; ++t) {
-                        if (udist(enc_rng) < sp_prob)
-                            spike_trains[ch].push_back(static_cast<double>(t));
-                    }
-                } else {
-                    if (v < 1e-9) continue;
-                    double t_spike = (encoder_ == SnnEncoder::TTFS_LOG)
-                        ? (1.0 - std::log1p(v * (M_E - 1.0))) * (window_steps - 1)
-                        : (1.0 - v) * (window_steps - 1);
-                    spike_trains[ch].push_back(std::round(std::clamp(
-                        t_spike, 0.0, static_cast<double>(window_steps - 1))));
-                }
+                spike_trains[ch] = enc->encode(v, SIM_WINDOW_MS, DT);
             }
 
             for (int t = 0; t < window_steps; ++t) {
@@ -230,15 +236,43 @@ double SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episode
                 }
             }
         } else {
-            // CURRENT: map observations to [0, 20] mA and inject directly
             std::vector<double> currents(n_channels, 0.0);
             currents[0] = BIAS_CURRENT;
-            if (nInput_ >= 1) currents[1] = (rlt::get(obs_mat, 0, 0) + 1.0) * 10.0;
-            if (nInput_ >= 2) currents[2] = (rlt::get(obs_mat, 0, 1) + 1.0) * 10.0;
-            if (nInput_ >= 3) currents[3] = (rlt::get(obs_mat, 0, 2) + 1.0) * 10.0;
-            if (nInput_ >= 4) currents[4] = (rlt::get(obs_mat, 0, 3) + 1.0) * 10.0;
-            if (nInput_ >= 5) currents[5] = (rlt::get(obs_mat, 0, 4) / MAX_VEL_1 + 1.0) * 10.0;
-            if (nInput_ >= 6) currents[6] = (rlt::get(obs_mat, 0, 5) / MAX_VEL_2 + 1.0) * 10.0;
+
+            if (encoder_ == SnnEncoder::SMALL || encoder_ == SnnEncoder::LARGE) {
+                RLEncoder rl_enc(encoder_ == SnnEncoder::SMALL
+                                 ? RLEncoder::EncodingType::SMALL
+                                 : RLEncoder::EncodingType::LARGE,
+                                 100.0, 5, static_cast<size_t>(neuronsPerVar_));
+                const int n_obs = (encoder_ == SnnEncoder::SMALL)
+                                  ? nInput_ / 2
+                                  : nInput_ / neuronsPerVar_;
+                std::vector<double> obs_vals;
+                for (int i = 0; i < std::min(n_obs, 6); ++i)
+                    obs_vals.push_back(rlt::get(obs_mat, 0, i));
+                std::vector<double> enc_currents;
+                if (encoder_ == SnnEncoder::SMALL) {
+                    enc_currents = rl_enc.encodeObservationSmall(obs_vals);
+                } else {
+                    const std::vector<std::pair<double,double>> all_limits = {
+                        {-1.0, 1.0}, {-1.0, 1.0}, {-1.0, 1.0}, {-1.0, 1.0},
+                        {-MAX_VEL_1, MAX_VEL_1}, {-MAX_VEL_2, MAX_VEL_2},
+                    };
+                    enc_currents = rl_enc.encodeObservationLarge(
+                        obs_vals, std::vector<std::pair<double,double>>(
+                            all_limits.begin(), all_limits.begin() + obs_vals.size()));
+                }
+                for (size_t i = 0; i < enc_currents.size() && i + 1 < static_cast<size_t>(n_channels); ++i)
+                    currents[i + 1] = enc_currents[i];
+            } else {
+                // CURRENT: map observations to [0, 20] mA and inject directly
+                if (nInput_ >= 1) currents[1] = (rlt::get(obs_mat, 0, 0) + 1.0) * 10.0;
+                if (nInput_ >= 2) currents[2] = (rlt::get(obs_mat, 0, 1) + 1.0) * 10.0;
+                if (nInput_ >= 3) currents[3] = (rlt::get(obs_mat, 0, 2) + 1.0) * 10.0;
+                if (nInput_ >= 4) currents[4] = (rlt::get(obs_mat, 0, 3) + 1.0) * 10.0;
+                if (nInput_ >= 5) currents[5] = (rlt::get(obs_mat, 0, 4) / MAX_VEL_1 + 1.0) * 10.0;
+                if (nInput_ >= 6) currents[6] = (rlt::get(obs_mat, 0, 5) / MAX_VEL_2 + 1.0) * 10.0;
+            }
 
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);
@@ -377,11 +411,8 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
     const int        window_steps = static_cast<int>(SIM_WINDOW_MS);
     const int        n_channels   = nInput_ + 1;
 
-    constexpr double MAX_RATE   = 100.0;
-    constexpr double REF_PERIOD = 2.0;
-    constexpr double DT         = 1.0;
-    std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
-    std::uniform_real_distribution<double> udist(0.0, 1.0);
+    constexpr double DT = 1.0;
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
 
     const bool use_discrete  = (decoder_ == SnnDecoder::VOTING || decoder_ == SnnDecoder::WTA);
     const bool use_rldecoder = !use_discrete && (decoder_ != SnnDecoder::SPIKE_COUNT);
@@ -408,7 +439,7 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
         std::vector<double>              output_spikes;
         std::vector<std::vector<double>> multi_spikes(nOutput_);
 
-        if (encoder_ != SnnEncoder::CURRENT) {
+        if (encoder_ != SnnEncoder::CURRENT && encoder_ != SnnEncoder::SMALL && encoder_ != SnnEncoder::LARGE) {
             std::vector<double> norm(n_channels, 0.0);
             norm[0] = 1.0;
             if (nInput_ >= 1) norm[1] = (cos_th1 + 1.0) * 0.5;
@@ -421,30 +452,7 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch) {
                 double v = std::clamp(norm[ch], 0.0, 1.0);
-                if (encoder_ == SnnEncoder::POISSON) {
-                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
-                    double last_t  = -REF_PERIOD - 1.0;
-                    for (int t = 0; t < window_steps; ++t) {
-                        double ct = static_cast<double>(t);
-                        if ((ct - last_t) >= REF_PERIOD && udist(enc_rng) < sp_prob) {
-                            spike_trains[ch].push_back(ct);
-                            last_t = ct;
-                        }
-                    }
-                } else if (encoder_ == SnnEncoder::RATE) {
-                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
-                    for (int t = 0; t < window_steps; ++t) {
-                        if (udist(enc_rng) < sp_prob)
-                            spike_trains[ch].push_back(static_cast<double>(t));
-                    }
-                } else {
-                    if (v < 1e-9) continue;
-                    double t_spike = (encoder_ == SnnEncoder::TTFS_LOG)
-                        ? (1.0 - std::log1p(v * (M_E - 1.0))) * (window_steps - 1)
-                        : (1.0 - v) * (window_steps - 1);
-                    spike_trains[ch].push_back(std::round(std::clamp(
-                        t_spike, 0.0, static_cast<double>(window_steps - 1))));
-                }
+                spike_trains[ch] = enc->encode(v, SIM_WINDOW_MS, DT);
             }
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
@@ -461,12 +469,43 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
         } else {
             std::vector<double> currents(n_channels, 0.0);
             currents[0] = BIAS_CURRENT;
-            if (nInput_ >= 1) currents[1] = (cos_th1 + 1.0) * 10.0;
-            if (nInput_ >= 2) currents[2] = (sin_th1 + 1.0) * 10.0;
-            if (nInput_ >= 3) currents[3] = (cos_th2 + 1.0) * 10.0;
-            if (nInput_ >= 4) currents[4] = (sin_th2 + 1.0) * 10.0;
-            if (nInput_ >= 5) currents[5] = (dth1 / MAX_VEL_1 + 1.0) * 10.0;
-            if (nInput_ >= 6) currents[6] = (dth2 / MAX_VEL_2 + 1.0) * 10.0;
+
+            if (encoder_ == SnnEncoder::SMALL || encoder_ == SnnEncoder::LARGE) {
+                RLEncoder rl_enc(encoder_ == SnnEncoder::SMALL
+                                 ? RLEncoder::EncodingType::SMALL
+                                 : RLEncoder::EncodingType::LARGE,
+                                 100.0, 5, static_cast<size_t>(neuronsPerVar_));
+                const int n_obs = (encoder_ == SnnEncoder::SMALL)
+                                  ? nInput_ / 2
+                                  : nInput_ / neuronsPerVar_;
+                std::vector<double> obs_vals;
+                const double raw_obs[6] = { cos_th1, sin_th1, cos_th2, sin_th2, dth1, dth2 };
+                for (int i = 0; i < std::min(n_obs, 6); ++i)
+                    obs_vals.push_back(raw_obs[i]);
+                std::vector<double> enc_currents;
+                if (encoder_ == SnnEncoder::SMALL) {
+                    enc_currents = rl_enc.encodeObservationSmall(obs_vals);
+                } else {
+                    const std::vector<std::pair<double,double>> all_limits = {
+                        {-1.0, 1.0}, {-1.0, 1.0}, {-1.0, 1.0}, {-1.0, 1.0},
+                        {-MAX_VEL_1, MAX_VEL_1}, {-MAX_VEL_2, MAX_VEL_2},
+                    };
+                    enc_currents = rl_enc.encodeObservationLarge(
+                        obs_vals, std::vector<std::pair<double,double>>(
+                            all_limits.begin(), all_limits.begin() + obs_vals.size()));
+                }
+                for (size_t i = 0; i < enc_currents.size() && i + 1 < static_cast<size_t>(n_channels); ++i)
+                    currents[i + 1] = enc_currents[i];
+            } else {
+                // CURRENT: map observations to [0, 20] mA and inject directly
+                if (nInput_ >= 1) currents[1] = (cos_th1 + 1.0) * 10.0;
+                if (nInput_ >= 2) currents[2] = (sin_th1 + 1.0) * 10.0;
+                if (nInput_ >= 3) currents[3] = (cos_th2 + 1.0) * 10.0;
+                if (nInput_ >= 4) currents[4] = (sin_th2 + 1.0) * 10.0;
+                if (nInput_ >= 5) currents[5] = (dth1 / MAX_VEL_1 + 1.0) * 10.0;
+                if (nInput_ >= 6) currents[6] = (dth2 / MAX_VEL_2 + 1.0) * 10.0;
+            }
+
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);
                 net.step(weight);

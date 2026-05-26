@@ -2,6 +2,11 @@
 
 #include <core/simulator.hpp>
 #include <decoding/rlDecoder.hpp>
+#include <encoding/rateEncoder.hpp>
+#include <encoding/poissonEncoder.hpp>
+#include <encoding/ttfsEncoder.hpp>
+#include <encoding/rlEncoder.hpp>
+#include <memory>
 
 #include <rl_tools/operations/cpu.h>
 // Use operations_generic (not operations_cpu) to avoid the BMP file loader.
@@ -12,7 +17,6 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
-#include <random>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -30,6 +34,34 @@ using RNG       = typename rlt::devices::random::CPU::ENGINE<>;
 using ObsMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 9, false>>;
 using ActMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 2, false>>;
 
+namespace {
+std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed) {
+    constexpr double MAX_RATE   = 100.0;
+    constexpr double REF_PERIOD = 2.0;
+    switch (type) {
+        case wann::SnnEncoder::POISSON: {
+            auto e = std::make_unique<PoissonEncoder>(MAX_RATE, true, REF_PERIOD);
+            e->reseed(seed);
+            return e;
+        }
+        case wann::SnnEncoder::RATE: {
+            auto e = std::make_unique<RateEncoder>(MAX_RATE);
+            e->reseed(seed);
+            return e;
+        }
+        case wann::SnnEncoder::TTFS:
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LINEAR, 1e-9);
+        case wann::SnnEncoder::TTFS_LOG:
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LOGARITHMIC, 1e-9);
+        case wann::SnnEncoder::SMALL:
+        case wann::SnnEncoder::LARGE:
+            return nullptr;  // current injection, not spike trains
+        default:
+            return nullptr;  // CURRENT handled separately
+    }
+}
+} // anonymous namespace
+
 namespace wann {
 
 const double SnnCarTask::WEIGHT_VALS[N_WEIGHTS] = {
@@ -38,6 +70,7 @@ const double SnnCarTask::WEIGHT_VALS[N_WEIGHTS] = {
 
 SnnCarTask::SnnCarTask(const Hyperparams& hyp)
     : nInput_(hyp.ann_nInput), nOutput_(hyp.ann_nOutput), nReps_(hyp.alg_nReps)
+    , neuronsPerVar_(hyp.snn_neurons_per_var)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
     , resetBetweenSteps_(hyp.snn_reset_between_steps)
@@ -167,11 +200,8 @@ double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed
     const int window_steps = static_cast<int>(SIM_WINDOW_MS);
     const int n_channels   = nInput_ + 1;  // bias + 9 observations
 
-    constexpr double MAX_RATE   = 100.0;
-    constexpr double REF_PERIOD = 2.0;
-    constexpr double DT         = 1.0;
-    std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
-    std::uniform_real_distribution<double> udist(0.0, 1.0);
+    constexpr double DT = 1.0;
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
 
     const RLDecoder::DecodingType dec_type =
         (decoder_ == SnnDecoder::FIRST_SPIKE) ? RLDecoder::DecodingType::FIRST_SPIKE :
@@ -189,7 +219,7 @@ double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed
 
         std::vector<double> out_spikes0, out_spikes1;
 
-        if (encoder_ != SnnEncoder::CURRENT) {
+        if (encoder_ != SnnEncoder::CURRENT && encoder_ != SnnEncoder::SMALL && encoder_ != SnnEncoder::LARGE) {
             std::vector<double> norm(n_channels, 0.0);
             norm[0] = 1.0;
             // Position
@@ -209,30 +239,7 @@ double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch) {
                 double v = std::clamp(norm[ch], 0.0, 1.0);
-                if (encoder_ == SnnEncoder::POISSON) {
-                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
-                    double last_t  = -REF_PERIOD - 1.0;
-                    for (int t = 0; t < window_steps; ++t) {
-                        double ct = static_cast<double>(t);
-                        if ((ct - last_t) >= REF_PERIOD && udist(enc_rng) < sp_prob) {
-                            spike_trains[ch].push_back(ct);
-                            last_t = ct;
-                        }
-                    }
-                } else if (encoder_ == SnnEncoder::RATE) {
-                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
-                    for (int t = 0; t < window_steps; ++t) {
-                        if (udist(enc_rng) < sp_prob)
-                            spike_trains[ch].push_back(static_cast<double>(t));
-                    }
-                } else {
-                    if (v < 1e-9) continue;
-                    double t_spike = (encoder_ == SnnEncoder::TTFS_LOG)
-                        ? (1.0 - std::log1p(v * (M_E - 1.0))) * (window_steps - 1)
-                        : (1.0 - v) * (window_steps - 1);
-                    spike_trains[ch].push_back(std::round(std::clamp(
-                        t_spike, 0.0, static_cast<double>(window_steps - 1))));
-                }
+                spike_trains[ch] = enc->encode(v, SIM_WINDOW_MS, DT);
             }
 
             for (int t = 0; t < window_steps; ++t) {
@@ -245,15 +252,54 @@ double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed
         } else {
             std::vector<double> currents(n_channels, 0.0);
             currents[0] = BIAS_CURRENT;
-            if (nInput_ >= 1) currents[1] = (rlt::get(obs_mat, 0, 0) + BOUND) / (2.0 * BOUND) * 20.0;
-            if (nInput_ >= 2) currents[2] = (rlt::get(obs_mat, 0, 1) + BOUND) / (2.0 * BOUND) * 20.0;
-            if (nInput_ >= 3) currents[3] = (rlt::get(obs_mat, 0, 2) + M_PI) / (2.0 * M_PI) * 20.0;
-            if (nInput_ >= 4) currents[4] = (rlt::get(obs_mat, 0, 3) + VX_MAX) / (2.0 * VX_MAX) * 20.0;
-            if (nInput_ >= 5) currents[5] = (rlt::get(obs_mat, 0, 4) + VY_MAX) / (2.0 * VY_MAX) * 20.0;
-            if (nInput_ >= 6) currents[6] = (rlt::get(obs_mat, 0, 5) + OMEGA_MAX) / (2.0 * OMEGA_MAX) * 20.0;
-            if (nInput_ >= 7) currents[7] = rlt::get(obs_mat, 0, 6) * 20.0;
-            if (nInput_ >= 8) currents[8] = rlt::get(obs_mat, 0, 7) * 20.0;
-            if (nInput_ >= 9) currents[9] = rlt::get(obs_mat, 0, 8) * 20.0;
+
+            if (encoder_ == SnnEncoder::SMALL || encoder_ == SnnEncoder::LARGE) {
+                RLEncoder rl_enc(encoder_ == SnnEncoder::SMALL
+                                 ? RLEncoder::EncodingType::SMALL
+                                 : RLEncoder::EncodingType::LARGE,
+                                 100.0, 5, static_cast<size_t>(neuronsPerVar_));
+                const int n_obs = (encoder_ == SnnEncoder::SMALL)
+                                  ? nInput_ / 2
+                                  : nInput_ / neuronsPerVar_;
+                const double raw_obs[9] = {
+                    rlt::get(obs_mat, 0, 0), rlt::get(obs_mat, 0, 1), rlt::get(obs_mat, 0, 2),
+                    rlt::get(obs_mat, 0, 3), rlt::get(obs_mat, 0, 4), rlt::get(obs_mat, 0, 5),
+                    rlt::get(obs_mat, 0, 6), rlt::get(obs_mat, 0, 7), rlt::get(obs_mat, 0, 8),
+                };
+                std::vector<double> obs_vals(raw_obs, raw_obs + std::min(n_obs, 9));
+                std::vector<double> enc_currents;
+                if (encoder_ == SnnEncoder::SMALL) {
+                    enc_currents = rl_enc.encodeObservationSmall(obs_vals);
+                } else {
+                    constexpr std::array<std::pair<double,double>, 9> OBS_LIMITS = {{
+                        {-BOUND,     BOUND},
+                        {-BOUND,     BOUND},
+                        {-M_PI,      M_PI},
+                        {-VX_MAX,    VX_MAX},
+                        {-VY_MAX,    VY_MAX},
+                        {-OMEGA_MAX, OMEGA_MAX},
+                        {0.0, 1.0},
+                        {0.0, 1.0},
+                        {0.0, 1.0},
+                    }};
+                    const std::vector<std::pair<double,double>> limits(
+                        OBS_LIMITS.begin(), OBS_LIMITS.begin() + obs_vals.size());
+                    enc_currents = rl_enc.encodeObservationLarge(obs_vals, limits);
+                }
+                for (size_t i = 0; i < enc_currents.size() && i + 1 < static_cast<size_t>(n_channels); ++i)
+                    currents[i + 1] = enc_currents[i];
+            } else {
+                // CURRENT: normalized injection
+                if (nInput_ >= 1) currents[1] = (rlt::get(obs_mat, 0, 0) + BOUND) / (2.0 * BOUND) * 20.0;
+                if (nInput_ >= 2) currents[2] = (rlt::get(obs_mat, 0, 1) + BOUND) / (2.0 * BOUND) * 20.0;
+                if (nInput_ >= 3) currents[3] = (rlt::get(obs_mat, 0, 2) + M_PI) / (2.0 * M_PI) * 20.0;
+                if (nInput_ >= 4) currents[4] = (rlt::get(obs_mat, 0, 3) + VX_MAX) / (2.0 * VX_MAX) * 20.0;
+                if (nInput_ >= 5) currents[5] = (rlt::get(obs_mat, 0, 4) + VY_MAX) / (2.0 * VY_MAX) * 20.0;
+                if (nInput_ >= 6) currents[6] = (rlt::get(obs_mat, 0, 5) + OMEGA_MAX) / (2.0 * OMEGA_MAX) * 20.0;
+                if (nInput_ >= 7) currents[7] = rlt::get(obs_mat, 0, 6) * 20.0;
+                if (nInput_ >= 8) currents[8] = rlt::get(obs_mat, 0, 7) * 20.0;
+                if (nInput_ >= 9) currents[9] = rlt::get(obs_mat, 0, 8) * 20.0;
+            }
 
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);
@@ -368,11 +414,8 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
     const int  window_steps = static_cast<int>(SIM_WINDOW_MS);
     const int  n_channels   = nInput_ + 1;
 
-    constexpr double MAX_RATE   = 100.0;
-    constexpr double REF_PERIOD = 2.0;
-    constexpr double DT         = 1.0;
-    std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
-    std::uniform_real_distribution<double> udist(0.0, 1.0);
+    constexpr double DT = 1.0;
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
 
     const RLDecoder::DecodingType dec_type =
         (decoder_ == SnnDecoder::FIRST_SPIKE) ? RLDecoder::DecodingType::FIRST_SPIKE :
@@ -398,7 +441,7 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
 
         std::vector<double> out_spikes0, out_spikes1;
 
-        if (encoder_ != SnnEncoder::CURRENT) {
+        if (encoder_ != SnnEncoder::CURRENT && encoder_ != SnnEncoder::SMALL && encoder_ != SnnEncoder::LARGE) {
             std::vector<double> norm(n_channels, 0.0);
             norm[0] = 1.0;
             if (nInput_ >= 1) norm[1] = (x + BOUND) / (2.0 * BOUND);
@@ -414,30 +457,7 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch) {
                 double v = std::clamp(norm[ch], 0.0, 1.0);
-                if (encoder_ == SnnEncoder::POISSON) {
-                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
-                    double last_t  = -REF_PERIOD - 1.0;
-                    for (int t = 0; t < window_steps; ++t) {
-                        double ct = static_cast<double>(t);
-                        if ((ct - last_t) >= REF_PERIOD && udist(enc_rng) < sp_prob) {
-                            spike_trains[ch].push_back(ct);
-                            last_t = ct;
-                        }
-                    }
-                } else if (encoder_ == SnnEncoder::RATE) {
-                    double sp_prob = (v * MAX_RATE / 1000.0) * DT;
-                    for (int t = 0; t < window_steps; ++t) {
-                        if (udist(enc_rng) < sp_prob)
-                            spike_trains[ch].push_back(static_cast<double>(t));
-                    }
-                } else {
-                    if (v < 1e-9) continue;
-                    double t_spike = (encoder_ == SnnEncoder::TTFS_LOG)
-                        ? (1.0 - std::log1p(v * (M_E - 1.0))) * (window_steps - 1)
-                        : (1.0 - v) * (window_steps - 1);
-                    spike_trains[ch].push_back(std::round(std::clamp(
-                        t_spike, 0.0, static_cast<double>(window_steps - 1))));
-                }
+                spike_trains[ch] = enc->encode(v, SIM_WINDOW_MS, DT);
             }
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
@@ -449,15 +469,50 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
         } else {
             std::vector<double> currents(n_channels, 0.0);
             currents[0] = BIAS_CURRENT;
-            if (nInput_ >= 1) currents[1] = (x + BOUND) / (2.0 * BOUND) * 20.0;
-            if (nInput_ >= 2) currents[2] = (y + BOUND) / (2.0 * BOUND) * 20.0;
-            if (nInput_ >= 3) currents[3] = (mu + M_PI) / (2.0 * M_PI) * 20.0;
-            if (nInput_ >= 4) currents[4] = (vx + VX_MAX) / (2.0 * VX_MAX) * 20.0;
-            if (nInput_ >= 5) currents[5] = (vy + VY_MAX) / (2.0 * VY_MAX) * 20.0;
-            if (nInput_ >= 6) currents[6] = (omega + OMEGA_MAX) / (2.0 * OMEGA_MAX) * 20.0;
-            if (nInput_ >= 7) currents[7] = lidar_l * 20.0;
-            if (nInput_ >= 8) currents[8] = lidar_c * 20.0;
-            if (nInput_ >= 9) currents[9] = lidar_r * 20.0;
+
+            if (encoder_ == SnnEncoder::SMALL || encoder_ == SnnEncoder::LARGE) {
+                RLEncoder rl_enc(encoder_ == SnnEncoder::SMALL
+                                 ? RLEncoder::EncodingType::SMALL
+                                 : RLEncoder::EncodingType::LARGE,
+                                 100.0, 5, static_cast<size_t>(neuronsPerVar_));
+                const int n_obs = (encoder_ == SnnEncoder::SMALL)
+                                  ? nInput_ / 2
+                                  : nInput_ / neuronsPerVar_;
+                const double raw_obs[9] = { x, y, mu, vx, vy, omega, lidar_l, lidar_c, lidar_r };
+                std::vector<double> obs_vals(raw_obs, raw_obs + std::min(n_obs, 9));
+                std::vector<double> enc_currents;
+                if (encoder_ == SnnEncoder::SMALL) {
+                    enc_currents = rl_enc.encodeObservationSmall(obs_vals);
+                } else {
+                    constexpr std::array<std::pair<double,double>, 9> OBS_LIMITS = {{
+                        {-BOUND,     BOUND},
+                        {-BOUND,     BOUND},
+                        {-M_PI,      M_PI},
+                        {-VX_MAX,    VX_MAX},
+                        {-VY_MAX,    VY_MAX},
+                        {-OMEGA_MAX, OMEGA_MAX},
+                        {0.0, 1.0},
+                        {0.0, 1.0},
+                        {0.0, 1.0},
+                    }};
+                    const std::vector<std::pair<double,double>> limits(
+                        OBS_LIMITS.begin(), OBS_LIMITS.begin() + obs_vals.size());
+                    enc_currents = rl_enc.encodeObservationLarge(obs_vals, limits);
+                }
+                for (size_t i = 0; i < enc_currents.size() && i + 1 < static_cast<size_t>(n_channels); ++i)
+                    currents[i + 1] = enc_currents[i];
+            } else {
+                // CURRENT: normalized injection
+                if (nInput_ >= 1) currents[1] = (x + BOUND) / (2.0 * BOUND) * 20.0;
+                if (nInput_ >= 2) currents[2] = (y + BOUND) / (2.0 * BOUND) * 20.0;
+                if (nInput_ >= 3) currents[3] = (mu + M_PI) / (2.0 * M_PI) * 20.0;
+                if (nInput_ >= 4) currents[4] = (vx + VX_MAX) / (2.0 * VX_MAX) * 20.0;
+                if (nInput_ >= 5) currents[5] = (vy + VY_MAX) / (2.0 * VY_MAX) * 20.0;
+                if (nInput_ >= 6) currents[6] = (omega + OMEGA_MAX) / (2.0 * OMEGA_MAX) * 20.0;
+                if (nInput_ >= 7) currents[7] = lidar_l * 20.0;
+                if (nInput_ >= 8) currents[8] = lidar_c * 20.0;
+                if (nInput_ >= 9) currents[9] = lidar_r * 20.0;
+            }
 
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);

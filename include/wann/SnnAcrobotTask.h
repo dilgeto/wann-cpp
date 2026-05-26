@@ -66,6 +66,7 @@ private:
     int        nInput_;
     int        nOutput_;
     int        nReps_;
+    int        neuronsPerVar_;
     SnnEncoder encoder_;
     SnnDecoder decoder_;
     double     shapingScale_;
