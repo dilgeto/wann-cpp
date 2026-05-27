@@ -22,8 +22,8 @@
     "select_tournSize":      8,
     "save_mod":              10,
     "bestReps":              20,
-    "snn_encoder":           "poisson",
-    "snn_decoder":           "voting",
+    "snn_encoder":           "current",
+    "snn_decoder":           "wta",
     "snn_reset_between_steps": true,
-    "reward_shaping_scale":  1.0
+    "reward_shaping_scale":  10.0
 }

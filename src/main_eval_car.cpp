@@ -98,35 +98,40 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "Evaluando " << nEpisodes << " episodios (seed base=" << seed << ")...\n\n";
-    auto rewards = task.evalEpisodes(wVec, aVec, chosenWeight, nEpisodes, seed);
+    auto [rewards_shaped, rewards_orig] = task.evalEpisodes(wVec, aVec, chosenWeight, nEpisodes, seed);
 
-    const double mean = std::accumulate(rewards.begin(), rewards.end(), 0.0) / nEpisodes;
-    double sq = 0;
-    for (double r : rewards) sq += (r - mean) * (r - mean);
-    const double std_dev = std::sqrt(sq / nEpisodes);
-    const double rmin = *std::min_element(rewards.begin(), rewards.end());
-    const double rmax = *std::max_element(rewards.begin(), rewards.end());
+    auto stats = [&](const std::vector<double>& v) {
+        double mean = std::accumulate(v.begin(), v.end(), 0.0) / nEpisodes;
+        double sq = 0; for (double r : v) sq += (r - mean) * (r - mean);
+        return std::make_tuple(mean, std::sqrt(sq / nEpisodes),
+                               *std::min_element(v.begin(), v.end()),
+                               *std::max_element(v.begin(), v.end()));
+    };
+    auto [mean_s, std_s, min_s, max_s] = stats(rewards_shaped);
+    auto [mean_o, std_o, min_o, max_o] = stats(rewards_orig);
 
     std::cout << std::fixed << std::setprecision(2);
     for (int i = 0; i < nEpisodes; ++i)
-        std::cout << "  ep " << std::setw(3) << i << ": " << rewards[i] << '\n';
+        std::cout << "  ep " << std::setw(3) << i
+                  << ": shaped=" << rewards_shaped[i]
+                  << "  original=" << rewards_orig[i] << '\n';
     std::cout << "\nResumen (" << nEpisodes << " episodios):\n"
-              << "  Media:  " << mean    << '\n'
-              << "  StdDev: " << std_dev << '\n'
-              << "  Min:    " << rmin    << '\n'
-              << "  Max:    " << rmax    << '\n';
+              << "  [Shaped]   Media=" << mean_s << "  StdDev=" << std_s
+              << "  Min=" << min_s << "  Max=" << max_s << '\n'
+              << "  [Original] Media=" << mean_o << "  StdDev=" << std_o
+              << "  Min=" << min_o << "  Max=" << max_o << '\n';
 
     if (!saveArg.empty()) {
         int epToSave;
         if (saveArg == "best") {
             epToSave = static_cast<int>(
-                std::max_element(rewards.begin(), rewards.end()) - rewards.begin());
+                std::max_element(rewards_shaped.begin(), rewards_shaped.end()) - rewards_shaped.begin());
             std::cout << "\nGuardando episodio " << epToSave
-                      << " (mejor, reward=" << rewards[epToSave] << ")...\n";
+                      << " (mejor, shaped=" << rewards_shaped[epToSave] << ")...\n";
         } else {
             epToSave = std::atoi(saveArg.c_str());
             std::cout << "\nGuardando episodio " << epToSave
-                      << " (reward=" << rewards[epToSave] << ")...\n";
+                      << " (shaped=" << rewards_shaped[epToSave] << ")...\n";
         }
 
         if (outFile.empty()) {

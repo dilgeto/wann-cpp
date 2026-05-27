@@ -7,6 +7,7 @@
 
 #include <core/network.hpp>
 
+#include <utility>
 #include <vector>
 
 namespace wann {
@@ -51,11 +52,13 @@ public:
 
     int numWeightVals() const override { return N_WEIGHTS; }
 
-    // Run nEpisodes with the given shared weight; returns per-episode rewards.
-    std::vector<double> evalEpisodes(const std::vector<double>& wVec,
-                                     const std::vector<int>&    aVec,
-                                     double weight, int nEpisodes,
-                                     int baseSeed) const;
+    // Run nEpisodes with the given shared weight.
+    // Returns {shaped_rewards, original_rewards}; shaped == original (no shaping for Car).
+    std::pair<std::vector<double>,std::vector<double>>
+    evalEpisodes(const std::vector<double>& wVec,
+                 const std::vector<int>&    aVec,
+                 double weight, int nEpisodes,
+                 int baseSeed) const;
 
     // Run one episode and write trajectory CSV.
     // Columns: step,x,y,mu,vx,vy,omega,lidar_l,lidar_c,lidar_r,throttle,steering,reward
@@ -83,7 +86,7 @@ private:
     Network buildNetwork(const std::vector<double>& wVec,
                          const std::vector<int>&    aVec) const;
 
-    double runEpisode(Network& net, double sharedWeight, int episodeSeed) const;
+    std::pair<double,double> runEpisode(Network& net, double sharedWeight, int episodeSeed) const;
 };
 
 } // namespace wann

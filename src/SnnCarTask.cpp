@@ -174,7 +174,7 @@ static std::pair<double,double> decodeActions(
     return { std::clamp(t, -1.0, 1.0), std::clamp(s, -1.0, 1.0) };
 }
 
-double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
+std::pair<double,double> SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
 {
     net.fastReset();
     DEVICE device;
@@ -323,7 +323,7 @@ double SnnCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed
         if (rlt::terminated(device, env, params, state, rng)) break;
     }
 
-    return total_reward;
+    return {total_reward, total_reward};
 }
 
 std::vector<double> SnnCarTask::evaluate(const Ind& ind, int seed)
@@ -335,7 +335,7 @@ std::vector<double> SnnCarTask::evaluate(const Ind& ind, int seed)
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
             int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed);
+            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
     }
@@ -354,23 +354,26 @@ std::vector<double> SnnCarTask::getDistFitness(
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
             int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed);
+            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
     }
     return rewards;
 }
 
-std::vector<double> SnnCarTask::evalEpisodes(
+std::pair<std::vector<double>,std::vector<double>> SnnCarTask::evalEpisodes(
         const std::vector<double>& wVec,
         const std::vector<int>&    aVec,
         double weight, int nEpisodes, int baseSeed) const
 {
     Network net = buildNetwork(wVec, aVec);
-    std::vector<double> rewards(nEpisodes);
-    for (int i = 0; i < nEpisodes; ++i)
-        rewards[i] = runEpisode(net, weight, baseSeed + i);
-    return rewards;
+    std::vector<double> shaped(nEpisodes), original(nEpisodes);
+    for (int i = 0; i < nEpisodes; ++i) {
+        auto [s, o] = runEpisode(net, weight, baseSeed + i);
+        shaped[i]   = s;
+        original[i] = o;
+    }
+    return {shaped, original};
 }
 
 void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,

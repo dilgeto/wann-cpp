@@ -24,5 +24,6 @@
     "bestReps":                 20,
     "snn_encoder":              "ttfs",
     "snn_decoder":              "rate",
-    "snn_reset_between_steps":  true
+    "snn_reset_between_steps":  true,
+    "snn_neurons_per_var":      5
 }

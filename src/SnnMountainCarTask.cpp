@@ -146,7 +146,7 @@ Network SnnMountainCarTask::buildNetwork(const std::vector<double>& wVec,
     return net;
 }
 
-double SnnMountainCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
+std::pair<double,double> SnnMountainCarTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
 {
     net.fastReset();
     DEVICE device;
@@ -181,7 +181,8 @@ double SnnMountainCarTask::runEpisode(Network& net, double sharedWeight, int epi
     RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
     const double max_spikes = static_cast<double>(window_steps) / 2.0;
 
-    double total_reward = 0.0;
+    double total_shaped   = 0.0;
+    double total_original = 0.0;
 
     for (TI step = 0; step < Env::EPISODE_STEP_LIMIT; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
@@ -270,10 +271,12 @@ double SnnMountainCarTask::runEpisode(Network& net, double sharedWeight, int epi
 
         rlt::set(action_mat, 0, 0, action);
         rlt::step(device, env, params, state, action_mat, next_state, rng);
-        total_reward += rlt::reward(device, env, params, state, action_mat, next_state, rng);
+        double step_r = rlt::reward(device, env, params, state, action_mat, next_state, rng);
+        total_original += step_r;
+        total_shaped   += step_r;
 
         if (shapingScale_ != 0.0)
-            total_reward += shapingScale_ * (std::sin(3.0 * next_state.position)
+            total_shaped += shapingScale_ * (std::sin(3.0 * next_state.position)
                                            - std::sin(3.0 * state.position));
 
         state = next_state;
@@ -281,7 +284,7 @@ double SnnMountainCarTask::runEpisode(Network& net, double sharedWeight, int epi
         if (rlt::terminated(device, env, params, state, rng)) break;
     }
 
-    return total_reward;
+    return {total_shaped, total_original};
 }
 
 std::vector<double> SnnMountainCarTask::evaluate(const Ind& ind, int seed)
@@ -293,7 +296,7 @@ std::vector<double> SnnMountainCarTask::evaluate(const Ind& ind, int seed)
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
             int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed);
+            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
     }
@@ -312,23 +315,26 @@ std::vector<double> SnnMountainCarTask::getDistFitness(
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
             int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed);
+            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
     }
     return rewards;
 }
 
-std::vector<double> SnnMountainCarTask::evalEpisodes(
+std::pair<std::vector<double>,std::vector<double>> SnnMountainCarTask::evalEpisodes(
         const std::vector<double>& wVec,
         const std::vector<int>&    aVec,
         double weight, int nEpisodes, int baseSeed) const
 {
     Network net = buildNetwork(wVec, aVec);
-    std::vector<double> rewards(nEpisodes);
-    for (int i = 0; i < nEpisodes; ++i)
-        rewards[i] = runEpisode(net, weight, baseSeed + i);
-    return rewards;
+    std::vector<double> shaped(nEpisodes), original(nEpisodes);
+    for (int i = 0; i < nEpisodes; ++i) {
+        auto [s, o] = runEpisode(net, weight, baseSeed + i);
+        shaped[i]   = s;
+        original[i] = o;
+    }
+    return {shaped, original};
 }
 
 void SnnMountainCarTask::exportTrajectory(const std::vector<double>& wVec,
