@@ -34,7 +34,7 @@ public:
     static const     double WEIGHT_VALS[N_WEIGHTS];
     static constexpr double BIAS_CURRENT  = 50.0;    // mA
     static constexpr double SIM_WINDOW_MS = 20.0;    // ms per env step
-    static constexpr int    EPISODE_STEPS = 500;     // max env steps per episode
+    static constexpr int    EPISODE_STEPS = 1000;     // max env steps per episode
     static constexpr double VX_MAX        = 3.0;     // m/s – normalisation bound
     static constexpr double VY_MAX        = 2.0;     // m/s
     static constexpr double OMEGA_MAX     = 10.0;    // rad/s
