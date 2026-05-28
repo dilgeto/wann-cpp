@@ -1,0 +1,3 @@
+python replay_acrobot.py --dir log/acrobot_gym_replay
+python replay.py --dir log/car_ttfs_replay
+python replay_mountain_car.py --dir log/snn_mountain_car_replay
