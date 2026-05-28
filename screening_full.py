@@ -38,6 +38,7 @@ Dependencies
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import subprocess
@@ -217,7 +218,13 @@ def run_phase2(
 
     study.optimize(objective, n_trials=n_trials, n_jobs=jobs, catch=(Exception,))
 
-    df = pd.DataFrame(results)
+    # Always build df with explicit columns so downstream code never sees a
+    # column-less df even when all trials failed.
+    col_order = ["trial", "peak_fitness"] + list(space.keys())
+    if results:
+        df = pd.DataFrame(results)[col_order]
+    else:
+        df = pd.DataFrame(columns=col_order)
     csv_path = out_dir / "p2_results.csv"
     df.to_csv(csv_path, index=False)
     print(f"\nPhase 2 complete: {len(df)} successful / {n_trials} trials")
@@ -300,8 +307,6 @@ def run_phase3(
                 **params,
             })
 
-    # Run all in parallel using threads (subprocesses release the GIL)
-    import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
         futures = [pool.submit(run_one, r, si, p) for r, si, p in work]
         concurrent.futures.wait(futures)
@@ -324,7 +329,7 @@ def run_phase3(
         )
 
     summary.to_csv(out_dir / "p3_summary.csv", index=False)
-    return df, summary
+    return df, summary  # type: ignore[return-value]
 
 # ── Analysis ──────────────────────────────────────────────────────────────────
 
@@ -534,9 +539,17 @@ def main() -> None:
                 print(f"ERROR: {p2_path} not found. Run phase2 first.",
                       file=sys.stderr)
                 sys.exit(1)
-            p2_df = pd.read_csv(p2_path)
+            try:
+                p2_df = pd.read_csv(p2_path)
+            except pd.errors.EmptyDataError:
+                print(f"ERROR: {p2_path} is empty — run phase2 first.", file=sys.stderr)
+                sys.exit(1)
+            except Exception as exc:
+                print(f"ERROR: could not read {p2_path}: {exc}", file=sys.stderr)
+                sys.exit(1)
 
-        if len(p2_df.dropna(subset=["peak_fitness"])) < args.top:
+        if "peak_fitness" not in p2_df.columns or \
+                len(p2_df.dropna(subset=["peak_fitness"])) < args.top:
             print(f"ERROR: need at least {args.top} successful phase-2 trials "
                   f"(have {len(p2_df.dropna(subset=['peak_fitness']))}).",
                   file=sys.stderr)

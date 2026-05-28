@@ -38,6 +38,7 @@ Dependencies
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import subprocess
@@ -261,7 +262,6 @@ def _read_peak(path: Path) -> float | None:
 
 
 def _make_objective(
-    task:            str,
     run_key:         str,
     space:           dict[str, tuple],
     fidelity:        dict,
@@ -291,7 +291,6 @@ def _make_objective(
         # fixed_overrides (e.g. snn_encoder, snn_decoder) applied last so they
         # cannot be overridden by TPE suggestions.
         merged  = {**params, **fidelity_with_ckpt, **fixed_overrides}
-        _ = run_key_trial  # unused; outer run_key is used for dirs above
 
         cfg_path   = cfg_dir / f"{trial_key}.json"
         prefix     = f"reduce_{run_key}/{trial_key}"
@@ -355,7 +354,6 @@ def _make_objective(
 # ── One optimization round ────────────────────────────────────────────────────
 
 def run_round(
-    task:            str,
     run_key:         str,
     round_idx:       int,
     space:           dict[str, tuple],
@@ -386,7 +384,7 @@ def run_round(
     lock = threading.Lock()
 
     objective = _make_objective(
-        task, run_key, space, fidelity, base_config, executable,
+        run_key, space, fidelity, base_config, executable,
         omp, seed, round_idx, results, lock, fixed_overrides,
     )
 
@@ -413,7 +411,7 @@ def run_round(
 
 # ── Space reduction report ────────────────────────────────────────────────────
 
-def _print_reduction(round_idx: int, space_before: dict, space_after: dict,
+def _print_reduction(round_idx: int, space_before: dict,
                      report: dict, K: int) -> None:
     print(f"\n── Space after round {round_idx} (K={K} bins, α=0.05) ──")
     any_change = False
@@ -469,10 +467,23 @@ def cmd_full(
     # Load existing results (resume support)
     all_results: list[dict] = []
     if results_csv.exists():
-        all_results = pd.read_csv(results_csv).to_dict("records")
-        print(f"Resuming: loaded {len(all_results)} existing results.")
+        try:
+            all_results = pd.read_csv(results_csv).to_dict("records")
+            print(f"Resuming: loaded {len(all_results)} existing results.")
+        except Exception:
+            print("Resuming: existing results.csv is empty or corrupt — starting fresh.")
 
+    # Restore narrowed space from previous rounds if resuming
     space = dict(INITIAL_SPACE)
+    if space_log.exists():
+        with open(space_log) as f:
+            last_entry = None
+            for line in f:
+                if line.strip():
+                    last_entry = json.loads(line)
+        if last_entry is not None:
+            space = {p: tuple(v) for p, v in last_entry["space"].items()}
+            print(f"Resuming: restored space from round {last_entry['round']}.")
 
     print(f"\n{'='*66}")
     print(f"  Task: {task}   run key: {rkey}")
@@ -490,7 +501,7 @@ def cmd_full(
         print()
 
         new_results = run_round(
-            task, rkey, r, space, n, jobs, omp, seed,
+            rkey, r, space, n, jobs, omp, seed,
             fidelity, base_config, executable, fixed_overrides,
         )
         all_results.extend(new_results)
@@ -520,7 +531,7 @@ def cmd_full(
         with open(space_log, "a") as f:
             f.write(json.dumps(log_entry) + "\n")
 
-        _print_reduction(r, space_before, space, report, K)
+        _print_reduction(r, space_before, report, K)
 
         # Convergence check
         any_eliminated = any(info["eliminated_bins"] for info in report.values())
