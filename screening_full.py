@@ -45,6 +45,7 @@ import subprocess
 import sys
 import threading
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,7 @@ from scipy import stats as ss
 try:
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+    warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
 except ImportError:
     print("ERROR: pip install optuna", file=sys.stderr)
     sys.exit(1)
@@ -75,6 +77,7 @@ from screening_reduce import (
     STATS_COLS,
     _read_peak,
     make_run_key,
+    encoder_nInput,
 )
 
 # ── Full fidelity (from each task's base JSON) ────────────────────────────────
@@ -483,6 +486,9 @@ def main() -> None:
     fixed_overrides: dict = {}
     if args.encoder:
         fixed_overrides["snn_encoder"] = args.encoder
+        n_input = encoder_nInput(args.encoder, TASK_DEFAULTS[args.task]["n_obs"])
+        if n_input is not None:
+            fixed_overrides["ann_nInput"] = n_input
     if args.decoder:
         fixed_overrides["snn_decoder"] = args.decoder
 

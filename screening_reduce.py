@@ -45,6 +45,7 @@ import subprocess
 import sys
 import threading
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,7 @@ from scipy import stats as ss
 try:
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+    warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
 except ImportError:
     print("ERROR: pip install optuna", file=sys.stderr)
     sys.exit(1)
@@ -85,6 +87,7 @@ TASK_DEFAULTS: dict[str, dict] = {
     "mountain_car": {
         "executable":  "./build/wann_mountain_car",
         "base_config": "p/mountain_car_snn.json",
+        "n_obs": 2,   # number of observation variables
         "fidelity": {
             "maxGen": 64, "popSize": 64, "alg_nVals": 4,
             "alg_nReps": 2, "bestReps": 5,
@@ -93,6 +96,7 @@ TASK_DEFAULTS: dict[str, dict] = {
     "acrobot": {
         "executable":  "./build/wann_acrobot",
         "base_config": "p/acrobot_snn.json",
+        "n_obs": 6,
         "fidelity": {
             "maxGen": 128, "popSize": 96, "alg_nVals": 4,
             "alg_nReps": 2, "bestReps": 5,
@@ -101,6 +105,7 @@ TASK_DEFAULTS: dict[str, dict] = {
     "car": {
         "executable":  "./build/wann_car",
         "base_config": "p/car_snn.json",
+        "n_obs": 9,
         "fidelity": {
             "maxGen": 512, "popSize": 128, "alg_nVals": 4,
             "alg_nReps": 3, "bestReps": 5,
@@ -109,12 +114,30 @@ TASK_DEFAULTS: dict[str, dict] = {
     "pendulum": {
         "executable":  "./build/wann_snn",
         "base_config": "p/pendulum_snn.json",
+        "n_obs": 3,
         "fidelity": {
             "maxGen": 64, "popSize": 64, "alg_nVals": 4,
             "alg_nReps": 2, "bestReps": 5,
         },
     },
 }
+
+
+def encoder_nInput(encoder: str | None, n_obs: int,
+                   neurons_per_var: int = 5) -> int | None:
+    """
+    Return the ann_nInput required for population-coding encoders, or None
+    if the encoder uses one neuron per observation variable (no change needed).
+
+      small : 2 neurons per variable  →  n_obs * 2
+      large : neurons_per_var per var →  n_obs * neurons_per_var
+      others: 1 neuron per variable   →  no override needed
+    """
+    if encoder == "small":
+        return n_obs * 2
+    if encoder == "large":
+        return n_obs * neurons_per_var
+    return None
 
 # ── Initial search space (10 hyperparameters) ─────────────────────────────────
 # Format: param → (kind, lo, hi)
@@ -451,10 +474,13 @@ def cmd_full(
     fidelity = dict(TASK_DEFAULTS[task]["fidelity"])
     rkey = make_run_key(task, encoder, decoder)
 
-    # Fixed overrides: encoder/decoder passed to every C++ run
+    # Fixed overrides: encoder/decoder (+ ann_nInput for population encoders)
     fixed_overrides: dict = {}
     if encoder:
         fixed_overrides["snn_encoder"] = encoder
+        n_input = encoder_nInput(encoder, TASK_DEFAULTS[task]["n_obs"])
+        if n_input is not None:
+            fixed_overrides["ann_nInput"] = n_input
     if decoder:
         fixed_overrides["snn_decoder"] = decoder
 
