@@ -359,11 +359,15 @@ def cmd_analyse(run_key: str, n_top: int = 5) -> None:
                      f"{p2_ok['peak_fitness'].max():.4f}]")
         lines.append("")
 
-        lines.append(f"── Top {n_top} configs (Phase 2) ──")
-        top = p2_ok.nlargest(n_top, "peak_fitness")[
-            ["trial", "peak_fitness"] + hp_cols]
-        lines.append(top.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
-        lines.append("")
+        if len(p2_ok) == 0:
+            lines.append("No successful trials — skipping analysis.")
+            lines.append("")
+        else:
+            lines.append(f"── Top {n_top} configs (Phase 2) ──")
+            top = p2_ok.nlargest(n_top, "peak_fitness")[
+                ["trial", "peak_fitness"] + hp_cols]
+            lines.append(top.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+            lines.append("")
 
         # Spearman
         if len(p2_ok) >= 5:
@@ -418,15 +422,20 @@ def cmd_analyse(run_key: str, n_top: int = 5) -> None:
         lines.append("")
 
         # Best config detail
-        best = summary.loc[summary["mean"].idxmax()]
-        lines.append(f"── Best validated config (rank {int(best['rank'])}) ──")
-        lines.append(f"  mean={best['mean']:.4f}  std={best['std']:.4f}  "
-                     f"min={best['min']:.4f}  max={best['max']:.4f}")
-        for col in hp_cols_p3:
-            val = best[col]
-            fmt = f"{val:.4f}" if isinstance(val, float) else str(val)
-            lines.append(f"  {col:<36}  {fmt}")
-        lines.append("")
+        valid_means = summary["mean"].dropna()
+        if len(valid_means) == 0:
+            lines.append("No successful validation runs.")
+            lines.append("")
+        else:
+            best = summary.loc[valid_means.idxmax()]
+            lines.append(f"── Best validated config (rank {int(best['rank'])}) ──")
+            lines.append(f"  mean={best['mean']:.4f}  std={best['std']:.4f}  "
+                         f"min={best['min']:.4f}  max={best['max']:.4f}")
+            for col in hp_cols_p3:
+                val = best[col]
+                fmt = f"{val:.4f}" if isinstance(val, float) else str(val)
+                lines.append(f"  {col:<36}  {fmt}")
+            lines.append("")
 
     lines.append("=" * W)
     report = "\n".join(lines)

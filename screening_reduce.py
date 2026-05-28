@@ -607,7 +607,7 @@ def cmd_analyse(run_key: str, n_top: int = 5) -> None:
                 if elim:
                     lines.append(f"  Round {r}:")
                     for p, bins in elim.items():
-                        lo, hi = entry["space"][p][:2]
+                        _, lo, hi = entry["space"][p]
                         lines.append(f"    {p:<36} bins {bins} → [{lo:.4g}, {hi:.4g}]")
                 else:
                     lines.append(f"  Round {r}: no bins eliminated")
