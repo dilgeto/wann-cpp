@@ -139,12 +139,23 @@ def _run_subprocess(
     cmd = [executable, "-d", base_config, "-p", str(cfg_path),
            "-o", log_prefix, "-s", str(seed)]
 
+    err_path = Path("log") / (log_prefix + "_stderr.txt")
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               env=env, timeout=7200)
         if proc.returncode != 0:
+            if proc.stderr or proc.stdout:
+                err_path.write_text(
+                    f"exit code: {proc.returncode}\n"
+                    f"--- stderr ---\n{proc.stderr}\n"
+                    f"--- stdout ---\n{proc.stdout}\n"
+                )
             return None
-    except (subprocess.TimeoutExpired, Exception):
+    except subprocess.TimeoutExpired:
+        err_path.write_text("TIMEOUT after 7200s\n")
+        return None
+    except Exception as exc:
+        err_path.write_text(f"EXCEPTION: {exc}\n")
         return None
 
     stats_file = Path("log") / (log_prefix + "_stats.out")
