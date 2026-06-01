@@ -125,6 +125,7 @@ def _run_subprocess(
     seed:        int,
     log_prefix:  str,           # relative prefix passed to -o
     cfg_path:    Path,
+    timeout:     int | None = None,  # None = wait indefinitely
 ) -> float | None:
     """Write config, launch C++ subprocess, return peak fitness."""
     merged = {**params, **extra_cfg}
@@ -142,7 +143,7 @@ def _run_subprocess(
     err_path = Path("log") / (log_prefix + "_stderr.txt")
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
-                              env=env, timeout=7200)
+                              env=env, timeout=timeout)
         if proc.returncode != 0:
             if proc.stderr or proc.stdout:
                 err_path.write_text(
@@ -152,7 +153,7 @@ def _run_subprocess(
                 )
             return None
     except subprocess.TimeoutExpired:
-        err_path.write_text("TIMEOUT after 7200s\n")
+        err_path.write_text(f"TIMEOUT after {timeout}s\n")
         return None
     except Exception as exc:
         err_path.write_text(f"EXCEPTION: {exc}\n")
@@ -175,6 +176,7 @@ def run_phase2(
     executable:      str,
     out_dir:         Path,
     fixed_overrides: dict | None = None,
+    timeout:         int | None = None,
 ) -> pd.DataFrame:
     """
     Optuna TPE search with full training budget (no fidelity overrides).
@@ -209,6 +211,7 @@ def run_phase2(
             params, {"save_mod": 99999, **fixed_overrides},
             base_config, executable, omp,
             seed + trial.number, log_prefix, cfg_path,
+            timeout=timeout,
         )
 
         with lock:
@@ -261,6 +264,7 @@ def run_phase3(
     executable:      str,
     out_dir:         Path,
     fixed_overrides: dict | None = None,
+    timeout:         int | None = None,
 ) -> pd.DataFrame:
     """
     Re-run the top-K configs from Phase 2 with N different seeds.
@@ -308,6 +312,7 @@ def run_phase3(
             params, {"save_mod": PHASE3_SAVE_MOD, **fixed_overrides},
             base_config, executable, omp,
             run_seed, log_prefix, cfg_path,
+            timeout=timeout,
         )
 
         with lock:
@@ -485,6 +490,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--seed",  type=int, default=0)
     ap.add_argument("--top-analyse", type=int, default=5, dest="top_analyse",
                     help="Top-K configs in analysis report (default: 5)")
+    ap.add_argument("--timeout", type=int, default=None,
+                    help="Max seconds per C++ run (default: no timeout)")
     ap.add_argument("--base",    default=None, help="Override base JSON")
     ap.add_argument("--exe",     default=None, help="Override executable")
     ap.add_argument("--encoder", default=None,
@@ -554,6 +561,7 @@ def main() -> None:
             executable      = executable,
             out_dir         = out_dir,
             fixed_overrides = fixed_overrides,
+            timeout         = args.timeout,
         )
 
     # ── Phase 3 ───────────────────────────────────────────────────────────
@@ -595,6 +603,7 @@ def main() -> None:
             executable      = executable,
             out_dir         = out_dir,
             fixed_overrides = fixed_overrides,
+            timeout         = args.timeout,
         )
 
         print("\n── Phase 3 summary ──")
