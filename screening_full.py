@@ -350,6 +350,103 @@ def run_phase3(
     summary.to_csv(out_dir / "p3_summary.csv", index=False)
     return df, summary  # type: ignore[return-value]
 
+# ── Final validation (best Phase-3 config × N seeds) ─────────────────────────
+
+def run_final_validation(
+    task:            str,
+    run_key:         str,
+    n_seeds:         int,
+    jobs:            int,
+    omp:             int,
+    base_config:     str,
+    executable:      str,
+    out_dir:         Path,
+    fixed_overrides: dict | None = None,
+    timeout:         int | None = None,
+) -> None:
+    """
+    Re-run the best Phase-3 config (selected by Phase-3 mean, not Phase-2 peak)
+    with n_seeds different seeds. Saves to p3_final.csv.
+    """
+    fixed_overrides = fixed_overrides or {}
+
+    p3_path = out_dir / "p3_summary.csv"
+    if not p3_path.exists():
+        print(f"ERROR: {p3_path} not found. Run phase3 first.", file=sys.stderr)
+        sys.exit(1)
+
+    summary = pd.read_csv(p3_path)
+    valid   = summary.dropna(subset=["mean"])
+    if len(valid) == 0:
+        print("ERROR: no hay resultados válidos en p3_summary.csv.", file=sys.stderr)
+        sys.exit(1)
+
+    best    = valid.loc[valid["mean"].idxmax()]
+    hp_cols = [c for c in summary.columns
+               if c not in {"rank", "mean", "std", "min", "max", "n_ok"}]
+
+    # Restaurar tipos: int para parámetros enteros
+    params: dict = {}
+    for col in hp_cols:
+        val = best[col]
+        kind = INITIAL_SPACE.get(col, ("float",))[0]
+        params[col] = int(round(val)) if kind == "int" else float(val)
+
+    print(f"\n{'='*66}")
+    print(f"  Validación final — run: {run_key}")
+    print(f"  Mejor config Phase 3: rank {int(best['rank'])}  "
+          f"(mean={best['mean']:.4f} ± {best['std']:.4f}, "
+          f"n={int(best['n_ok'])} seeds anteriores)")
+    print(f"  Seeds a correr: {n_seeds}   parallel: {jobs}   OMP={omp}")
+    print(f"  Hiperparámetros seleccionados:")
+    for col, val in params.items():
+        fmt = str(val) if isinstance(val, int) else f"{val:.4f}"
+        print(f"    {col:<36} {fmt}")
+    print(f"{'='*66}\n")
+
+    cfg_dir = out_dir / "final_configs"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+
+    results: list[dict] = []
+    lock = threading.Lock()
+    done = [0]
+
+    def run_one(si: int) -> None:
+        run_seed   = 99000 + si * 100
+        cfg_path   = cfg_dir / f"seed{si:02d}.json"
+        log_prefix = f"full_final_{run_key}/seed{si:02d}"
+
+        peak = _run_subprocess(
+            params, {"save_mod": PHASE3_SAVE_MOD, **fixed_overrides},
+            base_config, executable, omp,
+            run_seed, log_prefix, cfg_path,
+            timeout=timeout,
+        )
+
+        with lock:
+            done[0] += 1
+            peak_str = f"peak={peak:.4f}" if peak is not None else "FAIL"
+            print(f"  [{done[0]:3d}/{n_seeds}]  seed={si:02d}  {peak_str}")
+            results.append({"seed_idx": si, "peak_fitness": peak, **params})
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = [pool.submit(run_one, si) for si in range(n_seeds)]
+        concurrent.futures.wait(futures)
+
+    df = pd.DataFrame(results)
+    csv_path = out_dir / "p3_final.csv"
+    df.to_csv(csv_path, index=False)
+
+    ok = df.dropna(subset=["peak_fitness"])
+    print(f"\nValidación final: {len(ok)}/{n_seeds} exitosos")
+    if len(ok) > 0:
+        print(f"  mean = {ok['peak_fitness'].mean():.4f}")
+        print(f"  std  = {ok['peak_fitness'].std():.4f}")
+        print(f"  min  = {ok['peak_fitness'].min():.4f}")
+        print(f"  max  = {ok['peak_fitness'].max():.4f}")
+    print(f"Resultados → {csv_path}")
+
+
 # ── Analysis ──────────────────────────────────────────────────────────────────
 
 def cmd_analyse(run_key: str, n_top: int = 5) -> None:
@@ -472,8 +569,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--task",  required=True,
                     choices=list(TASK_DEFAULTS), metavar="TASK")
     ap.add_argument("--mode",  default="both",
-                    choices=["phase2", "phase3", "both", "analyse"],
-                    help="Which phase(s) to run (default: both)")
+                    choices=["phase2", "phase3", "both", "analyse", "final"],
+                    help="Which phase(s) to run (default: both). "
+                         "'final': re-corre el mejor config de Phase 3 con --seeds runs")
     # Phase 2
     ap.add_argument("--n",     type=int, default=20,
                     help="Phase 2: Optuna trials (default: 20)")
@@ -521,6 +619,27 @@ def main() -> None:
 
     if args.mode == "analyse":
         cmd_analyse(rkey, args.top_analyse)
+        return
+
+    if args.mode == "final":
+        out_dir = Path("screening_full") / rkey
+        executable  = args.exe  or td["executable"]
+        base_config = args.base or td["base_config"]
+        if not Path(executable).exists():
+            print(f"ERROR: {executable} not found.", file=sys.stderr)
+            sys.exit(1)
+        run_final_validation(
+            task            = args.task,
+            run_key         = rkey,
+            n_seeds         = args.seeds,
+            jobs            = args.jobs,
+            omp             = omp,
+            base_config     = base_config,
+            executable      = executable,
+            out_dir         = out_dir,
+            fixed_overrides = fixed_overrides,
+            timeout         = args.timeout,
+        )
         return
 
     executable  = args.exe  or td["executable"]

@@ -1,0 +1,32 @@
+==================================================================
+  Reduction analysis — run: acrobot_small_first_spike
+==================================================================
+
+Total trials: 6   successful: 6   rounds: 1
+Peak range: [-69.4000, -58.8000]
+
+── Space evolution (eliminated bins per round) ──
+  Round 0: no bins eliminated
+
+── Top 5 configs by peak_fitness ──
+ round  trial  peak_fitness  alg_probMoo  prob_addConn  prob_addNode  prob_enable  prob_mutAct  prob_toggleExcitatory  prob_initEnable  select_cullRatio  select_eliteRatio  select_tournSize
+     0     28      -58.8000       0.5173        0.1237        0.2680       0.0101       0.5943                 0.1827           0.5445            0.1086             0.2535                 2
+     0     21      -60.0000       0.5751        0.2672        0.1163       0.2189       0.5613                 0.0626           0.5887            0.4057             0.0686                 5
+     0      7      -60.1000       0.1898        0.4585        0.3622       0.0760       0.1368                 0.1016           0.6454            0.3025             0.1863                 4
+     0     19      -64.7000       0.4054        0.3208        0.1514       0.0625       0.3630                 0.2006           0.6387            0.1780             0.3893                 7
+     0     16      -64.8000       0.3822        0.4734        0.1451       0.1406       0.6248                 0.0627           0.6062            0.0632             0.3369                 3
+
+── Spearman ρ  (|ρ| descending) ──
+  Parameter                                  ρ     p-val  sig
+  prob_initEnable                       -0.771    0.0724    
+  prob_addConn                          -0.714    0.1108    
+  select_eliteRatio                     -0.657    0.1562    
+  select_tournSize                      -0.600    0.2080    
+  alg_probMoo                           +0.543    0.2657    
+  prob_mutAct                           -0.486    0.3287    
+  prob_toggleExcitatory                 -0.429    0.3965    
+  prob_addNode                          +0.143    0.7872    
+  prob_enable                           -0.029    0.9572    
+  select_cullRatio                      +0.029    0.9572    
+
+==================================================================
