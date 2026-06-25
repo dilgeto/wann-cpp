@@ -7,6 +7,7 @@
 
 #include <core/network.hpp>
 
+#include <utility>
 #include <vector>
 
 namespace wann {
@@ -17,7 +18,7 @@ namespace wann {
 // Observation (6 dims):
 //   cos(θ₁), sin(θ₁), cos(θ₂), sin(θ₂), θ₁_dot, θ₂_dot
 //
-// Action (1 dim): continuous torque ∈ [-5, 5] N·m
+// Action (1 dim): continuous torque ∈ [-1, 1] N·m (same scale as Gymnasium Acrobot-v1)
 //
 // Episode ends at step 500 or when rlt::terminated() is true (tip above pivot).
 //
@@ -28,11 +29,11 @@ namespace wann {
 //   index  N-1       = output neuron (torque)
 class SnnAcrobotTask : public ITask {
 public:
-    static constexpr int    N_WEIGHTS     = 4;
+    static constexpr int    N_WEIGHTS     = 6;
     static const     double WEIGHT_VALS[N_WEIGHTS];
     static constexpr double BIAS_CURRENT  = 50.0;   // mA
     static constexpr double SIM_WINDOW_MS = 20.0;   // SNN sim duration per env step
-    static constexpr double MAX_TORQUE    = 5.0;    // Acrobot torque range ±5 N·m
+    static constexpr double MAX_TORQUE    = 1.0;    // Acrobot torque range ±1 N·m (Gymnasium scale)
 
     explicit SnnAcrobotTask(const Hyperparams& hyp);
 
@@ -47,12 +48,31 @@ public:
 
     int numWeightVals() const override { return N_WEIGHTS; }
 
+    // Run nEpisodes with the given shared weight.
+    // Returns {shaped_rewards, original_rewards}; shaped includes the potential-based bonus.
+    std::pair<std::vector<double>,std::vector<double>>
+    evalEpisodes(const std::vector<double>& wVec,
+                 const std::vector<int>&    aVec,
+                 double weight, int nEpisodes,
+                 int baseSeed) const;
+
+    // Columns: step,cos_th1,sin_th1,cos_th2,sin_th2,dth1,dth2,action,reward
+    // bestWi: index into WEIGHT_VALS used for the logged episode.
+    // evalSeed: training evaluate() seed (directSeed=false) or direct episode seed (directSeed=true).
+    void exportTrajectory(const std::vector<double>& wVec,
+                          const std::vector<int>&    aVec,
+                          int bestWi, int evalSeed,
+                          const std::string& outFile,
+                          bool directSeed = false) const;
+
 private:
     int        nInput_;
     int        nOutput_;
     int        nReps_;
+    int        neuronsPerVar_;
     SnnEncoder encoder_;
     SnnDecoder decoder_;
+    double     shapingScale_;
     bool       resetBetweenSteps_;
 
     static NeuronType wannActToNeuronType(int actId);
@@ -61,7 +81,7 @@ private:
     Network buildNetwork(const std::vector<double>& wVec,
                          const std::vector<int>&    aVec) const;
 
-    double runEpisode(Network& net, double sharedWeight, int episodeSeed) const;
+    std::pair<double,double> runEpisode(Network& net, double sharedWeight, int episodeSeed) const;
 };
 
 } // namespace wann

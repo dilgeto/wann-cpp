@@ -1,0 +1,15 @@
+{
+  "alg_probMoo": 0.13547801076912253,
+  "prob_addConn": 0.13206761153628033,
+  "prob_addNode": 0.24728295123125915,
+  "prob_enable": 0.010319386586290842,
+  "prob_mutAct": 0.4740496180826589,
+  "prob_toggleExcitatory": 0.10217287103234207,
+  "prob_initEnable": 0.3702668108881393,
+  "select_cullRatio": 0.3440691655493439,
+  "select_eliteRatio": 0.3429313036429463,
+  "select_tournSize": 2,
+  "save_mod": 99999,
+  "snn_encoder": "ttfs",
+  "snn_decoder": "rate"
+}

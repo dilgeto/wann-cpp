@@ -3,6 +3,11 @@
 // SNN simulator
 #include <core/simulator.hpp>
 #include <decoding/rlDecoder.hpp>
+#include <encoding/rateEncoder.hpp>
+#include <encoding/poissonEncoder.hpp>
+#include <encoding/ttfsEncoder.hpp>
+#include <encoding/rlEncoder.hpp>
+#include <memory>
 
 // rl-tools pendulum
 #include <rl_tools/operations/cpu.h>
@@ -10,7 +15,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <random>
 
 namespace rlt = rl_tools;
 
@@ -24,6 +28,34 @@ using RNG       = typename rlt::devices::random::CPU::ENGINE<>;
 using ObsMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 3, false>>;
 using ActMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 1, false>>;
 
+namespace {
+std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed) {
+    constexpr double MAX_RATE   = 100.0;
+    constexpr double REF_PERIOD = 2.0;
+    switch (type) {
+        case wann::SnnEncoder::POISSON: {
+            auto e = std::make_unique<PoissonEncoder>(MAX_RATE, true, REF_PERIOD);
+            e->reseed(seed);
+            return e;
+        }
+        case wann::SnnEncoder::RATE: {
+            auto e = std::make_unique<RateEncoder>(MAX_RATE);
+            e->reseed(seed);
+            return e;
+        }
+        case wann::SnnEncoder::TTFS:
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LINEAR, 1e-9);
+        case wann::SnnEncoder::TTFS_LOG:
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LOGARITHMIC, 1e-9);
+        case wann::SnnEncoder::SMALL:
+        case wann::SnnEncoder::LARGE:
+            return nullptr;  // current injection, not spike trains
+        default:
+            return nullptr;  // CURRENT handled separately
+    }
+}
+} // anonymous namespace
+
 namespace wann {
 
 const double SnnPendulumTask::WEIGHT_VALS[N_WEIGHTS] = {
@@ -32,6 +64,7 @@ const double SnnPendulumTask::WEIGHT_VALS[N_WEIGHTS] = {
 
 SnnPendulumTask::SnnPendulumTask(const Hyperparams& hyp)
     : nInput_(hyp.ann_nInput), nOutput_(hyp.ann_nOutput), nReps_(hyp.alg_nReps)
+    , neuronsPerVar_(hyp.snn_neurons_per_var)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
     , resetBetweenSteps_(hyp.snn_reset_between_steps)
@@ -152,12 +185,8 @@ double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episod
     const int        window_steps  = static_cast<int>(SIM_WINDOW_MS);
     const int        n_channels    = nInput_ + 1;  // bias + observations
 
-    // --- Poisson encoder setup ---
-    constexpr double MAX_RATE   = 100.0;  // Hz
-    constexpr double REF_PERIOD = 2.0;   // ms
-    constexpr double DT         = 1.0;   // ms
-    std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
-    std::uniform_real_distribution<double> udist(0.0, 1.0);
+    constexpr double DT = 1.0;
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
 
     // --- Decoder setup ---
     const bool use_rldecoder = (decoder_ != SnnDecoder::SPIKE_COUNT);
@@ -175,7 +204,7 @@ double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episod
         if (resetBetweenSteps_) net.fastReset();
         std::vector<double> output_spikes;
 
-        if (encoder_ == SnnEncoder::POISSON) {
+        if (encoder_ != SnnEncoder::CURRENT && encoder_ != SnnEncoder::SMALL && encoder_ != SnnEncoder::LARGE) {
             std::vector<double> norm(n_channels, 0.0);
             norm[0] = 1.0;
             if (nInput_ >= 1) norm[1] = (rlt::get(obs_mat, 0, 0) + 1.0) * 0.5;
@@ -184,16 +213,8 @@ double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episod
 
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch) {
-                double rate    = std::clamp(norm[ch], 0.0, 1.0) * MAX_RATE;
-                double sp_prob = (rate / 1000.0) * DT;
-                double last_t  = -REF_PERIOD - 1.0;
-                for (int t = 0; t < window_steps; ++t) {
-                    double ct = static_cast<double>(t);
-                    if ((ct - last_t) >= REF_PERIOD && udist(enc_rng) < sp_prob) {
-                        spike_trains[ch].push_back(ct);
-                        last_t = ct;
-                    }
-                }
+                double v = std::clamp(norm[ch], 0.0, 1.0);
+                spike_trains[ch] = enc->encode(v, SIM_WINDOW_MS, DT);
             }
 
             for (int t = 0; t < window_steps; ++t) {
@@ -203,12 +224,39 @@ double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episod
                     output_spikes.push_back(static_cast<double>(t));
             }
         } else {
-            // CURRENT: map observations to [0, 20] mA
             std::vector<double> currents(n_channels, 0.0);
             currents[0] = BIAS_CURRENT;
-            if (nInput_ >= 1) currents[1] = (rlt::get(obs_mat, 0, 0) + 1.0) * 10.0;
-            if (nInput_ >= 2) currents[2] = (rlt::get(obs_mat, 0, 1) + 1.0) * 10.0;
-            if (nInput_ >= 3) currents[3] = (rlt::get(obs_mat, 0, 2) / MAX_THETA_DOT + 1.0) * 10.0;
+
+            if (encoder_ == SnnEncoder::SMALL || encoder_ == SnnEncoder::LARGE) {
+                RLEncoder rl_enc(encoder_ == SnnEncoder::SMALL
+                                 ? RLEncoder::EncodingType::SMALL
+                                 : RLEncoder::EncodingType::LARGE,
+                                 100.0, 5, static_cast<size_t>(neuronsPerVar_));
+                const int n_obs = (encoder_ == SnnEncoder::SMALL)
+                                  ? nInput_ / 2
+                                  : nInput_ / neuronsPerVar_;
+                std::vector<double> obs_vals;
+                for (int i = 0; i < std::min(n_obs, 3); ++i)
+                    obs_vals.push_back(rlt::get(obs_mat, 0, i));
+                std::vector<double> enc_currents;
+                if (encoder_ == SnnEncoder::SMALL) {
+                    enc_currents = rl_enc.encodeObservationSmall(obs_vals);
+                } else {
+                    const std::vector<std::pair<double,double>> all_limits = {
+                        {-1.0, 1.0}, {-1.0, 1.0}, {-MAX_THETA_DOT, MAX_THETA_DOT},
+                    };
+                    enc_currents = rl_enc.encodeObservationLarge(
+                        obs_vals, std::vector<std::pair<double,double>>(
+                            all_limits.begin(), all_limits.begin() + obs_vals.size()));
+                }
+                for (size_t i = 0; i < enc_currents.size() && i + 1 < static_cast<size_t>(n_channels); ++i)
+                    currents[i + 1] = enc_currents[i];
+            } else {
+                // CURRENT: map observations to [0, 20] mA
+                if (nInput_ >= 1) currents[1] = (rlt::get(obs_mat, 0, 0) + 1.0) * 10.0;
+                if (nInput_ >= 2) currents[2] = (rlt::get(obs_mat, 0, 1) + 1.0) * 10.0;
+                if (nInput_ >= 3) currents[3] = (rlt::get(obs_mat, 0, 2) / MAX_THETA_DOT + 1.0) * 10.0;
+            }
 
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);

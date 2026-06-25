@@ -1,0 +1,32 @@
+==================================================================
+  Reduction analysis — run: acrobot_ttfs_first_spike
+==================================================================
+
+Total trials: 5   successful: 5   rounds: 1
+Peak range: [-263.0000, -126.0000]
+
+── Space evolution (eliminated bins per round) ──
+  Round 0: no bins eliminated
+
+── Top 5 configs by peak_fitness ──
+ round  trial  peak_fitness  alg_probMoo  prob_addConn  prob_addNode  prob_enable  prob_mutAct  prob_toggleExcitatory  prob_initEnable  select_cullRatio  select_eliteRatio  select_tournSize
+     0      4     -126.0000       0.5031        0.2715        0.1304       0.0705       0.5007                 0.2561           0.2705            0.1499             0.3025                 5
+     0     10     -165.0000       0.1544        0.3784        0.2493       0.0091       0.6547                 0.2499           0.7740            0.3594             0.2079                 3
+     0      2     -194.0000       0.5038        0.4278        0.1162       0.2124       0.2929                 0.2298           0.2962            0.4635             0.1747                 2
+     0     18     -204.0000       0.5545        0.3916        0.0808       0.0361       0.3041                 0.0677           0.6650            0.4445             0.2906                13
+     0     11     -263.0000       0.6909        0.4490        0.3857       0.1722       0.2090                 0.2640           0.3058            0.1100             0.3768                10
+
+── Spearman ρ  (|ρ| descending) ──
+  Parameter                                  ρ     p-val  sig
+  alg_probMoo                           -0.900    0.0374  *
+  prob_addConn                          -0.900    0.0374  *
+  prob_mutAct                           +0.800    0.1041    
+  select_tournSize                      -0.500    0.3910    
+  prob_enable                           -0.300    0.6238    
+  prob_initEnable                       -0.300    0.6238    
+  select_eliteRatio                     -0.300    0.6238    
+  prob_addNode                          -0.100    0.8729    
+  select_cullRatio                      +0.100    0.8729    
+  prob_toggleExcitatory                 +0.000    1.0000    
+
+==================================================================

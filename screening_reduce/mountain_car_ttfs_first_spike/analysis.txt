@@ -1,0 +1,48 @@
+==================================================================
+  Reduction analysis — run: mountain_car_ttfs_first_spike
+==================================================================
+
+Total trials: 38   successful: 38   rounds: 2
+Peak range: [117.0000, 119.0000]
+
+── Space evolution (eliminated bins per round) ──
+  Round 0:
+    prob_addNode                         bins [0] → [0.12, 0.4]
+    prob_toggleExcitatory                bins [1] → [0.02, 0.3]
+  Round 1: no bins eliminated
+
+── Top 5 configs by peak_fitness ──
+ round  trial  peak_fitness  alg_probMoo  prob_addConn  prob_addNode  prob_enable  prob_mutAct  prob_toggleExcitatory  prob_initEnable  select_cullRatio  select_eliteRatio  select_tournSize
+     0     29      119.0000       0.2969        0.3745        0.1979       0.0694       0.4435                 0.1636           0.3736            0.1999             0.1307                 9
+     0     26      119.0000       0.0612        0.4860        0.2873       0.0101       0.2278                 0.0215           0.5460            0.1896             0.1822                 8
+     1     10      119.0000       0.1124        0.4348        0.3962       0.0058       0.5794                 0.1885           0.3086            0.1808             0.3774                 8
+     0     13      118.0000       0.3855        0.1121        0.0768       0.1933       0.2653                 0.2540           0.2650            0.3708             0.2494                 5
+     0      2      118.0000       0.5892        0.2682        0.1878       0.0347       0.4668                 0.1381           0.4680            0.1880             0.1092                 4
+
+── Spearman ρ  (|ρ| descending) ──
+  Parameter                                  ρ     p-val  sig
+  alg_probMoo                           -0.338    0.0378  *
+  prob_addNode                          +0.332    0.0416  *
+  prob_initEnable                       +0.145    0.3847    
+  select_cullRatio                      +0.110    0.5125    
+  prob_mutAct                           -0.072    0.6667    
+  select_tournSize                      +0.054    0.7491    
+  select_eliteRatio                     +0.041    0.8065    
+  prob_toggleExcitatory                 -0.036    0.8286    
+  prob_addConn                          +0.035    0.8343    
+  prob_enable                           +0.011    0.9488    
+
+── Random-Forest importance  (Gini + permutation) ──
+  Parameter                               Gini       Perm     ±std
+  prob_addNode                          0.2650    +0.3266   0.0557
+  prob_addConn                          0.1963    +0.1705   0.0344
+  alg_probMoo                           0.1659    +0.1969   0.0621
+  select_cullRatio                      0.0877    +0.0863   0.0161
+  prob_toggleExcitatory                 0.0758    +0.0582   0.0090
+  prob_initEnable                       0.0732    +0.0677   0.0112
+  prob_enable                           0.0484    +0.0290   0.0063
+  select_tournSize                      0.0430    +0.0422   0.0072
+  select_eliteRatio                     0.0243    +0.0112   0.0028
+  prob_mutAct                           0.0203    +0.0132   0.0033
+
+==================================================================

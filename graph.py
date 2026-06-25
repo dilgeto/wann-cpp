@@ -16,6 +16,8 @@ import numpy as np
 import matplotlib
 matplotlib.use("TkAgg")          # cambiar a "Agg" si no hay display (servidor)
 import matplotlib.pyplot as plt
+import collections
+import graphviz
 import matplotlib.patches as mpatches
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
@@ -159,8 +161,10 @@ if os.path.exists(best_file):
         + [f"out{i}" for i in range(1, N_OUTPUT + 1)]
     )
 
+    n_conn = int(np.sum(~np.isnan(W) & (W != 0.0)))
+
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-    fig.suptitle(f"{TASK} — Mejor individuo (N={N} nodos)", fontsize=12)
+    fig.suptitle(f"{TASK} — Mejor individuo (N={N} nodos, {n_conn} conexiones)", fontsize=12)
 
     # Heatmap
     ax = axes[0]
@@ -177,52 +181,137 @@ if os.path.exists(best_file):
     ax.set_xlabel("Nodo destino"); ax.set_ylabel("Nodo origen")
     ax.set_title("Matriz de conexiones")
 
-    # Grafo por capas
+    # Grafo por capas — Graphviz con profundidad topológica real
+    node_type = {0: "bias"}
+    for i in range(1, 1 + N_INPUT):
+        node_type[i] = "input"
+    for i in range(1 + N_INPUT, 1 + N_INPUT + n_hid):
+        node_type[i] = "hidden"
+    for i in range(1 + N_INPUT + n_hid, N):
+        node_type[i] = "output"
+
+    output_set = {i for i, t in node_type.items() if t == "output"}
+    layer_fill = {"bias": "gold", "input": "cornflowerblue",
+                  "hidden": "mediumseagreen", "output": "tomato"}
+
+    # Longest-path depth por orden topológico (Kahn)
+    succs_map = [[] for _ in range(N)]
+    in_deg    = [0] * N
+    for src in range(N):
+        for dst in range(N):
+            if not np.isnan(W[src, dst]) and W[src, dst] != 0.0:
+                succs_map[src].append(dst)
+                in_deg[dst] += 1
+
+    queue = collections.deque(n for n in range(N) if in_deg[n] == 0)
+    depth = [0] * N
+    while queue:
+        u = queue.popleft()
+        for v in succs_map[u]:
+            depth[v] = max(depth[v], depth[u] + 1)
+            in_deg[v] -= 1
+            if in_deg[v] == 0:
+                queue.append(v)
+
+    # Las salidas siempre van al frente, más allá de cualquier nodo no-salida
+    max_pre = max((depth[n] for n in range(N) if n not in output_set), default=0)
+    for n in output_set:
+        depth[n] = max_pre + 1
+
+    # Agrupar nodos por su profundidad
+    layer_groups: dict[int, list] = collections.defaultdict(list)
+    for node in range(N):
+        layer_groups[depth[node]].append(node)
+
+    dot = graphviz.Digraph(engine="dot")
+    dot.attr(rankdir="LR", bgcolor="white", size="8,6!")
+    dot.attr("node", shape="circle", style="filled", fontsize="9",
+             width="0.5", fixedsize="true")
+
+    for layer_idx in sorted(layer_groups):
+        with dot.subgraph() as sg:
+            sg.attr(rank="same")
+            for idx in layer_groups[layer_idx]:
+                lbl   = node_labels[idx] if idx < len(node_labels) else str(idx)
+                aname = act_names.get(act[idx], "?")
+                sg.node(str(idx), label=f"{lbl}\n{aname}",
+                        fillcolor=layer_fill[node_type[idx]])
+
+    max_w = float(np.nanmax(np.abs(W))) or 1.0
+    for src in range(N):
+        for dst in range(N):
+            w = W[src, dst]
+            if np.isnan(w) or w == 0.0:
+                continue
+            color = "crimson" if w > 0 else "navy"
+            pw    = f"{max(0.5, 3.0 * abs(w) / max_w):.2f}"
+            dot.edge(str(src), str(dst), color=color, penwidth=pw)
+
+    # Pedir posiciones al engine de Graphviz sin rasterizar (formato plain)
+    plain = dot.pipe(format="plain").decode()
+    node_pos  = {}
+    node_size = {}
+    for line in plain.split("\n"):
+        parts = line.split()
+        if len(parts) >= 5 and parts[0] == "node":
+            try:
+                n = int(parts[1])
+                node_pos[n]  = (float(parts[2]), float(parts[3]))
+                node_size[n] = float(parts[4]) / 2.0   # radio = ancho / 2 (pulgadas)
+            except ValueError:
+                pass
+
     ax = axes[1]
     ax.axis("off")
     ax.set_title("Topología de la red")
 
-    layer_nodes = {
-        "bias":   [0],
-        "input":  list(range(1, 1 + N_INPUT)),
-        "hidden": list(range(1 + N_INPUT, 1 + N_INPUT + n_hid)),
-        "output": list(range(1 + N_INPUT + n_hid, N)),
-    }
-    layer_x   = {"bias": 0.0, "input": 0.5, "hidden": 1.5, "output": 2.5}
-    layer_col = {"bias": "gold", "input": "cornflowerblue",
-                 "hidden": "mediumseagreen", "output": "tomato"}
-
-    pos = {}
-    for layer, nodes_l in layer_nodes.items():
-        xpos  = layer_x[layer]
-        total = max(len(nodes_l), 1)
-        for k, idx in enumerate(nodes_l):
-            ypos       = (k - (total - 1) / 2.0) * 0.7
-            pos[idx]   = (xpos, ypos)
-            ax.add_patch(plt.Circle((xpos, ypos), 0.18,
-                                    color=layer_col[layer], zorder=3))
-            lbl = node_labels[idx] if idx < len(node_labels) else str(idx)
-            ax.text(xpos, ypos, lbl, ha="center", va="center",
-                    fontsize=6, zorder=4, fontweight="bold")
-            ax.text(xpos, ypos - 0.27, act_names.get(act[idx], "?"),
-                    ha="center", va="top", fontsize=5, color="dimgrey")
-
+    # Aristas (debajo de los nodos)
     for src in range(N):
         for dst in range(N):
-            if np.isnan(W[src, dst]) or W[src, dst] == 0.0:
+            w = W[src, dst]
+            if np.isnan(w) or w == 0.0:
                 continue
-            x0, y0 = pos.get(src, (0, 0))
-            x1, y1 = pos.get(dst, (0, 0))
-            ax.annotate("", xy=(x1, y1), xytext=(x0, y0),
-                        arrowprops=dict(arrowstyle="->",
-                                        color="navy" if W[src, dst] > 0 else "crimson",
-                                        lw=1.0, shrinkA=11, shrinkB=11))
+            if src not in node_pos or dst not in node_pos:
+                continue
+            x0, y0 = node_pos[src]
+            x1, y1 = node_pos[dst]
+            r_src  = node_size.get(src, 0.25)
+            r_dst  = node_size.get(dst, 0.25)
+            dx, dy = x1 - x0, y1 - y0
+            dist   = np.hypot(dx, dy)
+            color  = "crimson" if w > 0 else "navy"
+            lw     = max(0.4, 2.0 * abs(w) / max_w)
+            if dist < 1e-6:
+                ax.add_patch(plt.Circle((x0 + r_src * 1.2, y0), r_src * 0.6,
+                                        fill=False, lw=lw, color=color, zorder=1))
+                continue
+            xs = x0 + dx / dist * r_src
+            ys = y0 + dy / dist * r_src
+            xe = x1 - dx / dist * r_dst
+            ye = y1 - dy / dist * r_dst
+            ax.annotate("", xy=(xe, ye), xytext=(xs, ys),
+                        arrowprops=dict(arrowstyle="->", color=color, lw=lw,
+                                        mutation_scale=8))
 
-    all_x = [p[0] for p in pos.values()]
-    all_y = [p[1] for p in pos.values()]
-    pad   = 0.5
-    ax.set_xlim(min(all_x) - pad, max(all_x) + pad)
-    ax.set_ylim(min(all_y) - pad, max(all_y) + pad)
+    # Nodos (encima de las aristas)
+    for idx, (x, y) in sorted(node_pos.items()):
+        r      = node_size.get(idx, 0.25)
+        fcolor = layer_fill[node_type.get(idx, "hidden")]
+        ax.add_patch(plt.Circle((x, y), r, color=fcolor, zorder=3,
+                                linewidth=0.6, edgecolor="grey"))
+        lbl   = node_labels[idx] if idx < len(node_labels) else str(idx)
+        aname = act_names.get(act[idx], "?")
+        ax.text(x, y + 0.04, lbl,   ha="center", va="center",
+                fontsize=6, zorder=4, fontweight="bold")
+        ax.text(x, y - 0.12, aname, ha="center", va="top",
+                fontsize=5, zorder=4, color="dimgrey")
+
+    if node_pos:
+        xs_all = [p[0] for p in node_pos.values()]
+        ys_all = [p[1] for p in node_pos.values()]
+        pad    = max(node_size.values(), default=0.25) + 0.3
+        ax.set_xlim(min(xs_all) - pad, max(xs_all) + pad)
+        ax.set_ylim(min(ys_all) - pad, max(ys_all) + pad)
     ax.set_aspect("equal")
     ax.legend(handles=[
         mpatches.Patch(color="gold",           label="Bias"),

@@ -2,11 +2,11 @@
     "task":                  "snn_acrobot",
     "maxGen":                1024,
     "popSize":               192,
-    "alg_nVals":             4,
+    "alg_nVals":             6,
     "alg_nReps":             6,
     "alg_probMoo":           0.5,
     "ann_nInput":            6,
-    "ann_nOutput":           1,
+    "ann_nOutput":           3,
     "ann_initAct":           1,
     "ann_actRange":          [1, 2, 3, 4, 5, 6],
     "ann_absWCap":           20.0,
@@ -22,7 +22,8 @@
     "select_tournSize":      8,
     "save_mod":              10,
     "bestReps":              20,
-    "snn_encoder":           "poisson",
-    "snn_decoder":           "rate",
-    "snn_reset_between_steps": true
+    "snn_encoder":           "current",
+    "snn_decoder":           "wta",
+    "snn_reset_between_steps": true,
+    "reward_shaping_scale":  10.0
 }

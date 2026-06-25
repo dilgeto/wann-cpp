@@ -27,6 +27,11 @@ public:
     // Save a population snapshot (fitness, fitMax, nConn) for Pareto visualisation.
     void savePareto(const std::vector<Ind>& pop, int gen);
 
+    // Record the weight index that gave the best reward for the elite individual.
+    // Call once per generation (after computing bestWi from the reward vector).
+    // The value is written to <prefix>_best.wi by save().
+    void setBestWi(int wi) { bestWi_ = wi; }
+
     // ---- read-only accessors (for checkBest logic in main) ----
     bool newBest() const { return newBest_; }
     const Ind& bestInd() const { return best_.back(); }
@@ -53,6 +58,7 @@ private:
     std::vector<Ind> elite_;    // best per generation
     std::vector<Ind> best_;     // running best (may plateau)
     bool             newBest_ = false;
+    int              bestWi_  = 0;     // weight index of the best individual
 
     // Helper to save a CSV file.
     static void lsave(const std::string& fname,

@@ -95,7 +95,7 @@ getNodeOrder(const std::vector<NodeGene>& nodes,
     for (const auto& c : conns) {
         int si = idToIdx.at(c.src);
         int di = idToIdx.at(c.dst);
-        wMat[si * nNodes + di] = c.enabled ? c.weight : NaN;
+        wMat[si * nNodes + di] = c.enabled ? (c.excitatory ? c.weight : -c.weight) : NaN;
     }
 
     // Trivial case: no hidden nodes, no sort needed.
@@ -160,10 +160,11 @@ getNodeOrder(const std::vector<NodeGene>& nodes,
             wMatOrdered[r * nNodes + c] = wMat[fullQ[r] * nNodes + fullQ[c]];
 
     // Binarise hidden-to-hidden block (matches Python side-effect).
+    // std::copysign preserves excitatory (+1) / inhibitory (-1) polarity.
     for (int i = nIns; i < nIns+nHidden; ++i)
         for (int j = nIns; j < nIns+nHidden; ++j) {
             double& w = wMatOrdered[i * nNodes + j];
-            if (w != 0.0) w = 1.0;
+            if (w != 0.0) w = std::copysign(1.0, w);
         }
 
     return {fullQ, wMatOrdered};
@@ -252,7 +253,7 @@ std::vector<double> setWeights(const std::vector<double>& wVec, double wVal) {
     const int dim = static_cast<int>(std::sqrt(static_cast<double>(wVec.size())));
     std::vector<double> wMat(dim * dim, 0.0);
     for (int i = 0; i < dim * dim; ++i)
-        if (wVec[i] != 0.0) wMat[i] = wVal;
+        if (wVec[i] != 0.0) wMat[i] = std::copysign(wVal, wVec[i]);
     return wMat;
 }
 

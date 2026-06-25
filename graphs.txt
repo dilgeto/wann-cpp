@@ -1,0 +1,3 @@
+python graph.py --prefix log/a --nInput 6 --nOutput 3 --save
+python graph.py --prefix log/mc --nInput 2 --nOutput 1 --save
+python graph.py --prefix log/c --nInput 9 --nOutput 2 --save

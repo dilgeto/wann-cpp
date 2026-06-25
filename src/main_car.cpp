@@ -11,6 +11,7 @@
 #include "../include/wann/SnnDebug.h"
 #include "../include/wann/Wann.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -21,6 +22,8 @@
 #include <vector>
 
 namespace fs = std::filesystem;
+
+static constexpr int REPLAY_INTERVAL = 256;
 
 static std::vector<std::vector<double>>
 evalPop(const std::vector<wann::Ind>& pop,
@@ -76,6 +79,9 @@ int main(int argc, char* argv[]) {
     wann::seedRng(seed);
     fs::create_directories("log");
 
+    const std::string replayDir = "log/" + outPrefix + "_replay";
+    fs::create_directories(replayDir);
+
     std::ofstream dbgFile;
     if (debugLog) {
         std::string dbgPath = "log/" + outPrefix + "_debug.log";
@@ -95,9 +101,20 @@ int main(int argc, char* argv[]) {
 
     for (int gen = 0; gen < hyp.maxGen; ++gen) {
         auto& pop    = alg.ask();
-        auto  reward = evalPop(pop, task, static_cast<int>(seed));
+        auto  reward = evalPop(pop, task, static_cast<int>(seed) + gen);
         alg.tell(reward);
 
+        // Find elite by fitness.
+        int eliteIdx = static_cast<int>(
+            std::max_element(pop.begin(), pop.end(),
+                [](const wann::Ind& a, const wann::Ind& b){ return a.fitness < b.fitness; })
+            - pop.begin());
+
+        const auto& rw = reward[eliteIdx];
+        int bestWi = static_cast<int>(
+            std::max_element(rw.begin(), rw.end()) - rw.begin());
+
+        data.setBestWi(bestWi);
         data.gatherData(pop);
         std::cout << gen << "\t - \t" << data.display() << '\n';
 
@@ -108,6 +125,25 @@ int main(int argc, char* argv[]) {
                 dbgFile << "========== Generation " << gen << " ==========\n";
                 wann::debugSnn(pop[0], dbgFile);
                 dbgFile.flush();
+            }
+        }
+
+        // Export elite trajectory periodically for replay visualization.
+        if ((gen % REPLAY_INTERVAL == 0 || gen == hyp.maxGen - 1)
+                && !pop[eliteIdx].wVec.empty()) {
+
+            std::ostringstream fname;
+            fname << replayDir << "/gen_"
+                  << std::setw(4) << std::setfill('0') << gen << ".csv";
+            try {
+                // evalSeed must match what evalPop() used for this individual.
+                int evalSeed = (static_cast<int>(seed) + gen) * 10000 + eliteIdx;
+                task.exportTrajectory(pop[eliteIdx].wVec, pop[eliteIdx].aVec,
+                                      bestWi, evalSeed,
+                                      fname.str());
+            } catch (const std::exception& e) {
+                std::cerr << "Warning: no se pudo guardar replay gen " << gen
+                          << ": " << e.what() << '\n';
             }
         }
     }

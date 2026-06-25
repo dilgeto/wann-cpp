@@ -22,7 +22,7 @@
     "select_tournSize":      8,
     "save_mod":              10,
     "bestReps":              20,
-    "snn_encoder":           "poisson",
+    "snn_encoder":           "current",
     "snn_decoder":           "rate",
     "reward_shaping_scale":  10.0,
     "snn_reset_between_steps": true
