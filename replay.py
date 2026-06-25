@@ -37,6 +37,9 @@ parser.add_argument("--fps",   type=int,   default=30)
 parser.add_argument("--speed", type=float, default=1.0)
 parser.add_argument("--pause", type=int,   default=20,
                     help="Frames de pausa entre generaciones (default: 20)")
+parser.add_argument("--step",  type=int,   default=1,
+                    help="Pasos del entorno por frame (default: 1). "
+                         "Usar --step 3 --fps 30 para reproducción en tiempo real del carro (dt=0.01s → 100 steps/s).")
 args = parser.parse_args()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,9 +74,10 @@ else:
 # Se agrega una pausa al final de cada generación excepto la última.
 # ─────────────────────────────────────────────────────────────────────────────
 PAUSE = args.pause
+STEP = max(1, args.step)
 frame_map = []
 for ti, (gen, traj) in enumerate(trajs):
-    for si in range(len(traj)):
+    for si in range(0, len(traj), STEP):
         frame_map.append((ti, si))
     if ti < len(trajs) - 1:
         for _ in range(PAUSE):
