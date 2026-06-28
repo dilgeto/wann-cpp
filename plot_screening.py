@@ -283,6 +283,117 @@ def plot_space_reduction(run_key: str, space_log_path: Path,
     print(f"  → {out_path}")
 
 
+# ── Rangos antes/después de la reducción ─────────────────────────────────────
+
+def plot_space_ranges(run_key: str, space_log_path: Path,
+                      out_path: Path) -> None:
+    """Gráfico de rangos inicial vs final + tabla con valores exactos."""
+    entries = []
+    with open(space_log_path) as f:
+        for line in f:
+            if line.strip():
+                entries.append(json.loads(line))
+    if not entries:
+        return
+
+    last_space = entries[-1]["space"]
+    params = [p for p in INITIAL_SPACE if p in last_space]
+    n = len(params)
+
+    rows = []
+    for p in params:
+        kind, lo0, hi0 = INITIAL_SPACE[p]
+        _, lo1, hi1 = last_space[p]
+        span0 = hi0 - lo0 + 1e-12
+        span1 = hi1 - lo1 + 1e-12
+        pct = max(0.0, 1.0 - span1 / span0) * 100
+        # normalise final range to [0,1] within initial range
+        rel_lo = (lo1 - lo0) / span0
+        rel_hi = (hi1 - lo0) / span0
+        rows.append(dict(name=p, kind=kind,
+                         lo0=lo0, hi0=hi0, lo1=lo1, hi1=hi1,
+                         pct=pct, rel_lo=rel_lo, rel_hi=rel_hi))
+
+    # Sort: most reduced first
+    rows.sort(key=lambda r: r["pct"], reverse=True)
+    any_reduced = any(r["pct"] > 0.5 for r in rows)
+
+    fig = plt.figure(figsize=(11, 4 + n * 0.35))
+    fig.suptitle(f"{run_key}  — Espacio de búsqueda: inicial vs final",
+                 fontweight="bold", fontsize=10)
+
+    # ── Top: range chart ──────────────────────────────────────────────────────
+    ax = fig.add_axes([0.18, 0.42, 0.55, 0.50])
+
+    for i, r in enumerate(rows):
+        # gray = initial full range
+        ax.barh(i, 1.0, left=0.0, height=0.55,
+                color="#d0d0d0", edgecolor="none", zorder=1)
+        # colored = final range
+        width = r["rel_hi"] - r["rel_lo"]
+        color = "#d62728" if r["pct"] > 20 else ("#f0a500" if r["pct"] > 5 else "#4C72B0")
+        ax.barh(i, max(width, 0.0), left=r["rel_lo"], height=0.55,
+                color=color, edgecolor="black", linewidth=0.5,
+                alpha=0.85, zorder=2)
+        # % label
+        ax.text(1.02, i, f"{r['pct']:.1f}%", va="center", fontsize=8,
+                color="#d62728" if r["pct"] > 20 else "dimgray")
+
+    ax.set_yticks(range(n))
+    ax.set_yticklabels([SHORT.get(r["name"], r["name"]) for r in rows], fontsize=8)
+    ax.set_xlim(0, 1)
+    ax.set_xlabel("Rango normalizado (0=mín inicial, 1=máx inicial)", fontsize=8)
+    ax.set_title("Gris = rango inicial   Color = rango final   Rojo = ≥20% reducido",
+                 fontsize=8)
+    ax.axvline(0, color="black", linewidth=0.6)
+    ax.axvline(1, color="black", linewidth=0.6)
+
+    if not any_reduced:
+        ax.text(0.5, 0.5, "Sin reducción (espacio = inicial)",
+                ha="center", va="center", transform=ax.transAxes,
+                fontsize=10, color="gray",
+                bbox=dict(boxstyle="round", fc="lightyellow", ec="gray"))
+
+    # ── Bottom: table ─────────────────────────────────────────────────────────
+    ax_t = fig.add_axes([0.04, 0.01, 0.92, 0.36])
+    ax_t.axis("off")
+
+    def fmt(v, kind):
+        if kind == "int":
+            return str(int(round(v)))
+        return f"{v:.4f}"
+
+    col_labels = ["HP", "Tipo", "Inicial lo", "Inicial hi", "Final lo", "Final hi", "Reducción"]
+    table_data = [
+        [SHORT.get(r["name"], r["name"]), r["kind"],
+         fmt(r["lo0"], r["kind"]), fmt(r["hi0"], r["kind"]),
+         fmt(r["lo1"], r["kind"]), fmt(r["hi1"], r["kind"]),
+         f"{r['pct']:.1f}%"]
+        for r in rows
+    ]
+
+    tbl = ax_t.table(cellText=table_data, colLabels=col_labels,
+                     loc="center", cellLoc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(7.5)
+    tbl.scale(1, 1.3)
+
+    # Header style
+    for j in range(len(col_labels)):
+        tbl[0, j].set_facecolor("#3a3a3a")
+        tbl[0, j].set_text_props(color="white", fontweight="bold")
+
+    # Color rows with reduction
+    for i, r in enumerate(rows):
+        fc = "#ffd5d5" if r["pct"] > 20 else ("#fff4cc" if r["pct"] > 5 else "white")
+        for j in range(len(col_labels)):
+            tbl[i + 1, j].set_facecolor(fc)
+
+    plt.savefig(out_path, bbox_inches="tight", dpi=150)
+    plt.close()
+    print(f"  → {out_path}")
+
+
 # ── Coordenadas paralelas ─────────────────────────────────────────────────────
 
 def plot_parallel_coords(run_key: str, df_ok: pd.DataFrame,
@@ -436,6 +547,8 @@ def process_reduce(run_key: str, plots_dir: Path) -> None:
     if space_path.exists():
         plot_space_reduction(run_key, space_path,
                              out_dir / f"{run_key}_space_reduction.png")
+        plot_space_ranges(run_key, space_path,
+                          out_dir / f"{run_key}_space_ranges.png")
 
 
 def process_full(run_key: str, plots_dir: Path) -> dict | None:
