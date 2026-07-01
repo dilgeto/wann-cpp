@@ -120,6 +120,15 @@ TASK_DEFAULTS: dict[str, dict] = {
             "alg_nReps": 2, "bestReps": 5,
         },
     },
+    "disc_mc": {
+        "executable":  "./build/wann_disc_mc",
+        "base_config": "p/disc_mc_snn.json",
+        "n_obs": 2,
+        "fidelity": {
+            "maxGen": 64, "popSize": 64, "alg_nVals": 4,
+            "alg_nReps": 2, "bestReps": 5,
+        },
+    },
 }
 
 

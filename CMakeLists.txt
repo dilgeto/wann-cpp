@@ -161,6 +161,23 @@ target_link_libraries(wann_mountain_car PRIVATE
     OpenMP::OpenMP_CXX)
 
 # ---------------------------------------------------------------------------
+# Executable: wann_disc_mc – WANN + SNN simulator + Gymnasium MountainCar-v0 (discrete)
+# ---------------------------------------------------------------------------
+add_executable(wann_disc_mc
+    src/main_disc_mc.cpp
+    src/SnnDiscMCTask.cpp)
+
+target_include_directories(wann_disc_mc PRIVATE include)
+
+target_link_libraries(wann_disc_mc PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
 # Executable: wann_car_replay – corre la mejor red y exporta trayectoria CSV
 # ---------------------------------------------------------------------------
 add_executable(wann_car_replay
