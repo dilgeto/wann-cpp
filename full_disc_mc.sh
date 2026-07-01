@@ -10,7 +10,7 @@ OMP_FULL=${OMP_FULL:-190}
 
 # Fase 1: reducción del espacio (fidelidad baja: maxGen=64, popSize=64)
 for enc in ttfs small; do
-    for dec in first_spike rate; do
+    for dec in first_spike wta; do
         python screening_reduce.py --task disc_mc \
             --encoder "$enc" --decoder "$dec" \
             --rounds 4 --n 30 \
@@ -20,7 +20,7 @@ done
 
 # Fases 2+3: búsqueda completa y validación (fidelidad del JSON base)
 for enc in ttfs small; do
-    for dec in first_spike rate; do
+    for dec in first_spike wta; do
         python screening_full.py --task disc_mc \
             --encoder "$enc" --decoder "$dec" \
             --mode both --n 20 --top 3 --seeds 11 \

@@ -7,7 +7,6 @@
 #include <rl_tools/rl/environments/mountain_car/operations_cpu.h>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -154,7 +153,10 @@ double SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeS
     std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
     std::uniform_real_distribution<double> udist(0.0, 1.0);
 
-    const double max_spikes = static_cast<double>(window_steps) / 2.0;
+    const RLDecoder::DecodingType disc_type = (decoder_ == SnnDecoder::VOTING)
+        ? RLDecoder::DecodingType::VOTING
+        : RLDecoder::DecodingType::WINNER_TAKES_ALL;
+    RLDecoder disc_decoder(disc_type, SIM_WINDOW_MS, 5);
 
     double total_reward = 0.0;
 
@@ -163,8 +165,7 @@ double SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeS
 
         if (resetBetweenSteps_) net.fastReset();
 
-        // Spike counts per output neuron (3 actions)
-        std::array<int, N_ACTIONS> spike_counts = {0, 0, 0};
+        std::vector<std::vector<double>> multi_spikes(N_ACTIONS);
 
         if (encoder_ != SnnEncoder::CURRENT) {
             std::vector<double> norm(n_channels, 0.0);
@@ -191,7 +192,8 @@ double SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeS
                 net.step(sharedWeight);
                 const auto& outs = net.getOutputSpikes();
                 for (int a = 0; a < N_ACTIONS; ++a)
-                    if ((int)outs.size() > a && outs[a]) ++spike_counts[a];
+                    if ((int)outs.size() > a && outs[a])
+                        multi_spikes[a].push_back(static_cast<double>(t));
             }
         } else {
             std::vector<double> currents(n_channels, 0.0);
@@ -206,16 +208,24 @@ double SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeS
                 net.step(sharedWeight);
                 const auto& outs = net.getOutputSpikes();
                 for (int a = 0; a < N_ACTIONS; ++a)
-                    if ((int)outs.size() > a && outs[a]) ++spike_counts[a];
+                    if ((int)outs.size() > a && outs[a])
+                        multi_spikes[a].push_back(static_cast<double>(t));
             }
         }
 
-        // Winner-takes-all: action with most spikes wins (ties → action 0)
-        int winner = 0;
-        for (int a = 1; a < N_ACTIONS; ++a)
-            if (spike_counts[a] > spike_counts[winner]) winner = a;
+        int winner;
+        if (decoder_ == SnnDecoder::FIRST_SPIKE) {
+            winner = N_ACTIONS / 2;
+            double earliest = SIM_WINDOW_MS + 1.0;
+            for (int a = 0; a < N_ACTIONS; ++a)
+                if (!multi_spikes[a].empty() && multi_spikes[a][0] < earliest) {
+                    earliest = multi_spikes[a][0];
+                    winner = a;
+                }
+        } else {
+            winner = disc_decoder.decodeDiscreteAction(multi_spikes);
+        }
 
-        // Map winner {0,1,2} → force {-1, 0, +1}
         double force = static_cast<double>(winner - 1);
         rlt::set(action_mat, 0, 0, force);
 
@@ -307,6 +317,11 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
     std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
     std::uniform_real_distribution<double> udist(0.0, 1.0);
 
+    const RLDecoder::DecodingType disc_type = (decoder_ == SnnDecoder::VOTING)
+        ? RLDecoder::DecodingType::VOTING
+        : RLDecoder::DecodingType::WINNER_TAKES_ALL;
+    RLDecoder disc_decoder(disc_type, SIM_WINDOW_MS, 5);
+
     for (int step = 0; step < EPISODE_STEPS; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
 
@@ -315,7 +330,7 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
 
         if (resetBetweenSteps_) net.fastReset();
 
-        std::array<int, N_ACTIONS> spike_counts = {0, 0, 0};
+        std::vector<std::vector<double>> multi_spikes(N_ACTIONS);
 
         if (encoder_ != SnnEncoder::CURRENT) {
             std::vector<double> norm(n_channels, 0.0);
@@ -342,7 +357,8 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
                 net.step(weight);
                 const auto& outs = net.getOutputSpikes();
                 for (int a = 0; a < N_ACTIONS; ++a)
-                    if ((int)outs.size() > a && outs[a]) ++spike_counts[a];
+                    if ((int)outs.size() > a && outs[a])
+                        multi_spikes[a].push_back(static_cast<double>(t));
             }
         } else {
             std::vector<double> currents(n_channels, 0.0);
@@ -357,15 +373,25 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
                 net.step(weight);
                 const auto& outs = net.getOutputSpikes();
                 for (int a = 0; a < N_ACTIONS; ++a)
-                    if ((int)outs.size() > a && outs[a]) ++spike_counts[a];
+                    if ((int)outs.size() > a && outs[a])
+                        multi_spikes[a].push_back(static_cast<double>(t));
             }
         }
 
-        int winner = 0;
-        for (int a = 1; a < N_ACTIONS; ++a)
-            if (spike_counts[a] > spike_counts[winner]) winner = a;
+        int winner;
+        if (decoder_ == SnnDecoder::FIRST_SPIKE) {
+            winner = N_ACTIONS / 2;
+            double earliest = SIM_WINDOW_MS + 1.0;
+            for (int a = 0; a < N_ACTIONS; ++a)
+                if (!multi_spikes[a].empty() && multi_spikes[a][0] < earliest) {
+                    earliest = multi_spikes[a][0];
+                    winner = a;
+                }
+        } else {
+            winner = disc_decoder.decodeDiscreteAction(multi_spikes);
+        }
 
-        double force  = static_cast<double>(winner - 1);
+        double force = static_cast<double>(winner - 1);
         double reward = -1.0;
         rlt::set(action_mat, 0, 0, force);
         rlt::step(device, env, params, state, action_mat, next_state, rng);
