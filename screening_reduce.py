@@ -287,7 +287,7 @@ STATS_COLS = ["evals", "fitMed", "fitMax", "fitTop", "fitPeak", "nodeMed", "conn
 def _read_peak(path: Path) -> float | None:
     try:
         df  = pd.read_csv(path, header=None, names=STATS_COLS)
-        val = df["fitPeak"].max()
+        val = df["fitTop"].iloc[-1]   # media sobre pesos del mejor individuo al final
         return float(val) if pd.notna(val) else None
     except Exception:
         return None

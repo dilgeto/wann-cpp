@@ -455,7 +455,7 @@ def plot_phase3(run_key: str, summary: pd.DataFrame,
 
     ax.set_xticks(x)
     ax.set_xticklabels([f"Rank {int(r)}" for r in df["rank"]])
-    ax.set_ylabel("Peak fitness  (mean ± std, N seeds)")
+    ax.set_ylabel("Fitness media sobre pesos  (mean ± std, N seeds)")
     ax.set_title(f"{run_key}  — Phase 3: validación multi-semilla\n"
                  "(rojo = mejor config)")
 
@@ -501,7 +501,7 @@ def plot_phase3_summary(records: list[dict], out_path: Path) -> None:
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=30, ha="right")
         ax.set_title(task, fontweight="bold")
-        ax.set_ylabel("Phase 3 mean fitness (mejor rank)")
+        ax.set_ylabel("Fitness media sobre pesos (mejor rank, Phase 3)")
 
         ylim = ax.get_ylim()
         rng  = ylim[1] - ylim[0]

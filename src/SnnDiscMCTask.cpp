@@ -2,6 +2,10 @@
 
 #include <core/simulator.hpp>
 #include <decoding/rlDecoder.hpp>
+#include <encoding/rateEncoder.hpp>
+#include <encoding/poissonEncoder.hpp>
+#include <encoding/ttfsEncoder.hpp>
+#include <encoding/rlEncoder.hpp>
 
 #include <rl_tools/operations/cpu.h>
 #include <rl_tools/rl/environments/mountain_car/operations_cpu.h>
@@ -10,7 +14,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
-#include <random>
+#include <memory>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -52,11 +56,37 @@ const double SnnDiscMCTask::WEIGHT_VALS[N_WEIGHTS] = {
     0.5, 1.0, 2.0, 3.0, 5.0, 8.0
 };
 
+static std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed) {
+    constexpr double MAX_RATE   = 100.0;
+    constexpr double REF_PERIOD = 2.0;
+    switch (type) {
+        case wann::SnnEncoder::POISSON: {
+            auto e = std::make_unique<PoissonEncoder>(MAX_RATE, true, REF_PERIOD);
+            e->reseed(seed);
+            return e;
+        }
+        case wann::SnnEncoder::RATE: {
+            auto e = std::make_unique<RateEncoder>(MAX_RATE);
+            e->reseed(seed);
+            return e;
+        }
+        case wann::SnnEncoder::TTFS:
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LINEAR, 1e-9);
+        case wann::SnnEncoder::TTFS_LOG:
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LOGARITHMIC, 1e-9);
+        case wann::SnnEncoder::SMALL:
+        case wann::SnnEncoder::LARGE:
+        default:
+            return nullptr;  // current injection, not spike trains
+    }
+}
+
 SnnDiscMCTask::SnnDiscMCTask(const Hyperparams& hyp)
     : nInput_(hyp.ann_nInput), nOutput_(hyp.ann_nOutput), nReps_(hyp.alg_nReps)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
     , resetBetweenSteps_(hyp.snn_reset_between_steps)
+    , rewardShapingScale_(hyp.reward_shaping_scale)
 {}
 
 NeuronType SnnDiscMCTask::wannActToNeuronType(int actId) {
@@ -146,12 +176,9 @@ double SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeS
 
     const int window_steps = static_cast<int>(SIM_WINDOW_MS);
     const int n_channels   = nInput_ + 1;
+    constexpr double DT    = 1.0;
 
-    constexpr double MAX_RATE   = 100.0;
-    constexpr double REF_PERIOD = 2.0;
-    constexpr double DT         = 1.0;
-    std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
-    std::uniform_real_distribution<double> udist(0.0, 1.0);
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
 
     const RLDecoder::DecodingType disc_type = (decoder_ == SnnDecoder::VOTING)
         ? RLDecoder::DecodingType::VOTING
@@ -163,29 +190,24 @@ double SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeS
     for (int step = 0; step < EPISODE_STEPS; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
 
+        const double pos       = rlt::get(obs_mat, 0, 0);
+        const double vel       = rlt::get(obs_mat, 0, 1);
+        const double phi_before = std::sin(3.0 * pos);
+
         if (resetBetweenSteps_) net.fastReset();
 
         std::vector<std::vector<double>> multi_spikes(N_ACTIONS);
 
-        if (encoder_ != SnnEncoder::CURRENT) {
+        if (encoder_ != SnnEncoder::CURRENT && encoder_ != SnnEncoder::SMALL) {
+            // Spike-train path: TTFS, RATE, POISSON
             std::vector<double> norm(n_channels, 0.0);
             norm[0] = 1.0;
-            if (nInput_ >= 1) norm[1] = (rlt::get(obs_mat, 0, 0) - POS_MIN) / (POS_MAX - POS_MIN);
-            if (nInput_ >= 2) norm[2] = (rlt::get(obs_mat, 0, 1) + VEL_MAX) / (2.0 * VEL_MAX);
+            if (nInput_ >= 1) norm[1] = (pos - POS_MIN) / (POS_MAX - POS_MIN);
+            if (nInput_ >= 2) norm[2] = (vel + VEL_MAX) / (2.0 * VEL_MAX);
 
             std::vector<std::vector<double>> spike_trains(n_channels);
-            for (int ch = 0; ch < n_channels; ++ch) {
-                double rate   = std::clamp(norm[ch], 0.0, 1.0) * MAX_RATE;
-                double sp_prob = (rate / 1000.0) * DT;
-                double last_t  = -REF_PERIOD - 1.0;
-                for (int t = 0; t < window_steps; ++t) {
-                    double ct = static_cast<double>(t);
-                    if ((ct - last_t) >= REF_PERIOD && udist(enc_rng) < sp_prob) {
-                        spike_trains[ch].push_back(ct);
-                        last_t = ct;
-                    }
-                }
-            }
+            for (int ch = 0; ch < n_channels; ++ch)
+                spike_trains[ch] = enc->encode(std::clamp(norm[ch], 0.0, 1.0), SIM_WINDOW_MS, DT);
 
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
@@ -196,12 +218,23 @@ double SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeS
                         multi_spikes[a].push_back(static_cast<double>(t));
             }
         } else {
+            // Current-injection path: SMALL, CURRENT
             std::vector<double> currents(n_channels, 0.0);
             currents[0] = BIAS_CURRENT;
-            if (nInput_ >= 1)
-                currents[1] = (rlt::get(obs_mat, 0, 0) - POS_MIN) / (POS_MAX - POS_MIN) * 20.0;
-            if (nInput_ >= 2)
-                currents[2] = (rlt::get(obs_mat, 0, 1) + VEL_MAX) / (2.0 * VEL_MAX) * 20.0;
+
+            if (encoder_ == SnnEncoder::SMALL) {
+                RLEncoder rl_enc(RLEncoder::EncodingType::SMALL, 100.0, 5, 1);
+                const int n_obs = nInput_ / 2;
+                std::vector<double> obs_vals;
+                for (int i = 0; i < std::min(n_obs, 2); ++i)
+                    obs_vals.push_back(i == 0 ? pos : vel);
+                const auto enc_currents = rl_enc.encodeObservationSmall(obs_vals);
+                for (size_t i = 0; i < enc_currents.size() && i + 1 < static_cast<size_t>(n_channels); ++i)
+                    currents[i + 1] = enc_currents[i];
+            } else {
+                if (nInput_ >= 1) currents[1] = (pos - POS_MIN) / (POS_MAX - POS_MIN) * 20.0;
+                if (nInput_ >= 2) currents[2] = (vel + VEL_MAX) / (2.0 * VEL_MAX) * 20.0;
+            }
 
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);
@@ -228,9 +261,10 @@ double SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeS
 
         double force = static_cast<double>(winner - 1);
         rlt::set(action_mat, 0, 0, force);
-
         rlt::step(device, env, params, state, action_mat, next_state, rng);
-        total_reward += -1.0;  // Gymnasium MountainCar-v0: -1 per step
+
+        const double phi_after = std::sin(3.0 * next_state.position);
+        total_reward += -1.0 + rewardShapingScale_ * (phi_after - phi_before);
         state = next_state;
 
         if (rlt::terminated(device, env, params, state, rng)) break;
@@ -310,12 +344,9 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
 
     const int window_steps = static_cast<int>(SIM_WINDOW_MS);
     const int n_channels   = nInput_ + 1;
+    constexpr double DT    = 1.0;
 
-    constexpr double MAX_RATE   = 100.0;
-    constexpr double REF_PERIOD = 2.0;
-    constexpr double DT         = 1.0;
-    std::mt19937 enc_rng(static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
-    std::uniform_real_distribution<double> udist(0.0, 1.0);
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
 
     const RLDecoder::DecodingType disc_type = (decoder_ == SnnDecoder::VOTING)
         ? RLDecoder::DecodingType::VOTING
@@ -325,32 +356,23 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
     for (int step = 0; step < EPISODE_STEPS; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
 
-        double pos = rlt::get(obs_mat, 0, 0);
-        double vel = rlt::get(obs_mat, 0, 1);
+        const double pos        = rlt::get(obs_mat, 0, 0);
+        const double vel        = rlt::get(obs_mat, 0, 1);
+        const double phi_before = std::sin(3.0 * pos);
 
         if (resetBetweenSteps_) net.fastReset();
 
         std::vector<std::vector<double>> multi_spikes(N_ACTIONS);
 
-        if (encoder_ != SnnEncoder::CURRENT) {
+        if (encoder_ != SnnEncoder::CURRENT && encoder_ != SnnEncoder::SMALL) {
             std::vector<double> norm(n_channels, 0.0);
             norm[0] = 1.0;
             if (nInput_ >= 1) norm[1] = (pos - POS_MIN) / (POS_MAX - POS_MIN);
             if (nInput_ >= 2) norm[2] = (vel + VEL_MAX) / (2.0 * VEL_MAX);
 
             std::vector<std::vector<double>> spike_trains(n_channels);
-            for (int ch = 0; ch < n_channels; ++ch) {
-                double rate    = std::clamp(norm[ch], 0.0, 1.0) * MAX_RATE;
-                double sp_prob = (rate / 1000.0) * DT;
-                double last_t  = -REF_PERIOD - 1.0;
-                for (int t = 0; t < window_steps; ++t) {
-                    double ct = static_cast<double>(t);
-                    if ((ct - last_t) >= REF_PERIOD && udist(enc_rng) < sp_prob) {
-                        spike_trains[ch].push_back(ct);
-                        last_t = ct;
-                    }
-                }
-            }
+            for (int ch = 0; ch < n_channels; ++ch)
+                spike_trains[ch] = enc->encode(std::clamp(norm[ch], 0.0, 1.0), SIM_WINDOW_MS, DT);
 
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
@@ -363,10 +385,20 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
         } else {
             std::vector<double> currents(n_channels, 0.0);
             currents[0] = BIAS_CURRENT;
-            if (nInput_ >= 1)
-                currents[1] = (pos - POS_MIN) / (POS_MAX - POS_MIN) * 20.0;
-            if (nInput_ >= 2)
-                currents[2] = (vel + VEL_MAX) / (2.0 * VEL_MAX) * 20.0;
+
+            if (encoder_ == SnnEncoder::SMALL) {
+                RLEncoder rl_enc(RLEncoder::EncodingType::SMALL, 100.0, 5, 1);
+                const int n_obs = nInput_ / 2;
+                std::vector<double> obs_vals;
+                for (int i = 0; i < std::min(n_obs, 2); ++i)
+                    obs_vals.push_back(i == 0 ? pos : vel);
+                const auto enc_currents = rl_enc.encodeObservationSmall(obs_vals);
+                for (size_t i = 0; i < enc_currents.size() && i + 1 < static_cast<size_t>(n_channels); ++i)
+                    currents[i + 1] = enc_currents[i];
+            } else {
+                if (nInput_ >= 1) currents[1] = (pos - POS_MIN) / (POS_MAX - POS_MIN) * 20.0;
+                if (nInput_ >= 2) currents[2] = (vel + VEL_MAX) / (2.0 * VEL_MAX) * 20.0;
+            }
 
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);
@@ -392,14 +424,16 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
         }
 
         double force = static_cast<double>(winner - 1);
-        double reward = -1.0;
         rlt::set(action_mat, 0, 0, force);
         rlt::step(device, env, params, state, action_mat, next_state, rng);
+
+        const double phi_after = std::sin(3.0 * next_state.position);
+        const double reward    = -1.0 + rewardShapingScale_ * (phi_after - phi_before);
         state = next_state;
 
-        csv << step    << ','
-            << pos     << ',' << vel    << ','
-            << winner  << ',' << reward << '\n';
+        csv << step   << ','
+            << pos    << ',' << vel    << ','
+            << winner << ',' << reward << '\n';
 
         if (rlt::terminated(device, env, params, state, rng)) break;
     }

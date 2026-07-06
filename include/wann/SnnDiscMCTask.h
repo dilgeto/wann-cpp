@@ -58,6 +58,7 @@ private:
     SnnEncoder encoder_;
     SnnDecoder decoder_;
     bool       resetBetweenSteps_;
+    double     rewardShapingScale_;
 
     static NeuronType wannActToNeuronType(int actId);
 
