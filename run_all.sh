@@ -32,16 +32,16 @@ run_combo() {
         --jobs "$JOBS_FULL" --omp "$OMP_FULL"
 }
 
-# ── Acrobot (acciones discretas: first_spike, wta) ────────────────────────────
+# ── Acrobot (acciones discretas: first_spike, rate_argmax) ────────────────────
 for enc in ttfs small; do
-    for dec in first_spike wta; do
+    for dec in first_spike rate_argmax; do
         run_combo acrobot "$enc" "$dec"
     done
 done
 
-# ── Mountain Car discreto (acciones discretas: first_spike, wta) ──────────────
+# ── Mountain Car discreto (acciones discretas: first_spike, rate_argmax) ──────
 for enc in ttfs small; do
-    for dec in first_spike wta; do
+    for dec in first_spike rate_argmax; do
         run_combo disc_mc "$enc" "$dec"
     done
 done
