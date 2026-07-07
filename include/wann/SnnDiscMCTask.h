@@ -51,6 +51,8 @@ public:
                           int bestWi, int evalSeed,
                           const std::string& outFile) const;
 
+    double evaluateOriginal(const Ind& ind, int seed) const;
+
 private:
     int        nInput_;
     int        nOutput_;
@@ -66,7 +68,7 @@ private:
     Network buildNetwork(const std::vector<double>& wVec,
                          const std::vector<int>&    aVec) const;
 
-    double runEpisode(Network& net, double sharedWeight, int episodeSeed) const;
+    std::pair<double,double> runEpisode(Network& net, double sharedWeight, int episodeSeed) const;
 };
 
 } // namespace wann

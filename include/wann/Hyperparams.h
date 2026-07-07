@@ -44,7 +44,7 @@ struct Hyperparams {
 
     // --- SNN interface ---
     // Encoder: "current" | "poisson" | "rate" | "ttfs" | "ttfs_log" | "small" | "large"
-    // Decoder: "spike_count" | "rate" | "first_spike"
+    // Decoder: "spike_count" | "rate" | "first_spike" | "voting" | "rate_argmax"
     std::string snn_encoder   = "poisson";
     std::string snn_decoder   = "rate";
     int         snn_neurons_per_var = 5;

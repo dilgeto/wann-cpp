@@ -32,6 +32,10 @@ public:
     // The value is written to <prefix>_best.wi by save().
     void setBestWi(int wi) { bestWi_ = wi; }
 
+    // Set the original (unshapd) fitness of the elite individual before gatherData().
+    // If not called, falls back to the shaped fitness.
+    void setEliteOriginalFitness(double f) { eliteOrigFit_ = f; hasOrigFit_ = true; }
+
     // ---- read-only accessors (for checkBest logic in main) ----
     bool newBest() const { return newBest_; }
     const Ind& bestInd() const { return best_.back(); }
@@ -50,15 +54,21 @@ private:
     std::vector<double> fitMed_;    // median fitness in population
     std::vector<double> fitMax_;    // best fitness this generation
     std::vector<double> fitTop_;    // best fitness seen so far
-    std::vector<double> fitPeak_;   // best fitMax seen so far
-    std::vector<double> nodeMed_;   // median node count
-    std::vector<double> connMed_;   // median connection count
+    std::vector<double> fitPeak_;    // best fitMax seen so far
+    std::vector<double> fitTopOrig_; // original (unshaped) fitness of running best
+    std::vector<double> nodeMed_;    // median node count
+    std::vector<double> connMed_;    // median connection count
 
     // Best individual tracking.
     std::vector<Ind> elite_;    // best per generation
     std::vector<Ind> best_;     // running best (may plateau)
     bool             newBest_ = false;
     int              bestWi_  = 0;     // weight index of the best individual
+
+    // Original fitness tracking (set via setEliteOriginalFitness before gatherData).
+    double eliteOrigFit_       = 0.0;
+    bool   hasOrigFit_         = false;
+    double fitTopOrigRunning_  = -1e18;
 
     // Helper to save a CSV file.
     static void lsave(const std::string& fname,

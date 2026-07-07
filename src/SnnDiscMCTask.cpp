@@ -158,7 +158,7 @@ Network SnnDiscMCTask::buildNetwork(const std::vector<double>& wVec,
     return net;
 }
 
-double SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
+std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
 {
     DEVICE device;
     Env env;
@@ -185,7 +185,8 @@ double SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeS
         : RLDecoder::DecodingType::WINNER_TAKES_ALL;
     RLDecoder disc_decoder(disc_type, SIM_WINDOW_MS, 5);
 
-    double total_reward = 0.0;
+    double total_shaped   = 0.0;
+    double total_original = 0.0;
 
     for (int step = 0; step < EPISODE_STEPS; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
@@ -264,13 +265,14 @@ double SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeS
         rlt::step(device, env, params, state, action_mat, next_state, rng);
 
         const double phi_after = std::sin(3.0 * next_state.position);
-        total_reward += -1.0 + rewardShapingScale_ * (phi_after - phi_before);
+        total_shaped   += -1.0 + rewardShapingScale_ * (phi_after - phi_before);
+        total_original += -1.0;
         state = next_state;
 
         if (rlt::terminated(device, env, params, state, rng)) break;
     }
 
-    return total_reward;
+    return {total_shaped, total_original};
 }
 
 std::vector<double> SnnDiscMCTask::evaluate(const Ind& ind, int seed)
@@ -282,11 +284,25 @@ std::vector<double> SnnDiscMCTask::evaluate(const Ind& ind, int seed)
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
             int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed);
+            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
     }
     return rewards;
+}
+
+double SnnDiscMCTask::evaluateOriginal(const Ind& ind, int seed) const {
+    Network net = buildNetwork(ind);
+    double sum = 0.0;
+    for (int wi = 0; wi < N_WEIGHTS; ++wi) {
+        double total = 0.0;
+        for (int rep = 0; rep < nReps_; ++rep) {
+            int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
+            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).second;
+        }
+        sum += total / static_cast<double>(nReps_);
+    }
+    return sum / static_cast<double>(N_WEIGHTS);
 }
 
 std::vector<double> SnnDiscMCTask::getDistFitness(
@@ -301,7 +317,7 @@ std::vector<double> SnnDiscMCTask::getDistFitness(
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
             int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed);
+            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
     }

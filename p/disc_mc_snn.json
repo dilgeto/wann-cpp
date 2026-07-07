@@ -24,6 +24,6 @@
     "bestReps":              20,
     "snn_encoder":           "small",
     "snn_decoder":           "rate",
-    "reward_shaping_scale":  0.0,
+    "reward_shaping_scale":  10.0,
     "snn_reset_between_steps": true
 }

@@ -76,6 +76,7 @@ from screening_reduce import (
     suggest_from_space,
     STATS_COLS,
     _read_peak,
+    _read_original,
     make_run_key,
     encoder_nInput,
 )
@@ -126,8 +127,9 @@ def _run_subprocess(
     log_prefix:  str,           # relative prefix passed to -o
     cfg_path:    Path,
     timeout:     int | None = None,  # None = wait indefinitely
-) -> float | None:
-    """Write config, launch C++ subprocess, return peak fitness."""
+    return_original: bool = False,
+) -> "float | None | tuple[float | None, float | None]":
+    """Write config, launch C++ subprocess, return shaped fitness (and original if requested)."""
     merged = {**params, **extra_cfg}
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(json.dumps(merged, indent=2))
@@ -151,15 +153,17 @@ def _run_subprocess(
                     f"--- stderr ---\n{proc.stderr}\n"
                     f"--- stdout ---\n{proc.stdout}\n"
                 )
-            return None
+            return (None, None) if return_original else None
     except subprocess.TimeoutExpired:
         err_path.write_text(f"TIMEOUT after {timeout}s\n")
-        return None
+        return (None, None) if return_original else None
     except Exception as exc:
         err_path.write_text(f"EXCEPTION: {exc}\n")
-        return None
+        return (None, None) if return_original else None
 
     stats_file = Path("log") / (log_prefix + "_stats.out")
+    if return_original:
+        return _read_peak(stats_file), _read_original(stats_file)
     return _read_peak(stats_file)
 
 # ── Phase 2 ───────────────────────────────────────────────────────────────────
@@ -308,21 +312,24 @@ def run_phase3(
 
         # Phase 3: save every PHASE3_SAVE_MOD gens for analysis
         # fixed_overrides applied last (encoder/decoder cannot be overridden)
-        peak = _run_subprocess(
+        peak, original = _run_subprocess(
             params, {"save_mod": PHASE3_SAVE_MOD, **fixed_overrides},
             base_config, executable, omp,
             run_seed, log_prefix, cfg_path,
             timeout=timeout,
+            return_original=True,
         )
 
         with lock:
             done[0] += 1
-            peak_str = f"peak={peak:.4f}" if peak is not None else "FAIL"
-            print(f"  [{done[0]:3d}/{total}]  rank={rank}  seed={si}  {peak_str}")
+            peak_str = f"shaped={peak:.4f}" if peak is not None else "FAIL"
+            orig_str = f"  orig={original:.4f}" if original is not None else ""
+            print(f"  [{done[0]:3d}/{total}]  rank={rank}  seed={si}  {peak_str}{orig_str}")
             results.append({
-                "rank":         rank,
-                "seed_idx":     si,
-                "peak_fitness": peak,
+                "rank":             rank,
+                "seed_idx":         si,
+                "peak_fitness":     peak,
+                "original_fitness": original,
                 **params,
             })
 
@@ -333,13 +340,22 @@ def run_phase3(
     df = pd.DataFrame(results)
     df.to_csv(out_dir / "p3_validation.csv", index=False)
 
-    # Summary per rank
-    summary = (df.dropna(subset=["peak_fitness"])
-                 .groupby("rank")["peak_fitness"]
-                 .agg(["mean", "std", "min", "max", "count"])
-                 .reset_index())
+    # Summary per rank (shaped fitness)
+    df_ok = df.dropna(subset=["peak_fitness"])
+    summary = (df_ok.groupby("rank")["peak_fitness"]
+                    .agg(["mean", "std", "min", "max", "count"])
+                    .reset_index())
     summary.columns = ["rank", "mean", "std", "min", "max", "n_ok"]
     summary["std"] = summary["std"].fillna(0.0)
+
+    # Original (unshaped) fitness summary
+    if "original_fitness" in df_ok.columns:
+        orig_agg = (df_ok.groupby("rank")["original_fitness"]
+                         .agg(["mean", "std"])
+                         .reset_index())
+        orig_agg.columns = ["rank", "orig_mean", "orig_std"]
+        orig_agg["orig_std"] = orig_agg["orig_std"].fillna(0.0)
+        summary = summary.merge(orig_agg, on="rank", how="left")
 
     # Attach best config params
     for col in hp_cols:
@@ -416,18 +432,21 @@ def run_final_validation(
         cfg_path   = cfg_dir / f"seed{si:02d}.json"
         log_prefix = f"full_final_{run_key}/seed{si:02d}"
 
-        peak = _run_subprocess(
+        peak, original = _run_subprocess(
             params, {"save_mod": PHASE3_SAVE_MOD, **fixed_overrides},
             base_config, executable, omp,
             run_seed, log_prefix, cfg_path,
             timeout=timeout,
+            return_original=True,
         )
 
         with lock:
             done[0] += 1
-            peak_str = f"peak={peak:.4f}" if peak is not None else "FAIL"
-            print(f"  [{done[0]:3d}/{n_seeds}]  seed={si:02d}  {peak_str}")
-            results.append({"seed_idx": si, "peak_fitness": peak, **params})
+            peak_str = f"shaped={peak:.4f}" if peak is not None else "FAIL"
+            orig_str = f"  orig={original:.4f}" if original is not None else ""
+            print(f"  [{done[0]:3d}/{n_seeds}]  seed={si:02d}  {peak_str}{orig_str}")
+            results.append({"seed_idx": si, "peak_fitness": peak,
+                            "original_fitness": original, **params})
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
         futures = [pool.submit(run_one, si) for si in range(n_seeds)]

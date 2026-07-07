@@ -113,6 +113,9 @@ int main(int argc, char* argv[]) {
         int bestWi = static_cast<int>(
             std::max_element(rw.begin(), rw.end()) - rw.begin());
 
+        int evalSeed = (static_cast<int>(seed) + gen) * 10000 + eliteIdx;
+        double origFit = task.evaluateOriginal(pop[eliteIdx], evalSeed);
+        data.setEliteOriginalFitness(origFit);
         data.setBestWi(bestWi);
         data.gatherData(pop);
         std::cout << gen << "\t - \t" << data.display() << '\n';

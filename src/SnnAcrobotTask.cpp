@@ -186,7 +186,7 @@ std::pair<double,double> SnnAcrobotTask::runEpisode(Network& net, double sharedW
     auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
 
     // --- Decoder setup ---
-    const bool use_discrete  = (decoder_ == SnnDecoder::VOTING || decoder_ == SnnDecoder::WTA ||
+    const bool use_discrete  = (decoder_ == SnnDecoder::VOTING || decoder_ == SnnDecoder::RATE_ARGMAX ||
                                 (decoder_ == SnnDecoder::FIRST_SPIKE && nOutput_ > 1));
     const bool use_rldecoder = !use_discrete && (decoder_ != SnnDecoder::SPIKE_COUNT);
     const RLDecoder::DecodingType dec_type = (decoder_ == SnnDecoder::FIRST_SPIKE)
@@ -351,6 +351,20 @@ std::vector<double> SnnAcrobotTask::evaluate(const Ind& ind, int seed)
     return rewards;
 }
 
+double SnnAcrobotTask::evaluateOriginal(const Ind& ind, int seed) const {
+    Network net = buildNetwork(ind);
+    double sum = 0.0;
+    for (int wi = 0; wi < N_WEIGHTS; ++wi) {
+        double total = 0.0;
+        for (int rep = 0; rep < nReps_; ++rep) {
+            int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
+            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).second;
+        }
+        sum += total / static_cast<double>(nReps_);
+    }
+    return sum / static_cast<double>(N_WEIGHTS);
+}
+
 // -------------------------------------------------------------------------
 // getDistFitness – ITask fallback (all synapses excitatory)
 // -------------------------------------------------------------------------
@@ -431,7 +445,7 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
     constexpr double DT = 1.0;
     auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
 
-    const bool use_discrete  = (decoder_ == SnnDecoder::VOTING || decoder_ == SnnDecoder::WTA ||
+    const bool use_discrete  = (decoder_ == SnnDecoder::VOTING || decoder_ == SnnDecoder::RATE_ARGMAX ||
                                 (decoder_ == SnnDecoder::FIRST_SPIKE && nOutput_ > 1));
     const bool use_rldecoder = !use_discrete && (decoder_ != SnnDecoder::SPIKE_COUNT);
     const RLDecoder::DecodingType dec_type = (decoder_ == SnnDecoder::FIRST_SPIKE)

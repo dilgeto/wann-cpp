@@ -28,7 +28,7 @@ Usage
   python screening_reduce.py --task acrobot --encoder ttfs --decoder rate --mode analyse
 
 Valid encoders: current  poisson  rate  ttfs  ttfs_log  small  large
-Valid decoders: spike_count  rate  first_spike  voting  wta
+Valid decoders: spike_count  rate  first_spike  voting  rate_argmax
 
 Dependencies
 ------------
@@ -71,7 +71,7 @@ except ImportError:
 # ── Valid encoder / decoder values ───────────────────────────────────────────
 
 VALID_ENCODERS = {"current", "poisson", "rate", "ttfs", "ttfs_log", "small", "large"}
-VALID_DECODERS = {"spike_count", "rate", "first_spike", "voting", "wta"}
+VALID_DECODERS = {"spike_count", "rate", "first_spike", "voting", "rate_argmax"}
 
 
 def make_run_key(task: str, encoder: str | None, decoder: str | None) -> str:
@@ -281,16 +281,39 @@ def reduce_space(
 
 # ── C++ subprocess objective ──────────────────────────────────────────────────
 
-STATS_COLS = ["evals", "fitMed", "fitMax", "fitTop", "fitPeak", "nodeMed", "connMed"]
+STATS_COLS      = ["evals", "fitMed", "fitMax", "fitTop", "fitPeak", "nodeMed", "connMed"]
+STATS_COLS_ORIG = STATS_COLS + ["fitTopOrig"]
+
+
+def _load_stats(path: Path):
+    """Read a stats file; returns DataFrame or None on failure."""
+    try:
+        df = pd.read_csv(path, header=None)
+        if df.shape[1] >= 8:
+            df.columns = STATS_COLS_ORIG
+        else:
+            df.columns = STATS_COLS
+        return df
+    except Exception:
+        return None
 
 
 def _read_peak(path: Path) -> float | None:
-    try:
-        df  = pd.read_csv(path, header=None, names=STATS_COLS)
-        val = df["fitTop"].iloc[-1]   # media sobre pesos del mejor individuo al final
-        return float(val) if pd.notna(val) else None
-    except Exception:
+    df = _load_stats(path)
+    if df is None:
         return None
+    val = df["fitTop"].iloc[-1]   # media sobre pesos del mejor individuo al final
+    return float(val) if pd.notna(val) else None
+
+
+def _read_original(path: Path) -> float | None:
+    """Return the unshaped fitness of the running-best individual (last gen)."""
+    df = _load_stats(path)
+    if df is None:
+        return None
+    col = "fitTopOrig" if "fitTopOrig" in df.columns else "fitTop"
+    val = df[col].iloc[-1]
+    return float(val) if pd.notna(val) else None
 
 
 def _make_objective(

@@ -148,7 +148,7 @@ Network SnnCarTask::buildNetwork(const std::vector<double>& wVec,
 // Decode two output spike trains into (throttle, steering) ∈ [-1, 1].
 // FIRST_SPIKE: latency → [0,1] → [-1,1].
 // SPIKE_COUNT: min(1, n/10)*2-1 (RLDecoder handles saturation).
-// default (RATE/TTFS/POISSON/WTA/VOTING): n_spikes / max_spikes → [-1,1].
+// default (RATE/TTFS/POISSON/RATE_ARGMAX/VOTING): n_spikes / max_spikes → [-1,1].
 static std::pair<double,double> decodeActions(
     const std::vector<double>& spikes0,
     const std::vector<double>& spikes1,

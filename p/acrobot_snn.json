@@ -23,7 +23,7 @@
     "save_mod":              10,
     "bestReps":              20,
     "snn_encoder":           "current",
-    "snn_decoder":           "wta",
+    "snn_decoder":           "rate_argmax",
     "snn_reset_between_steps": true,
     "reward_shaping_scale":  10.0
 }

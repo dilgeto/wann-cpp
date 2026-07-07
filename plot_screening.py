@@ -488,11 +488,13 @@ def plot_phase3_summary(records: list[dict], out_path: Path) -> None:
             ax.set_visible(False)
             continue
 
-        labels = [r["enc_dec"] or "default" for r in recs]
-        means  = [r["mean"] for r in recs]
-        stds   = [r["std"]  for r in recs]
-        colors = ["#d62728" if i == 0 else "#4C72B0"
-                  for i in range(len(recs))]
+        labels     = [r["enc_dec"] or "default" for r in recs]
+        # Use original (unshaped) fitness when available, else shaped
+        use_orig   = all("orig_mean" in r for r in recs)
+        means      = [r.get("orig_mean", r["mean"]) for r in recs]
+        stds       = [r.get("orig_std",  r["std"])  for r in recs]
+        colors     = ["#d62728" if i == 0 else "#4C72B0"
+                      for i in range(len(recs))]
         x = np.arange(len(recs))
 
         ax.bar(x, means, yerr=stds, capsize=5, color=colors,
@@ -501,7 +503,10 @@ def plot_phase3_summary(records: list[dict], out_path: Path) -> None:
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=30, ha="right")
         ax.set_title(task, fontweight="bold")
-        ax.set_ylabel("Fitness media sobre pesos (mejor rank, Phase 3)")
+        ylabel = ("Reward original Gymnasium (mejor rank, Phase 3)"
+                  if use_orig else
+                  "Fitness media sobre pesos (mejor rank, Phase 3)")
+        ax.set_ylabel(ylabel)
 
         ylim = ax.get_ylim()
         rng  = ylim[1] - ylim[0]
@@ -594,13 +599,17 @@ def process_full(run_key: str, plots_dir: Path) -> dict | None:
 
     best = summary.loc[summary["mean"].idxmax()]
     task, enc_dec = parse_run_key(run_key)
-    return {
+    rec: dict = {
         "run_key": run_key,
         "task":    task,
         "enc_dec": enc_dec,
         "mean":    float(best["mean"]),
         "std":     float(best["std"]),
     }
+    if "orig_mean" in best and pd.notna(best["orig_mean"]):
+        rec["orig_mean"] = float(best["orig_mean"])
+        rec["orig_std"]  = float(best.get("orig_std", 0.0))
+    return rec
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

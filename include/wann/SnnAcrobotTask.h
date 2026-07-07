@@ -65,6 +65,8 @@ public:
                           const std::string& outFile,
                           bool directSeed = false) const;
 
+    double evaluateOriginal(const Ind& ind, int seed) const;
+
 private:
     int        nInput_;
     int        nOutput_;

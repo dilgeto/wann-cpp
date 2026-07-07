@@ -78,6 +78,12 @@ void DataGatherer::gatherData(const std::vector<Ind>& pop) {
     fitPeak_.push_back(best_.back().fitMax);
     nodeMed_.push_back(median(nodes));
     connMed_.push_back(median(conns));
+
+    // Original fitness: track the unshaped fitness of the running-best individual.
+    double origFit = hasOrigFit_ ? eliteOrigFit_ : elite_.back().fitness;
+    if (fitTopOrig_.empty() || newBest_) fitTopOrigRunning_ = origFit;
+    fitTopOrig_.push_back(fitTopOrigRunning_);
+    hasOrigFit_ = false;
 }
 
 std::string DataGatherer::display() const {
@@ -94,10 +100,11 @@ void DataGatherer::save(int gen) {
     // --- Generation statistics ---
     {
         const int nRows = static_cast<int>(xScale_.size());
-        std::vector<std::vector<double>> stats(nRows, std::vector<double>(7));
+        std::vector<std::vector<double>> stats(nRows, std::vector<double>(8));
         for (int i = 0; i < nRows; ++i) {
             stats[i] = {xScale_[i], fitMed_[i], fitMax_[i],
-                        fitTop_[i], fitPeak_[i], nodeMed_[i], connMed_[i]};
+                        fitTop_[i], fitPeak_[i], nodeMed_[i], connMed_[i],
+                        fitTopOrig_[i]};
         }
         lsave(prefix_ + "_stats.out", stats);
     }
