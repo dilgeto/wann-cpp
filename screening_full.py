@@ -588,9 +588,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--task",  required=True,
                     choices=list(TASK_DEFAULTS), metavar="TASK")
     ap.add_argument("--mode",  default="both",
-                    choices=["phase2", "phase3", "both", "analyse", "final"],
-                    help="Which phase(s) to run (default: both). "
-                         "'final': re-corre el mejor config de Phase 3 con --seeds runs")
+                    choices=["phase2", "phase3", "both", "analyse"],
+                    help="Which phase(s) to run (default: both).")
     # Phase 2
     ap.add_argument("--n",     type=int, default=20,
                     help="Phase 2: Optuna trials (default: 20)")
@@ -640,26 +639,6 @@ def main() -> None:
         cmd_analyse(rkey, args.top_analyse)
         return
 
-    if args.mode == "final":
-        out_dir = Path("screening_full") / rkey
-        executable  = args.exe  or td["executable"]
-        base_config = args.base or td["base_config"]
-        if not Path(executable).exists():
-            print(f"ERROR: {executable} not found.", file=sys.stderr)
-            sys.exit(1)
-        run_final_validation(
-            task            = args.task,
-            run_key         = rkey,
-            n_seeds         = args.seeds,
-            jobs            = args.jobs,
-            omp             = omp,
-            base_config     = base_config,
-            executable      = executable,
-            out_dir         = out_dir,
-            fixed_overrides = fixed_overrides,
-            timeout         = args.timeout,
-        )
-        return
 
     executable  = args.exe  or td["executable"]
     base_config = args.base or td["base_config"]
