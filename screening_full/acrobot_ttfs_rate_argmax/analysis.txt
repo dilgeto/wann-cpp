@@ -1,0 +1,62 @@
+==================================================================
+  Full-budget analysis — run: acrobot_ttfs_rate_argmax
+==================================================================
+
+Phase 2: 20/20 successful trials   peak range [-213.0000, -69.2000]
+
+── Top 5 configs (Phase 2) ──
+ trial  peak_fitness  alg_probMoo  prob_addConn  prob_addNode  prob_enable  prob_mutAct  prob_toggleExcitatory  prob_initEnable  select_cullRatio  select_eliteRatio  select_tournSize
+     8      -69.2000       0.4337        0.1838        0.3987       0.2491       0.3694                 0.1235           0.2033            0.3223             0.1507                 7
+     3      -78.0000       0.3860        0.2241        0.1135       0.0976       0.2280                 0.1698           0.5251            0.4437             0.2553                 5
+     6     -108.0000       0.4801        0.0683        0.1490       0.1523       0.6079                 0.0669           0.4439            0.1864             0.2595                 4
+    14     -118.0000       0.2694        0.1315        0.3854       0.1254       0.3141                 0.1101           0.3628            0.2532             0.2073                 5
+    16     -135.0000       0.2728        0.2818        0.1839       0.1752       0.4227                 0.2504           0.5216            0.4291             0.3269                15
+
+── Spearman ρ  (Phase 2, |ρ| descending) ──
+  Parameter                                  ρ     p-val  sig
+  prob_enable                           +0.498    0.0255  *
+  prob_mutAct                           +0.413    0.0706    
+  select_eliteRatio                     +0.319    0.1700    
+  select_tournSize                      -0.316    0.1742    
+  prob_toggleExcitatory                 +0.208    0.3793    
+  select_cullRatio                      +0.145    0.5431    
+  alg_probMoo                           +0.071    0.7668    
+  prob_addConn                          -0.056    0.8155    
+  prob_addNode                          -0.042    0.8599    
+  prob_initEnable                       +0.002    0.9925    
+
+── Random-Forest importance  (Phase 2) ──
+  Parameter                               Gini       Perm     ±std
+  prob_mutAct                           0.1942    +0.1589   0.0522
+  select_tournSize                      0.1629    +0.2253   0.0472
+  prob_enable                           0.1544    +0.1627   0.0609
+  prob_addNode                          0.1260    +0.1126   0.0204
+  prob_addConn                          0.1037    +0.1046   0.0425
+  prob_toggleExcitatory                 0.0864    +0.0501   0.0129
+  prob_initEnable                       0.0497    +0.0378   0.0127
+  alg_probMoo                           0.0425    +0.0246   0.0067
+  select_cullRatio                      0.0425    +0.0233   0.0072
+  select_eliteRatio                     0.0377    +0.0301   0.0097
+
+── Phase 3 Validation ──
+  Rank        Mean     ±Std       Min       Max  n_ok
+  2      -138.0909  50.0374 -210.0000  -41.0000    11
+  1      -145.3727  53.8615 -209.0000  -54.5000    11
+  0      -154.2364  49.0189 -219.0000  -53.6000    11
+
+── Best validated config (rank 2) ──
+  mean=-138.0909  std=50.0374  min=-210.0000  max=-41.0000
+  orig_mean                             -165.8545
+  orig_std                              46.5518
+  alg_probMoo                           0.4801
+  prob_addConn                          0.0683
+  prob_addNode                          0.1490
+  prob_enable                           0.1523
+  prob_mutAct                           0.6079
+  prob_toggleExcitatory                 0.0669
+  prob_initEnable                       0.4439
+  select_cullRatio                      0.1864
+  select_eliteRatio                     0.2595
+  select_tournSize                      4.0000
+
+==================================================================

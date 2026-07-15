@@ -1,0 +1,21 @@
+{
+  "alg_probMoo": 0.33788336079969816,
+  "prob_addConn": 0.057045146992414114,
+  "prob_addNode": 0.15338957095810268,
+  "prob_enable": 0.037639141228085246,
+  "prob_mutAct": 0.5412611810862373,
+  "prob_toggleExcitatory": 0.1365831502333283,
+  "prob_initEnable": 0.41415561067309337,
+  "select_cullRatio": 0.3711685240712423,
+  "select_eliteRatio": 0.14490326580025187,
+  "select_tournSize": 2,
+  "maxGen": 512,
+  "popSize": 128,
+  "alg_nVals": 4,
+  "alg_nReps": 3,
+  "bestReps": 5,
+  "save_mod": 64,
+  "snn_encoder": "small",
+  "ann_nInput": 18,
+  "snn_decoder": "first_spike"
+}

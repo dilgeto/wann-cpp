@@ -1,0 +1,45 @@
+==================================================================
+  Reduction analysis — run: acrobot_small_first_spike
+==================================================================
+
+Total trials: 17   successful: 17   rounds: 1
+Peak range: [-170.0000, -38.7000]
+
+── Space evolution (eliminated bins per round) ──
+  Round 0: no bins eliminated
+
+── Top 5 configs by peak_fitness ──
+ round  trial  peak_fitness  alg_probMoo  prob_addConn  prob_addNode  prob_enable  prob_mutAct  prob_toggleExcitatory  prob_initEnable  select_cullRatio  select_eliteRatio  select_tournSize
+     0      8      -38.7000       0.2288        0.0588        0.2618       0.0374       0.2238                 0.0364           0.2725            0.3997             0.2797                15
+     0     18      -38.8000       0.1412        0.0521        0.2931       0.0257       0.2101                 0.0787           0.3354            0.3605             0.2762                15
+     0     11      -49.0000       0.2089        0.1895        0.2727       0.0537       0.6257                 0.2133           0.2341            0.1518             0.1883                10
+     0     29      -50.0000       0.1273        0.0565        0.2982       0.0242       0.2198                 0.0792           0.3242            0.3627             0.2498                15
+     0      1      -50.1000       0.0849        0.1300        0.1171       0.0173       0.1523                 0.0565           0.5113            0.2803             0.3298                10
+
+── Spearman ρ  (|ρ| descending) ──
+  Parameter                                  ρ     p-val  sig
+  prob_initEnable                       -0.509    0.0368  *
+  prob_enable                           +0.449    0.0707    
+  prob_addConn                          -0.443    0.0752    
+  select_tournSize                      +0.334    0.1896    
+  select_cullRatio                      +0.281    0.2743    
+  alg_probMoo                           -0.205    0.4307    
+  prob_mutAct                           +0.115    0.6612    
+  prob_addNode                          +0.044    0.8657    
+  prob_toggleExcitatory                 -0.041    0.8768    
+  select_eliteRatio                     -0.033    0.8991    
+
+── Random-Forest importance  (Gini + permutation) ──
+  Parameter                               Gini       Perm     ±std
+  select_tournSize                      0.2014    +0.1664   0.0452
+  prob_enable                           0.1609    +0.2200   0.0939
+  prob_initEnable                       0.1599    +0.1661   0.0486
+  prob_addConn                          0.1035    +0.0711   0.0248
+  prob_toggleExcitatory                 0.0893    +0.0510   0.0144
+  select_eliteRatio                     0.0749    +0.0617   0.0109
+  prob_addNode                          0.0707    +0.0451   0.0107
+  alg_probMoo                           0.0591    +0.0324   0.0090
+  prob_mutAct                           0.0452    +0.0335   0.0039
+  select_cullRatio                      0.0352    +0.0215   0.0061
+
+==================================================================

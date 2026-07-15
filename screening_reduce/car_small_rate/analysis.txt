@@ -1,0 +1,58 @@
+==================================================================
+  Reduction analysis — run: car_small_rate
+==================================================================
+
+Total trials: 56   successful: 56   rounds: 4
+Peak range: [9.6600, 159.0000]
+
+── Space evolution (eliminated bins per round) ──
+  Round 0:
+    alg_probMoo                          bins [3] → [0.05, 0.7]
+    prob_addNode                         bins [4] → [0.05, 0.33]
+    select_tournSize                     bins [4] → [2, 13]
+  Round 1:
+    prob_initEnable                      bins [0] → [0.32, 0.8]
+  Round 2:
+    prob_addNode                         bins [4] → [0.05, 0.274]
+    prob_enable                          bins [0] → [0.01093, 0.25]
+    select_eliteRatio                    bins [4] → [0.05, 0.33]
+    select_tournSize                     bins [4] → [2, 10]
+  Round 3:
+    prob_addNode                         bins [2] → [0.05, 0.274]
+    select_tournSize                     bins [0] → [4, 10]
+
+── Top 5 configs by peak_fitness ──
+ round  trial  peak_fitness  alg_probMoo  prob_addConn  prob_addNode  prob_enable  prob_mutAct  prob_toggleExcitatory  prob_initEnable  select_cullRatio  select_eliteRatio  select_tournSize
+     2      4      159.0000       0.1014        0.0756        0.2332       0.0654       0.2452                 0.1425           0.5978            0.4561             0.2732                 8
+     2     18      126.0000       0.2738        0.3839        0.1897       0.0405       0.3360                 0.1139           0.5594            0.1288             0.1271                 7
+     1      2      122.0000       0.5526        0.2222        0.0507       0.0153       0.3289                 0.1483           0.7058            0.1814             0.0957                 6
+     1      5      110.0000       0.5853        0.2694        0.0575       0.1352       0.6811                 0.0241           0.4755            0.4079             0.2757                 4
+     0     12      109.0000       0.3728        0.1665        0.1555       0.0514       0.1795                 0.0319           0.4055            0.0863             0.2340                 8
+
+── Spearman ρ  (|ρ| descending) ──
+  Parameter                                  ρ     p-val  sig
+  prob_mutAct                           -0.220    0.1029    
+  prob_toggleExcitatory                 -0.157    0.2477    
+  select_tournSize                      +0.153    0.2595    
+  alg_probMoo                           +0.134    0.3255    
+  prob_addConn                          -0.112    0.4118    
+  prob_initEnable                       +0.063    0.6429    
+  prob_enable                           +0.056    0.6810    
+  select_cullRatio                      +0.043    0.7511    
+  prob_addNode                          -0.041    0.7664    
+  select_eliteRatio                     -0.032    0.8175    
+
+── Random-Forest importance  (Gini + permutation) ──
+  Parameter                               Gini       Perm     ±std
+  select_tournSize                      0.2371    +0.4817   0.0802
+  prob_addNode                          0.1276    +0.1129   0.0127
+  prob_toggleExcitatory                 0.1215    +0.1645   0.0283
+  prob_addConn                          0.1184    +0.1198   0.0187
+  alg_probMoo                           0.0828    +0.0711   0.0144
+  prob_enable                           0.0728    +0.0636   0.0127
+  select_cullRatio                      0.0691    +0.0526   0.0063
+  prob_mutAct                           0.0629    +0.0572   0.0094
+  select_eliteRatio                     0.0595    +0.0546   0.0088
+  prob_initEnable                       0.0483    +0.0385   0.0049
+
+==================================================================
