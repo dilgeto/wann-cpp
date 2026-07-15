@@ -240,3 +240,20 @@ target_link_libraries(wann_car_eval PRIVATE
     snn_encoding_imp
     snn_core_imp
     rl_tools_iface)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_disc_mc_eval – evalúa N episodios con la mejor red MountainCar discreto
+# ---------------------------------------------------------------------------
+add_executable(wann_disc_mc_eval
+    src/main_eval_disc_mc.cpp
+    src/SnnDiscMCTask.cpp)
+
+target_include_directories(wann_disc_mc_eval PRIVATE include)
+
+target_link_libraries(wann_disc_mc_eval PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)

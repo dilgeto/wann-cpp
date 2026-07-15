@@ -7,6 +7,7 @@
 
 #include <core/network.hpp>
 
+#include <utility>
 #include <vector>
 
 namespace wann {
@@ -43,13 +44,22 @@ public:
 
     int numWeightVals() const override { return N_WEIGHTS; }
 
+    // Run nEpisodes with the given shared weight.
+    // Returns {shaped_rewards, original_rewards}; shaped includes the potential-based bonus.
+    std::pair<std::vector<double>,std::vector<double>>
+    evalEpisodes(const std::vector<double>& wVec,
+                 const std::vector<int>&    aVec,
+                 double weight, int nEpisodes,
+                 int baseSeed) const;
+
     // Columns: step,position,velocity,action,reward
     // bestWi: index into WEIGHT_VALS for the logged episode.
-    // evalSeed: the seed passed to evaluate() for this individual.
+    // evalSeed: training evaluate() seed (directSeed=false) or direct episode seed (directSeed=true).
     void exportTrajectory(const std::vector<double>& wVec,
                           const std::vector<int>&    aVec,
                           int bestWi, int evalSeed,
-                          const std::string& outFile) const;
+                          const std::string& outFile,
+                          bool directSeed = false) const;
 
     double evaluateOriginal(const Ind& ind, int seed) const;
 

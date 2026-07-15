@@ -22,8 +22,8 @@
     "select_tournSize":      8,
     "save_mod":              10,
     "bestReps":              20,
-    "snn_encoder":           "small",
-    "snn_decoder":           "rate",
+    "snn_encoder":           "ttfs",
+    "snn_decoder":           "first_spike",
     "reward_shaping_scale":  10.0,
     "snn_reset_between_steps": true
 }
