@@ -7,10 +7,25 @@ otros trabajos (ANN, Gymnasium).
 
 No se necesita reentrenar: usa las N seeds que ya corriste en phase3.
 
+Objetivo tipo "alcanzar al menos el X% de un benchmark" (--pct):
+  El umbral NO se calcula multiplicando el score tal cual, porque eso
+  invierte el sentido en tareas de recompensa negativa (Mountain Car,
+  Acrobot: mas cercano a 0 = mejor). En su lugar:
+      target = benchmark - (1 - pct) * abs(benchmark)
+  Con benchmark=350 (positivo) y pct=0.9  -> target=315 (necesitas >=315).
+  Con benchmark=-110 (negativo) y pct=0.9 -> target=-121 (necesitas >=-121,
+  es decir, se permite hasta 10% mas de magnitud de penalizacion).
+
 Uso:
+  # Comparacion directa contra el score exacto reportado
   python bootstrap_compare.py \
       --csv screening_full/mountain_car_ttfs_rate_argmax/p3_validation.csv \
       --rank 0 --ann -110 --gym -100
+
+  # Objetivo: alcanzar al menos el 90% del score de stable-baselines3
+  python bootstrap_compare.py \
+      --csv screening_full/mountain_car_ttfs_rate_argmax/p3_validation.csv \
+      --rank 0 --ann -110 --pct 0.9
 """
 
 import argparse
@@ -33,6 +48,12 @@ def p_value_vs_benchmark(boot_means, benchmark):
     return 2 * min(p_below, p_above)
 
 
+def scaled_target(benchmark, pct):
+    """Umbral 'al menos pct% del benchmark', consciente del signo de la
+    recompensa (mayor = mejor siempre, sin importar si es negativa)."""
+    return benchmark - (1 - pct) * abs(benchmark)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -44,6 +65,10 @@ def main():
     ap.add_argument("--gym", type=float, default=None, help="score publicado del benchmark Gymnasium")
     ap.add_argument("--n-boot", type=int, default=10000)
     ap.add_argument("--ci", type=float, default=0.95)
+    ap.add_argument("--pct", type=float, default=None,
+                     help="si se indica (ej. 0.9), en vez de comparar contra el "
+                          "score exacto evalua el objetivo 'alcanzar al menos pct%% del benchmark' "
+                          "(consciente del signo, ver docstring)")
     ap.add_argument("--seed", type=int, default=0, help="semilla del RNG del bootstrap (reproducibilidad)")
     args = ap.parse_args()
 
@@ -59,9 +84,26 @@ def main():
 
     print(f"n = {n} seeds | media = {mean:.2f} | IC{int(args.ci * 100)}% = [{lo:.2f}, {hi:.2f}]")
 
+    # cota inferior de una sola cola (percentil alpha), para el chequeo de objetivo
+    lo_one_sided = np.percentile(boot_means, (1 - args.ci) * 100)
+
     for name, bench in (("ANN", args.ann), ("Gymnasium", args.gym)):
         if bench is None:
             continue
+
+        if args.pct is not None:
+            target = scaled_target(bench, args.pct)
+            reaches = lo_one_sided >= target
+            estado = "SI" if reaches else "NO"
+            # alpha resultante: nivel de significancia de una cola al que el
+            # objetivo queda justo en el borde del intervalo (menor = mas confianza)
+            alpha_result = np.mean(boot_means < target)
+            print(f"  objetivo >= {args.pct*100:.0f}% de {name} ({bench:.2f}) "
+                  f"-> target={target:.2f}: {estado} se alcanza "
+                  f"(cota inferior {int(args.ci*100)}% de una cola = {lo_one_sided:.2f}, "
+                  f"alpha resultante={alpha_result:.4f}, se exige alpha<={1 - args.ci:.2f})")
+            continue
+
         p = p_value_vs_benchmark(boot_means, bench)
         inside = lo <= bench <= hi
         if inside:
