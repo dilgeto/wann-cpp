@@ -80,6 +80,32 @@ SHORT = {
 
 TASKS = ["mountain_car", "acrobot", "pendulum", "car"]
 
+# Colores fijos por configuración (encoding x decoding), en orden categórico
+# consistente entre tareas (nunca se reasignan según ranking/filtro).
+_CONFIG_ORDER = [("small", "first_spike"), ("small", "rate"),
+                 ("ttfs", "first_spike"), ("ttfs", "rate")]
+_CONFIG_COLORS = {
+    ("small", "first_spike"): "#2a78d6",  # blue
+    ("small", "rate"):        "#1baf7a",  # aqua
+    ("ttfs", "first_spike"):  "#eda100",  # yellow
+    ("ttfs", "rate"):         "#008300",  # green
+}
+
+
+def _config_key(enc_dec: str) -> tuple[str, str]:
+    enc, _, dec = enc_dec.partition("_")
+    dec_key = "rate" if dec.startswith("rate") else dec
+    return enc, dec_key
+
+
+def _config_color(enc_dec: str) -> str:
+    return _CONFIG_COLORS.get(_config_key(enc_dec), "#898781")
+
+
+def _config_sort_index(enc_dec: str) -> int:
+    key = _config_key(enc_dec)
+    return _CONFIG_ORDER.index(key) if key in _CONFIG_ORDER else 99
+
 plt.rcParams.update({
     "font.size": 9,
     "axes.titlesize": 10,
@@ -192,6 +218,93 @@ def plot_importance(run_key: str, df_ok: pd.DataFrame,
                      fontsize=7, color="black")
 
     plt.tight_layout()
+    plt.savefig(out_path, bbox_inches="tight")
+    plt.close()
+    print(f"  → {out_path}")
+
+
+def plot_importance_combined(task: str,
+                             configs: list[tuple[str, pd.DataFrame, list[str]]],
+                             out_path: Path, title_prefix: str = "") -> None:
+    """Importancia de HPs con las N configuraciones (encoding x decoding)
+    superpuestas como barras agrupadas en un mismo gráfico."""
+    configs = sorted(configs, key=lambda c: _config_sort_index(c[0]))
+
+    gini_by_cfg, rho_by_cfg, pval_by_cfg, hasrf_by_cfg = {}, {}, {}, {}
+    all_params: set[str] = set()
+    for label, df_ok, hp_cols in configs:
+        _, gini_c, _, rho_c, pval_c = _compute_importance(df_ok, hp_cols)
+        gini_by_cfg[label] = gini_c
+        rho_by_cfg[label]  = rho_c
+        pval_by_cfg[label] = pval_c
+        hasrf_by_cfg[label] = HAS_SKLEARN and len(df_ok) >= 10 and max(gini_c.values(), default=0.0) > 1e-9
+        all_params.update(hp_cols)
+
+    def avg_gini(p: str) -> float:
+        vs = [gini_by_cfg[l][p] for l, _, _ in configs if hasrf_by_cfg[l] and p in gini_by_cfg[l]]
+        return float(np.mean(vs)) if vs else 0.0
+
+    def avg_absrho(p: str) -> float:
+        vs = [abs(rho_by_cfg[l][p]) for l, _, _ in configs if p in rho_by_cfg[l]]
+        return float(np.mean(vs)) if vs else 0.0
+
+    hp_order = sorted(all_params, key=lambda p: (avg_gini(p), avg_absrho(p)))
+    labels_hp = [SHORT.get(p, p) for p in hp_order]
+
+    n_hp, n_cfg = len(hp_order), len(configs)
+    y_base  = np.arange(n_hp)
+    bar_h   = 0.8 / n_cfg
+    offsets = (np.arange(n_cfg) - (n_cfg - 1) / 2) * bar_h
+
+    any_rf = any(hasrf_by_cfg.values())
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, max(3.5, 0.45 * n_hp + 1.2)), sharey=True)
+    fig.suptitle(f"{title_prefix}{task}  — Importancia HPs (todas las configuraciones)",
+                fontweight="bold")
+
+    ax = axes[0]
+    for j, (label, _, _) in enumerate(configs):
+        vals = [gini_by_cfg[label].get(p, np.nan) if hasrf_by_cfg[label] else np.nan
+                for p in hp_order]
+        bars = ax.barh(y_base + offsets[j], vals, height=bar_h * 0.9,
+                       color=_config_color(label), label=label)
+        for bar, v in zip(bars, vals):
+            if not np.isnan(v) and v > 1e-9:
+                ax.text(bar.get_width() + 0.003, bar.get_y() + bar.get_height() / 2,
+                        f"{v:.3f}", va="center", ha="left", fontsize=6)
+    ax.set_yticks(y_base)
+    ax.set_yticklabels(labels_hp)
+    ax.set_xlabel("RF Gini importance")
+    if any_rf:
+        ax.set_title("Gini importance")
+    elif not HAS_SKLEARN:
+        ax.set_title("Gini importance (sklearn no instalado)")
+    else:
+        ax.set_title("Gini importance (todas las configs <10 trials)")
+
+    ax2 = axes[1]
+    for j, (label, _, _) in enumerate(configs):
+        vals = [rho_by_cfg[label].get(p, np.nan) for p in hp_order]
+        bars = ax2.barh(y_base + offsets[j], vals, height=bar_h * 0.9,
+                        color=_config_color(label))
+        for bar, p, v in zip(bars, hp_order, vals):
+            if np.isnan(v):
+                continue
+            pv  = pval_by_cfg[label].get(p, 1.0)
+            sig = "**" if pv < 0.01 else ("*" if pv < 0.05 else "")
+            off = 0.015 if v >= 0 else -0.015
+            ax2.text(v + off, bar.get_y() + bar.get_height() / 2,
+                     f"{v:+.2f}{sig}", va="center",
+                     ha="left" if v >= 0 else "right", fontsize=6)
+    ax2.axvline(0, color="black", linewidth=0.8)
+    ax2.set_xlabel("Spearman ρ")
+    ax2.set_title("Spearman ρ")
+
+    handles, labels_ = ax.get_legend_handles_labels()
+    fig.legend(handles, labels_, loc="upper center", ncol=n_cfg,
+              bbox_to_anchor=(0.5, 1.04), frameon=False)
+
+    plt.tight_layout(rect=(0, 0, 1, 0.90))
     plt.savefig(out_path, bbox_inches="tight")
     plt.close()
     print(f"  → {out_path}")
@@ -612,6 +725,31 @@ def process_full(run_key: str, plots_dir: Path) -> dict | None:
     return rec
 
 
+def _load_hp_df(csv_path: Path) -> tuple[pd.DataFrame, list[str]] | None:
+    if not csv_path.exists():
+        return None
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        return None
+    df_ok = df.dropna(subset=["peak_fitness"])
+    if len(df_ok) < 5:
+        return None
+    return df_ok, hp_cols_from(df_ok)
+
+
+def collect_task_configs(run_keys: list[str], base_dir: Path,
+                         csv_name: str) -> list[tuple[str, pd.DataFrame, list[str]]]:
+    configs = []
+    for rk in run_keys:
+        _, enc_dec = parse_run_key(rk)
+        data = _load_hp_df(base_dir / rk / csv_name)
+        if data:
+            df_ok, hp_cols = data
+            configs.append((enc_dec, df_ok, hp_cols))
+    return configs
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -658,6 +796,31 @@ def main() -> None:
 
     if p3_records and args.phase in ("full", "both"):
         plot_phase3_summary(p3_records, plots_dir / "phase3_summary.png")
+
+    # Gráfico de importancia combinado: las 4 configuraciones (encoding x
+    # decoding) de cada tarea superpuestas en un mismo gráfico.
+    task_runkeys: dict[str, list[str]] = {}
+    for rk in run_keys:
+        task, _ = parse_run_key(rk)
+        task_runkeys.setdefault(task, []).append(rk)
+
+    for task, rks in task_runkeys.items():
+        if args.phase in ("reduce", "both"):
+            configs = collect_task_configs(rks, REDUCE_DIR, "results.csv")
+            if len(configs) >= 2:
+                out_dir = plots_dir / "reduce"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                plot_importance_combined(task, configs,
+                                         out_dir / f"{task}_importance_combined.png",
+                                         title_prefix="[reduce] ")
+        if args.phase in ("full", "both"):
+            configs = collect_task_configs(rks, FULL_DIR, "p2_results.csv")
+            if len(configs) >= 2:
+                out_dir = plots_dir / "full"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                plot_importance_combined(task, configs,
+                                         out_dir / f"{task}_importance_combined.png",
+                                         title_prefix="[full P2] ")
 
     print(f"\nTodos los gráficos guardados en: {plots_dir}/")
 
