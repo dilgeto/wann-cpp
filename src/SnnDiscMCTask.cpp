@@ -139,7 +139,7 @@ Network SnnDiscMCTask::buildNetwork(const std::vector<double>& wVec,
     Network net(1.0, true);
     std::vector<int> snn_id(N, -1);
 
-    snn_id[0] = net.addInputNeuron(NeuronType::REGULAR_SPIKING);
+    snn_id[0] = net.addInputNeuron(wannActToNeuronType(aVec[0]));
     for (int i = 1; i <= nInput_; ++i)
         snn_id[i] = net.addInputNeuron(wannActToNeuronType(aVec[i]));
     for (int i = nInput_ + 1; i < N - nOutput_; ++i)

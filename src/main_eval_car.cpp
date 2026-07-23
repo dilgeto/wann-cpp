@@ -8,6 +8,8 @@
 //   ./wann_car_eval -n 20 -S best          (guarda el mejor episodio)
 //   ./wann_car_eval -n 20 -S 3             (guarda el episodio 3)
 //   ./wann_car_eval -n 20 -S best -o mi_replay.csv
+//   ./wann_car_eval -i 4                    (sobrescribe ann_nInput del config,
+//                                             para redes entrenadas con -p overrides.json)
 
 #include "../include/wann/Hyperparams.h"
 #include "../include/wann/Ind.h"
@@ -32,6 +34,7 @@ int main(int argc, char* argv[]) {
     int         nEpisodes  = 10;
     int         seed       = 0;
     int         maxSteps   = 0;  // 0 = usar el valor por defecto de la tarea
+    int         nInputArg  = -1;  // -1 = usar el valor del config
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -43,10 +46,11 @@ int main(int argc, char* argv[]) {
         else if (arg == "-t" && i+1 < argc) { maxSteps   = std::atoi(argv[++i]); }
         else if (arg == "-S" && i+1 < argc) { saveArg    = argv[++i]; }
         else if (arg == "-o" && i+1 < argc) { outFile    = argv[++i]; }
+        else if (arg == "-i" && i+1 < argc) { nInputArg  = std::atoi(argv[++i]); }
         else {
             std::cerr << "Uso: wann_car_eval [-f red.out] [-d config.json]"
                          " [-w peso|best] [-n episodios] [-s seed] [-t steps]"
-                         " [-S best|N] [-o salida.csv]\n";
+                         " [-S best|N] [-o salida.csv] [-i nInput]\n";
             return 1;
         }
     }
@@ -57,6 +61,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error cargando config: " << e.what() << '\n';
         return 1;
     }
+    if (nInputArg >= 0) hyp.ann_nInput = nInputArg;
 
     auto [wVec, aVec, wKey] = wann::importNet(netFile);
     wann::SnnCarTask task(hyp);

@@ -23,7 +23,7 @@
     "save_mod":                 10,
     "bestReps":                 20,
     "snn_encoder":              "ttfs",
-    "snn_decoder":              "rate",
+    "snn_decoder":              "first_spike",
     "snn_reset_between_steps":  true,
     "snn_neurons_per_var":      5
 }

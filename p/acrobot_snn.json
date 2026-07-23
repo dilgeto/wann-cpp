@@ -5,7 +5,7 @@
     "alg_nVals":             6,
     "alg_nReps":             6,
     "alg_probMoo":           0.5,
-    "ann_nInput":            6,
+    "ann_nInput":            12,
     "ann_nOutput":           3,
     "ann_initAct":           1,
     "ann_actRange":          [1, 2, 3, 4, 5, 6],
@@ -22,7 +22,7 @@
     "select_tournSize":      8,
     "save_mod":              10,
     "bestReps":              20,
-    "snn_encoder":           "current",
+    "snn_encoder":           "small",
     "snn_decoder":           "rate_argmax",
     "snn_reset_between_steps": true,
     "reward_shaping_scale":  10.0
