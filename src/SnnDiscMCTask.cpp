@@ -159,7 +159,7 @@ Network SnnDiscMCTask::buildNetwork(const std::vector<double>& wVec,
     return net;
 }
 
-std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
+std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, long long episodeSeed) const
 {
     DEVICE device;
     Env env;
@@ -284,7 +284,7 @@ std::vector<double> SnnDiscMCTask::evaluate(const Ind& ind, int seed)
     for (int wi = 0; wi < N_WEIGHTS; ++wi) {
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
-            int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
+            long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
             total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
@@ -298,7 +298,7 @@ double SnnDiscMCTask::evaluateOriginal(const Ind& ind, int seed) const {
     for (int wi = 0; wi < N_WEIGHTS; ++wi) {
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
-            int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
+            long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
             total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).second;
         }
         sum += total / static_cast<double>(nReps_);
@@ -317,7 +317,7 @@ std::vector<double> SnnDiscMCTask::getDistFitness(
     for (int wi = 0; wi < N_WEIGHTS; ++wi) {
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
-            int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
+            long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
             total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
@@ -353,15 +353,15 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
 
     Network net = buildNetwork(wVec, aVec);
 
-    int episodeSeed;
+    long long episodeSeed;
     if (directSeed) {
         episodeSeed = evalSeed;
     } else {
         // Warm-up: reproduce SNN state from training
         for (int wi = 0; wi < bestWi; ++wi)
             for (int rep = 0; rep < nReps_; ++rep)
-                runEpisode(net, WEIGHT_VALS[wi], evalSeed * 10000 + wi * 100 + rep);
-        episodeSeed = evalSeed * 10000 + bestWi * 100 + 0;
+                runEpisode(net, WEIGHT_VALS[wi], static_cast<long long>(evalSeed) * 10000 + wi * 100 + rep);
+        episodeSeed = static_cast<long long>(evalSeed) * 10000 + bestWi * 100 + 0;
     }
     const double weight = WEIGHT_VALS[bestWi];
 

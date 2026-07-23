@@ -160,7 +160,7 @@ Network SnnAcrobotTask::buildNetwork(const std::vector<double>& wVec,
     return net;
 }
 
-std::pair<double,double> SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, int episodeSeed) const
+std::pair<double,double> SnnAcrobotTask::runEpisode(Network& net, double sharedWeight, long long episodeSeed) const
 {
     net.fastReset();
     DEVICE device;
@@ -343,7 +343,7 @@ std::vector<double> SnnAcrobotTask::evaluate(const Ind& ind, int seed)
     for (int wi = 0; wi < N_WEIGHTS; ++wi) {
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
-            int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
+            long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
             total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
@@ -357,7 +357,7 @@ double SnnAcrobotTask::evaluateOriginal(const Ind& ind, int seed) const {
     for (int wi = 0; wi < N_WEIGHTS; ++wi) {
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
-            int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
+            long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
             total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).second;
         }
         sum += total / static_cast<double>(nReps_);
@@ -379,7 +379,7 @@ std::vector<double> SnnAcrobotTask::getDistFitness(
     for (int wi = 0; wi < N_WEIGHTS; ++wi) {
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
-            int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
+            long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
             total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
@@ -415,11 +415,11 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
 
     Network net = buildNetwork(wVec, aVec);
 
-    int episodeSeed;
+    long long episodeSeed;
     if (directSeed) {
         episodeSeed = evalSeed;
     } else {
-        episodeSeed = evalSeed * 10000 + bestWi * 100 + 0;
+        episodeSeed = static_cast<long long>(evalSeed) * 10000 + bestWi * 100 + 0;
     }
     const double weight = WEIGHT_VALS[bestWi];
 

@@ -86,7 +86,7 @@ private:
     Network buildNetwork(const std::vector<double>& wVec,
                          const std::vector<int>&    aVec) const;
 
-    std::pair<double,double> runEpisode(Network& net, double sharedWeight, int episodeSeed) const;
+    std::pair<double,double> runEpisode(Network& net, double sharedWeight, long long episodeSeed) const;
 };
 
 } // namespace wann
