@@ -12,7 +12,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -239,12 +238,6 @@ std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWe
                 if (nInput_ >= 2) currents[2] = (vel + VEL_MAX) / (2.0 * VEL_MAX) * 20.0;
             }
 
-            if (std::getenv("WANN_DEBUG_DISCMC_CURR") && step < 5) {
-                std::cerr << "  currents: ";
-                for (double c : currents) std::cerr << c << " ";
-                std::cerr << "\n";
-            }
-
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);
                 net.step(sharedWeight);
@@ -266,16 +259,6 @@ std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWe
                 }
         } else {
             winner = disc_decoder.decodeDiscreteAction(multi_spikes);
-        }
-
-        static int dbg_count = 0;
-        if (std::getenv("WANN_DEBUG_DISCMC") && dbg_count < 30) {
-            ++dbg_count;
-            std::cerr << "step=" << step << " pos=" << pos << " vel=" << vel
-                      << " spikes[0]=" << multi_spikes[0].size()
-                      << " spikes[1]=" << multi_spikes[1].size()
-                      << " spikes[2]=" << multi_spikes[2].size()
-                      << " winner=" << winner << "\n";
         }
 
         double force = static_cast<double>(winner - 1);

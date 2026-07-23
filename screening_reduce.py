@@ -148,6 +148,33 @@ def encoder_nInput(encoder: str | None, n_obs: int,
         return n_obs * neurons_per_var
     return None
 
+
+def validate_task_files(task: str, executable: str, base_config: str) -> None:
+    """
+    Guard against silently running the wrong task's binary/config — e.g.
+    `--task disc_mc` picking up wann_mountain_car by way of a stale/copied
+    `--exe`/`--base` override, or vice versa. Both tasks share the same
+    n_obs/fidelity shape (2 observations), so a mismatch here produces a
+    plausible-looking but wrong run instead of an obvious crash.
+
+    Raises SystemExit if executable or base_config exactly matches another
+    task's default path (any override matching *this* task's own default
+    is fine).
+    """
+    for other_task, other_td in TASK_DEFAULTS.items():
+        if other_task == task:
+            continue
+        if executable == other_td["executable"]:
+            print(f"ERROR: --task {task} pero el ejecutable resuelto "
+                  f"({executable}) es el default de '{other_task}'. "
+                  f"¿--exe copiado de otra tarea?", file=sys.stderr)
+            sys.exit(1)
+        if base_config == other_td["base_config"]:
+            print(f"ERROR: --task {task} pero el config resuelto "
+                  f"({base_config}) es el default de '{other_task}'. "
+                  f"¿--base copiado de otra tarea?", file=sys.stderr)
+            sys.exit(1)
+
 # ── Initial search space (10 hyperparameters) ─────────────────────────────────
 # Format: param → (kind, lo, hi)
 #   "float" – uniform in [lo, hi]
@@ -545,6 +572,8 @@ def cmd_full(
 
     print(f"\n{'='*66}")
     print(f"  Task: {task}   run key: {rkey}")
+    print(f"  Executable: {executable}")
+    print(f"  Base config: {base_config}")
     if fixed_overrides:
         print(f"  Fixed overrides: {fixed_overrides}")
     print(f"  rounds: {max_rounds}   n/round: {n}")
@@ -740,6 +769,7 @@ def main() -> None:
 
     executable  = args.exe  or td["executable"]
     base_config = args.base or td["base_config"]
+    validate_task_files(args.task, executable, base_config)
 
     if not Path(executable).exists():
         print(f"ERROR: {executable} not found. Compile first.", file=sys.stderr)

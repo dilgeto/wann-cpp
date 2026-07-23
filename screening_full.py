@@ -79,6 +79,7 @@ from screening_reduce import (
     _read_original,
     make_run_key,
     encoder_nInput,
+    validate_task_files,
 )
 
 # ── Full fidelity (from each task's base JSON) ────────────────────────────────
@@ -642,6 +643,7 @@ def main() -> None:
 
     executable  = args.exe  or td["executable"]
     base_config = args.base or td["base_config"]
+    validate_task_files(args.task, executable, base_config)
     out_dir     = Path("screening_full") / rkey
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -653,6 +655,8 @@ def main() -> None:
     space, source = load_reduced_space(rkey)
     print(f"\n{'='*66}")
     print(f"  Task: {args.task}   run key: {rkey}   mode: {args.mode}")
+    print(f"  Executable: {executable}")
+    print(f"  Base config: {base_config}")
     if fixed_overrides:
         print(f"  Fixed overrides: {fixed_overrides}")
     print(f"  Space source: {source}")

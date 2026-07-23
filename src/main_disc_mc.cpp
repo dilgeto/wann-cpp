@@ -115,27 +115,6 @@ int main(int argc, char* argv[]) {
 
         int evalSeed = (static_cast<int>(seed) + gen) * 10000 + eliteIdx;
         double origFit = task.evaluateOriginal(pop[eliteIdx], evalSeed);
-
-        if (std::getenv("WANN_DEBUG_ROUNDTRIP")) {
-            const auto& ind = pop[eliteIdx];
-            wann::exportNet("/tmp/rt_debug.out", ind.wMat, ind.nNodes, ind.aVec);
-            auto [rtWVec, rtAVec, rtWKey] = wann::importNet("/tmp/rt_debug.out");
-            double roundtripSum = 0.0;
-            for (int wi = 0; wi < wann::SnnDiscMCTask::N_WEIGHTS; ++wi) {
-                auto [shaped, orig] = task.evalEpisodes(
-                    rtWVec, rtAVec, wann::SnnDiscMCTask::WEIGHT_VALS[wi],
-                    1, evalSeed);
-                roundtripSum += orig[0];
-                std::cerr << "  [roundtrip] wi=" << wi
-                          << " weight=" << wann::SnnDiscMCTask::WEIGHT_VALS[wi]
-                          << " orig=" << orig[0] << '\n';
-            }
-            std::cerr << "[roundtrip] gen=" << gen
-                      << "  evaluateOriginal(ind)=" << origFit
-                      << "  roundtrip_avg=" << (roundtripSum / wann::SnnDiscMCTask::N_WEIGHTS)
-                      << "  nNodes=" << ind.nNodes << '\n';
-        }
-
         data.setEliteOriginalFitness(origFit);
         data.setBestWi(bestWi);
         data.gatherData(pop);
