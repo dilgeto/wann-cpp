@@ -34,12 +34,14 @@ parser.add_argument("--nOutput", type=int, default=1,
                     help="Número de salidas del WANN")
 parser.add_argument("--save",    action="store_true",
                     help="Guardar figuras como PNG en lugar de mostrarlas")
+parser.add_argument("--title",   default=None,
+                    help="Prefijo a mostrar en los títulos de los gráficos (por defecto, se deriva de --prefix)")
 args = parser.parse_args()
 
 PREFIX   = args.prefix
 N_INPUT  = args.nInput
 N_OUTPUT = args.nOutput
-TASK     = os.path.basename(PREFIX)
+TASK     = args.title if args.title is not None else os.path.basename(PREFIX)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Curvas de entrenamiento
