@@ -1,2 +1,5 @@
 task,run_key,rank,seed_idx,weight_index,weight_value,reward,reward_std,reward_type,n_neurons,n_connections,eval_seed_0,eval_seed_1,eval_seed_2,eval_seed_3,eval_seed_4,eval_seed_5,eval_seed_6,eval_seed_7,eval_seed_8,eval_seed_9
+mountain_car,mountain_car_small_first_spike,2,5,1,1.0,-102.31666700000001,3.252206128837094,original,59,188,-107.1667,-103.6667,-97.66667,-105.0,-104.3333,-100.6667,-103.8333,-98.0,-103.8333,-99.0
 mountain_car,mountain_car_small_rate_argmax,1,7,4,5.0,-101.35,3.191858973106425,original,24,53,-105.5,-98.5,-101.8333,-106.0,-96.0,-102.6667,-99.33333,-102.1667,-102.8333,-98.66667
+mountain_car,mountain_car_ttfs_first_spike,1,9,5,8.0,-115.49999,2.3253769111216727,original,21,46,-114.3333,-117.8333,-117.8333,-111.5,-117.1667,-114.8333,-114.6667,-118.8333,-114.6667,-113.3333
+mountain_car,mountain_car_ttfs_rate_argmax,2,0,4,5.0,-103.33333,4.058986950224021,original,24,53,-106.5,-100.3333,-107.5,-103.0,-96.16667,-104.5,-99.83333,-108.5,-106.6667,-100.3333

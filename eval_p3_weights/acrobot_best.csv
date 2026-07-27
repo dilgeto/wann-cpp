@@ -1,2 +1,5 @@
 task,run_key,rank,seed_idx,weight_index,weight_value,reward,reward_std,reward_type,n_neurons,n_connections,eval_seed_0,eval_seed_1,eval_seed_2,eval_seed_3,eval_seed_4,eval_seed_5,eval_seed_6,eval_seed_7,eval_seed_8,eval_seed_9
 acrobot,acrobot_small_first_spike,2,1,2,1.5,-72.88333200000001,4.666699486657924,original,34,34,-68.66667,-70.33333,-75.33333,-65.33333,-70.5,-81.83333,-77.16667,-72.83333,-74.83333,-72.0
+acrobot,acrobot_small_rate_argmax,1,4,2,1.5,-74.383334,5.290948494865128,original,29,51,-78.16667,-69.83333,-67.16667,-67.0,-78.5,-79.66667,-74.5,-71.5,-75.66667,-81.83333
+acrobot,acrobot_ttfs_first_spike,2,0,3,2.0,-79.31666600000001,6.796170533906415,original,32,95,-77.66667,-68.16667,-82.33333,-76.16667,-94.83333,-75.66667,-76.83333,-82.33333,-79.33333,-79.83333
+acrobot,acrobot_ttfs_rate_argmax,2,5,2,1.5,-77.900001,4.076580566003955,original,21,37,-77.66667,-76.16667,-77.66667,-73.66667,-80.0,-88.33333,-76.66667,-75.83333,-74.83333,-78.16667

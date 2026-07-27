@@ -180,21 +180,21 @@ def eval_model(task: str, td: dict, model: dict, seeds: list[int],
 
 def run_task(task: str, seeds: list[int], jobs: int, omp: int,
              timeout: int | None, out_dir: Path,
-             reward_override: str | None = None) -> tuple[pd.DataFrame, dict | None]:
+             reward_override: str | None = None) -> tuple[pd.DataFrame, list[dict]]:
     td = dict(TASKS[task])
     if reward_override:
         td["reward"] = reward_override
     if not Path(td["executable"]).exists():
         print(f"ERROR: {td['executable']} no existe. Compilar primero "
               f"(cd build && ninja {Path(td['executable']).name}).", file=sys.stderr)
-        return pd.DataFrame(), None
+        return pd.DataFrame(), []
 
     prefix = td["screening_prefix"]
     models = find_models(prefix)
     if not models:
         print(f"[{task}] no se encontraron modelos de fase 3 en "
               f"screening_full/{prefix}_*/p3_configs.")
-        return pd.DataFrame(), None
+        return pd.DataFrame(), []
 
     print(f"\n[{task}] {len(models)} modelos encontrados, "
           f"evaluando con {len(seeds)} seeds cada uno (reward={td['reward']})...")
@@ -225,7 +225,7 @@ def run_task(task: str, seeds: list[int], jobs: int, omp: int,
     df.to_csv(out_path, index=False)
     print(f"[{task}] resultados → {out_path}  ({len(df)}/{len(models)} exitosos)")
 
-    best = None
+    bests: list[dict] = []
     if not df.empty:
         summary = summarize_by_config(df)
         summary_path = out_dir / f"{task}_summary.csv"
@@ -233,13 +233,14 @@ def run_task(task: str, seeds: list[int], jobs: int, omp: int,
         print(f"[{task}] resumen por configuración → {summary_path}  "
               f"({len(summary)} configuraciones)")
 
-        best = best_model_weight(task, td, df, raw_by_key)
-        if best is not None:
+        bests = best_per_run_key(task, td, df, raw_by_key)
+        if bests:
             best_path = out_dir / f"{task}_best.csv"
-            pd.DataFrame([best]).to_csv(best_path, index=False)
-            print(f"[{task}] mejor modelo/peso → {best_path}")
+            pd.DataFrame(bests).to_csv(best_path, index=False)
+            print(f"[{task}] mejor modelo/peso por run_key → {best_path}  "
+                  f"({len(bests)} run_keys)")
 
-    return df, best
+    return df, bests
 
 
 def summarize_by_config(df: pd.DataFrame) -> pd.DataFrame:
@@ -266,7 +267,7 @@ def summarize_by_config(df: pd.DataFrame) -> pd.DataFrame:
 
 def best_model_weight(task: str, td: dict, df: pd.DataFrame,
                        raw_by_key: dict[tuple, pd.DataFrame]) -> dict | None:
-    """Across every model × weight evaluated for `task`, find the single
+    """Within `df` (every model × weight evaluated), find the single
     highest-reward (model, weight) combination. reward/reward_std are the
     mean/std of that weight's reward across the evaluation seeds, and
     eval_seed_* carries each individual evaluation (one per seed) for that
@@ -308,6 +309,21 @@ def best_model_weight(task: str, td: dict, df: pd.DataFrame,
     return result
 
 
+def best_per_run_key(task: str, td: dict, df: pd.DataFrame,
+                      raw_by_key: dict[tuple, pd.DataFrame]) -> list[dict]:
+    """Best (model, weight) combination for each encoder/decoder run_key
+    found for `task` (e.g. acrobot_ttfs_first_spike, acrobot_small_rate_argmax, ...)."""
+    if df.empty:
+        return []
+    bests = []
+    for run_key in sorted(df["run_key"].unique()):
+        sub = df.loc[df["run_key"] == run_key]
+        b = best_model_weight(task, td, sub, raw_by_key)
+        if b is not None:
+            bests.append(b)
+    return bests
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -337,12 +353,11 @@ def main() -> None:
 
     bests: list[dict] = []
     for task in tasks:
-        _, best = run_task(task, seeds, args.jobs, omp, args.timeout, out_dir, args.reward)
-        if best is not None:
-            bests.append(best)
+        _, task_bests = run_task(task, seeds, args.jobs, omp, args.timeout, out_dir, args.reward)
+        bests.extend(task_bests)
 
     print(f"\n{'='*66}")
-    print("  Mejor modelo y peso por tarea")
+    print("  Mejor modelo y peso por run_key (encoder/decoder)")
     print(f"{'='*66}")
     if not bests:
         print("  (sin resultados)")
