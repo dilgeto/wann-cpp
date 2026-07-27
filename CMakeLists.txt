@@ -257,3 +257,50 @@ target_link_libraries(wann_disc_mc_eval PRIVATE
     snn_core_imp
     rl_tools_iface
     OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
+# Executables: wann_eval_weights_{acrobot,car,disc_mc} – evalúan
+# getDistFitness() (los N pesos compartidos) de una red guardada para una
+# lista de seeds. Un binario por tarea: cada TaskXxx.cpp instancia símbolos
+# no-inline de rl-tools que producen "multiple definition" si se linkean dos
+# tareas en el mismo binario, así que la tarea se fija en tiempo de
+# compilación vía EVAL_TASK_*.
+# ---------------------------------------------------------------------------
+add_executable(wann_eval_weights_acrobot
+    src/main_eval_weights.cpp
+    src/SnnAcrobotTask.cpp)
+target_compile_definitions(wann_eval_weights_acrobot PRIVATE EVAL_TASK_ACROBOT)
+target_include_directories(wann_eval_weights_acrobot PRIVATE include)
+target_link_libraries(wann_eval_weights_acrobot PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
+
+add_executable(wann_eval_weights_car
+    src/main_eval_weights.cpp
+    src/SnnCarTask.cpp)
+target_compile_definitions(wann_eval_weights_car PRIVATE EVAL_TASK_CAR)
+target_include_directories(wann_eval_weights_car PRIVATE include)
+target_link_libraries(wann_eval_weights_car PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
+
+add_executable(wann_eval_weights_disc_mc
+    src/main_eval_weights.cpp
+    src/SnnDiscMCTask.cpp)
+target_compile_definitions(wann_eval_weights_disc_mc PRIVATE EVAL_TASK_DISC_MC)
+target_include_directories(wann_eval_weights_disc_mc PRIVATE include)
+target_link_libraries(wann_eval_weights_disc_mc PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
