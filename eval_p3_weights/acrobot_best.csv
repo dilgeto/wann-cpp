@@ -1,0 +1,2 @@
+task,run_key,rank,seed_idx,weight_index,weight_value,reward,reward_std,reward_type,n_neurons,n_connections,eval_seed_0,eval_seed_1,eval_seed_2,eval_seed_3,eval_seed_4,eval_seed_5,eval_seed_6,eval_seed_7,eval_seed_8,eval_seed_9
+acrobot,acrobot_small_first_spike,2,1,2,1.5,-72.88333200000001,4.666699486657924,original,34,34,-68.66667,-70.33333,-75.33333,-65.33333,-70.5,-81.83333,-77.16667,-72.83333,-74.83333,-72.0

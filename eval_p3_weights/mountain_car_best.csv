@@ -1,0 +1,2 @@
+task,run_key,rank,seed_idx,weight_index,weight_value,reward,reward_std,reward_type,n_neurons,n_connections,eval_seed_0,eval_seed_1,eval_seed_2,eval_seed_3,eval_seed_4,eval_seed_5,eval_seed_6,eval_seed_7,eval_seed_8,eval_seed_9
+mountain_car,mountain_car_small_rate_argmax,1,7,4,5.0,-101.35,3.191858973106425,original,24,53,-105.5,-98.5,-101.8333,-106.0,-96.0,-102.6667,-99.33333,-102.1667,-102.8333,-98.66667

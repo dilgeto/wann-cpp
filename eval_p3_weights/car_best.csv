@@ -1,0 +1,2 @@
+task,run_key,rank,seed_idx,weight_index,weight_value,reward,reward_std,reward_type,n_neurons,n_connections,eval_seed_0,eval_seed_1,eval_seed_2,eval_seed_3,eval_seed_4,eval_seed_5,eval_seed_6,eval_seed_7,eval_seed_8,eval_seed_9
+car,car_ttfs_first_spike,2,0,5,8.0,1154.13238,184.22176261469826,shaped,61,93,796.1338,1361.196,1064.663,1127.072,1133.438,938.092,1372.044,1240.23,1296.804,1211.651
