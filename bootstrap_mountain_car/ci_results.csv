@@ -1,0 +1,2 @@
+ratio_literal_point_pct,ratio_literal_ci_lo_pct,ratio_literal_ci_hi_pct,ratio_signed_point_pct,ratio_signed_ci_lo_pct,ratio_signed_ci_hi_pct,diff_point,diff_ci_lo,diff_ci_hi,prob_ratio_signed_ge_90,alpha_result,meets_90pct_target,ci_level,n_resamples,n_episodes
+93.62850971922246,90.05108906257215,97.32829537651635,106.37149028077752,102.67170462348363,109.94891093742787,7.079999999999998,2.889750000000003,11.420249999999998,1.0,0.0,True,0.95,10000,100

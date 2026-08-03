@@ -9,13 +9,28 @@
 # hiperparámetro no está ahí (no fue sobreescrito), se usa el valor por
 # defecto de p/*.json.
 #
+# Para cada tarea procesada, además genera graficos/<Tarea>/phase3_summary_best.png
+# — comparación de las combinaciones encoder/decoder de esa tarea (mismo
+# estilo que plots/phase3_summary.png pero usando los valores de *_best.csv).
+# {task}_best.csv tiene una fila por (run_key, seed_idx) — hasta 11 filas por
+# combinación encoder/decoder. Por cada run_key se toma como "campeón" la fila
+# con mayor "reward", y su rank/seed_idx se usan para ubicar
+# log/full_p3_<run_key>/rank<NN>_seed<NN>_stats.out (curvas de entrenamiento,
+# Pareto, topología, población final). Cada caja de phase3_summary_best.png
+# son las 11 medias por semilla ("reward" de cada una de las filas de ese
+# run_key), no episodios individuales.
+# Con --ann se puede agregar un boxplot de referencia (episodios individuales
+# de una ANN convencional) que siempre se muestra a la izquierda de todo, sin
+# participar del orden ni de la comparación de "mejor config".
+#
 # Uso:
-#   bash generate_graphs.sh                  # las 3 tareas
-#   bash generate_graphs.sh acrobot car       # solo estas tareas
+#   bash generate_graphs.sh                        # las 3 tareas
+#   bash generate_graphs.sh acrobot car             # solo estas tareas
+#   bash generate_graphs.sh --ann acrobot:-90.1,-85.3,-97.2,-88.0,-91.5,-86.7,-93.4,-89.9,-84.2,-90.8
 #   VENV_PY=/otra/ruta/python3 bash generate_graphs.sh
 #
 # Requiere: eval_p3_weights.py ya corrido (para tener *_best.csv) y un
-# intérprete con matplotlib + graphviz (python) + pandas/numpy instalados.
+# intérprete con matplotlib + graphviz (python) + pandas/numpy/scipy instalados.
 
 set -euo pipefail
 
@@ -30,10 +45,43 @@ ALL_TASKS=(
     "car:Racing Car:p/car_snn.json"
 )
 
-if [[ $# -gt 0 ]]; then
-    selected=("$@")
-else
-    selected=(acrobot mountain_car car)
+declare -A ANN_VALUES
+selected=()
+
+VALID_TASKS=(acrobot mountain_car car)
+
+is_valid_task() {
+    local key="$1"
+    for t in "${VALID_TASKS[@]}"; do
+        [[ "$t" == "$key" ]] && return 0
+    done
+    return 1
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --ann)
+            IFS=":" read -r ann_task ann_values <<< "$2"
+            ANN_VALUES["$ann_task"]="$ann_values"
+            shift 2
+            ;;
+        -*)
+            echo "ERROR: flag desconocida '$1' (¿quisiste decir --ann?)" >&2
+            exit 1
+            ;;
+        *)
+            if ! is_valid_task "$1"; then
+                echo "ERROR: tarea desconocida '$1' (válidas: ${VALID_TASKS[*]})" >&2
+                exit 1
+            fi
+            selected+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ ${#selected[@]} -eq 0 ]]; then
+    selected=("${VALID_TASKS[@]}")
 fi
 
 is_selected() {
@@ -58,7 +106,13 @@ for entry in "${ALL_TASKS[@]}"; do
     mkdir -p "$out_dir"
     echo "=== $task_key ($display_name) -> $out_dir ==="
 
-    while IFS=$'\t' read -r run_key rank seed_idx; do
+    task_accum="$(mktemp)"
+
+    # Por cada run_key en {task}_best.csv (hasta 11 filas, una por seed_idx),
+    # se toma como "campeón" la fila de mayor "reward" y se emite su
+    # rank/seed_idx junto con las 11 medias por semilla (columna "reward" de
+    # todas sus filas), para usar como datos de la caja en phase3_summary_best.png.
+    while IFS=$'\t' read -r run_key rank seed_idx seed_means; do
         rank_p=$(printf "%02d" "$rank")
         seed_p=$(printf "%02d" "$seed_idx")
         prefix="log/full_p3_${run_key}/rank${rank_p}_seed${seed_p}"
@@ -70,7 +124,7 @@ for entry in "${ALL_TASKS[@]}"; do
 
         cfg_json="screening_full/${run_key}/p3_configs/rank${rank_p}_seed${seed_p}.json"
 
-        IFS=$'\t' read -r n_input n_output title <<< "$("$VENV_PY" - "$base_config" "$cfg_json" "$display_name" <<'PY'
+        IFS=$'\t' read -r n_input n_output title enc_dec <<< "$("$VENV_PY" - "$base_config" "$cfg_json" "$display_name" <<'PY'
 import json, sys
 
 base_path, cfg_path, display_name = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -91,12 +145,13 @@ n_input  = get("ann_nInput")
 n_output = get("ann_nOutput")
 encoder  = get("snn_encoder")
 decoder  = get("snn_decoder")
-title = f"{cap(display_name)} {cap(encoder)}+{cap(decoder)}"
-print(f"{n_input}\t{n_output}\t{title}")
+title   = f"{cap(display_name)} {cap(encoder)}+{cap(decoder)}"
+enc_dec = f"{encoder}_{decoder}"
+print(f"{n_input}\t{n_output}\t{title}\t{enc_dec}")
 PY
 )"
 
-        echo "  [$run_key rank=$rank_p seed=$seed_p] nInput=$n_input nOutput=$n_output title=\"$title\""
+        echo "  [$run_key rank=$rank_p seed=$seed_p (campeón)] nInput=$n_input nOutput=$n_output title=\"$title\""
 
         "$VENV_PY" graph.py --prefix "$prefix" \
             --nInput "$n_input" --nOutput "$n_output" \
@@ -109,14 +164,83 @@ PY
                 mv "$src" "${out_dir}/${base_name}_${suffix}.png"
             fi
         done
+
+        printf '%s\t%s\n' "$enc_dec" "$seed_means" >> "$task_accum"
     done < <("$VENV_PY" - "$best_csv" <<'PY'
 import csv, sys
+from collections import defaultdict
 
+groups = defaultdict(list)
 with open(sys.argv[1]) as f:
     for row in csv.DictReader(f):
-        print(f"{row['run_key']}\t{row['rank']}\t{row['seed_idx']}")
+        groups[row["run_key"]].append(row)
+
+for run_key, rows in groups.items():
+    champion = max(rows, key=lambda r: float(r["reward"]))
+    means = ",".join(r["reward"] for r in rows)
+    print(f"{run_key}\t{champion['rank']}\t{champion['seed_idx']}\t{means}")
 PY
 )
+
+    if [[ -s "$task_accum" ]]; then
+        summary_path="${out_dir}/phase3_summary_best.png"
+        "$VENV_PY" - "$task_accum" "$summary_path" "$display_name" \
+            "${ANN_VALUES[$task_key]:-}" <<'PY'
+import sys
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+accum_path, out_path, display_name, ann_values_arg = sys.argv[1:5]
+
+records = []
+with open(accum_path) as f:
+    for line in f:
+        enc_dec, values_csv = line.rstrip("\n").split("\t")
+        values = [float(v) for v in values_csv.split(",") if v != ""]
+        records.append((enc_dec, values))
+records.sort(key=lambda r: np.mean(r[1]), reverse=True)
+
+labels = [r[0] for r in records]
+data   = [r[1] for r in records]
+colors = ["#d62728" if i == 0 else "#4C72B0" for i in range(len(records))]
+
+if ann_values_arg != "":
+    ann_values = [float(v) for v in ann_values_arg.split(",") if v != ""]
+    labels = ["DQN"] + labels
+    data   = [ann_values] + data
+    colors = ["#808080"] + colors
+
+x = np.arange(len(labels))
+fig, ax = plt.subplots(figsize=(max(4, len(labels) * 1.5), 5))
+
+bp = ax.boxplot(data, positions=x, patch_artist=True, widths=0.6,
+                medianprops=dict(color="black"))
+for patch, color in zip(bp["boxes"], colors):
+    patch.set_facecolor(color)
+    patch.set_edgecolor("black")
+    patch.set_alpha(0.85)
+
+ax.set_xticks(x)
+ax.set_xticklabels(labels, rotation=30, ha="right")
+ax.set_title(f"{display_name} — mejor config validada por combinación", fontweight="bold")
+ax.set_ylabel("Reward Gymnasiun (mejor rank, Phase 3)")
+
+ylim = ax.get_ylim()
+rng  = ylim[1] - ylim[0]
+for pos, vals in zip(x, data):
+    ax.text(pos, max(vals) + rng * 0.02, f"{np.mean(vals):.2f}",
+             ha="center", va="bottom", fontsize=8)
+
+plt.tight_layout()
+plt.savefig(out_path, bbox_inches="tight")
+plt.close()
+print(f"  → {out_path}")
+PY
+    fi
+
+    rm -f "$task_accum"
 done
 
 echo

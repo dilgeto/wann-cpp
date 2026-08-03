@@ -1,11 +1,40 @@
 #!/usr/bin/env python3
 """
-Evalúa cada modelo resultante de fase 3 (Acrobot, Mountain Car discreto,
-Racing Car) con N seeds distintas (default 10); en cada seed se prueban los
-6 pesos compartidos de esa tarea, y luego se promedia cada peso a través de
-las seeds. Acrobot y Mountain Car discreto se evalúan con la recompensa
-original (sin shaping); Car se evalúa con la recompensa shaped. Ver --reward
-para forzar un modo distinto.
+Para CADA combinación encoder/decoder (run_key) de una tarea (Acrobot,
+Mountain Car discreto, Racing Car) — típicamente 4 por tarea —, toma su
+propia mejor configuración de hiperparámetros (el rank con mayor fitPeak DE
+ENTRENAMIENTO promedio entre sus seeds: el máximo real entre los 6 pesos
+compartidos, última fila de cada
+log/full_p3_<run_key>/rank<NN>_seed<NN>_stats.out — no una re-evaluación) y
+revalida sus 11 modelos (uno por seed de entrenamiento), cada uno con el
+peso que el entrenamiento registró como mejor para ese modelo (su archivo
+_best.wi). Cada (modelo, peso) se revalida con N seeds distintas
+(default 11), promediando nreps episodios por seed (default 11 — ver
+--nreps; sobreescribe alg_nReps solo para esta evaluación, no afecta el
+entrenamiento).
+
+Guarda, por tarea (una fila por modelo — hasta 4 run_keys × 11 seeds):
+  {task}_best.csv          — modelo/peso elegido,
+                              fitPeak/fitTop/fitTopOrig de entrenamiento,
+                              reward/reward_std (media±std de las seeds,
+                              cada una ya promediada sobre sus episodios,
+                              usando SOLO el peso ganador — su _best.wi) y
+                              peak_reward/peak_reward_std (media±std sobre
+                              el total de episodios de todas las seeds
+                              juntas, sin agrupar primero por seed).
+                              mean_across_6weights/_std: mismo modelo/seeds,
+                              pero promediando los 6 pesos compartidos (no
+                              solo el ganador) — para comparar el peso
+                              ganador contra el promedio general de la red.
+                              peak_seed_idx queda solo como referencia: cuál
+                              seed tuvo el mejor promedio individual.
+  {task}_best_episodes.csv — los nreps episodios individuales de cada seed
+                              evaluada (run_key, seed, episode, reward),
+                              SOLO del peso ganador (no del barrido de 6).
+
+Acrobot y Mountain Car discreto se evalúan con la recompensa original (sin
+shaping); Car se evalúa con la recompensa shaped. Ver --reward para forzar
+un modo distinto.
 
 Requiere los binarios wann_eval_weights_{acrobot,car,disc_mc} compilados:
   cd build && ninja wann_eval_weights_acrobot wann_eval_weights_car wann_eval_weights_disc_mc
@@ -18,12 +47,11 @@ Uso:
   python eval_p3_weights.py                       # las 3 tareas, todos los run_keys encontrados
   python eval_p3_weights.py --task acrobot         # solo acrobot
   python eval_p3_weights.py --task mountain_car    # solo Mountain Car discreto
-  python eval_p3_weights.py --seeds 10 --jobs 8
+  python eval_p3_weights.py --seeds 11 --nreps 11
 """
 import argparse
 import concurrent.futures
 import io
-import json
 import os
 import re
 import subprocess
@@ -64,6 +92,14 @@ TASKS: dict[str, dict] = {
         "reward":            "shaped",
     },
 }
+
+# Columnas de DataGatherer::save() (ver src/DataGatherer.cpp): xScale, fitMed,
+# fitMax(elite), fitTop(best/récord), fitPeak(máximo real entre pesos),
+# nodeMed, connMed, fitTopOrig. NOTA: en p3_validation.csv la columna
+# "peak_fitness" en realidad lee fitTop (screening_reduce.py:_read_peak), no
+# fitPeak — aquí SÍ se usa el fitPeak real, tomado directo del _stats.out.
+STATS_COLS = ["evals", "fitMed", "fitMax", "fitTop", "fitPeak", "nodeMed",
+              "connMed", "fitTopOrig"]
 
 MODEL_RE = re.compile(r"^rank(\d+)_seed(\d+)$")
 
@@ -112,19 +148,99 @@ def model_size(model_path: Path) -> tuple[int, int]:
     return n_neurons, n_connections
 
 
-def eval_model(task: str, td: dict, model: dict, seeds: list[int],
-               omp: int, timeout: int | None) -> tuple[dict, pd.DataFrame] | tuple[None, None]:
-    """Run wann_eval_weights_{task} for one model. Returns (row, raw) where
-    row has the per-weight mean/std across `seeds` and raw is the underlying
-    per-seed CSV (columns: seed, w0..w{N-1}) so the winning (model, weight)
-    can later report its individual per-seed evaluations."""
-    seeds_arg = ",".join(str(s) for s in seeds)
+def read_last_stats(log_prefix: Path) -> dict | None:
+    """Read the last row of <log_prefix>_stats.out (one row per generation,
+    see DataGatherer::save). Returns None if the file is missing/empty."""
+    stats_path = Path(f"{log_prefix}_stats.out")
+    if not stats_path.exists():
+        return None
+    try:
+        df = pd.read_csv(stats_path, header=None)
+    except Exception:
+        return None
+    if df.empty:
+        return None
+    df.columns = STATS_COLS[:df.shape[1]]
+    last = df.iloc[-1]
+    return {c: float(last[c]) for c in df.columns}
+
+
+def read_best_wi(log_prefix: Path) -> int | None:
+    """Read <log_prefix>_best.wi — the shared-weight index the training run
+    recorded as best for the elite individual at that save point."""
+    wi_path = Path(f"{log_prefix}_best.wi")
+    if not wi_path.exists():
+        return None
+    try:
+        return int(wi_path.read_text().strip())
+    except ValueError:
+        return None
+
+
+def _group_models_by_config(prefix: str) -> dict[tuple[str, int], list[dict]]:
+    """Group every phase-3 model under `prefix` by (run_key, rank), attaching
+    each model's own weight index (_best.wi) and last-generation training
+    stats (_stats.out). Skips models missing either file. This does NOT
+    re-evaluate anything; it only reads existing training logs."""
+    models = find_models(prefix)
+    by_group: dict[tuple[str, int], list[dict]] = {}
+    for m in models:
+        log_prefix = Path("log") / f"full_p3_{m['run_key']}" / f"rank{m['rank']:02d}_seed{m['seed_idx']:02d}"
+        stats = read_last_stats(log_prefix)
+        wi = read_best_wi(log_prefix)
+        if stats is None or wi is None:
+            continue
+        by_group.setdefault((m["run_key"], m["rank"]), []).append({**m, "weight_index": wi, **stats})
+    return by_group
+
+
+def best_config_per_run_key(prefix: str) -> dict[str, list[dict]]:
+    """For EVERY run_key (encoder/decoder combination) found under `prefix`,
+    pick its own best rank (hyperparameter config) — the one with the
+    highest MEAN training-time fitPeak across its own seeds (the real
+    max-across-weights fitness, read from the last row of each model's
+    _stats.out). Unlike a single global winner, this returns one winning
+    group PER run_key.
+
+    Returns {run_key: [models...]} — one dict per seed_idx within that
+    run_key's winning rank, each carrying its own weight index (that seed's
+    own _best.wi)."""
+    by_group = _group_models_by_config(prefix)
+    if not by_group:
+        return {}
+
+    run_keys = sorted({rk for rk, _ in by_group})
+    result: dict[str, list[dict]] = {}
+    for run_key in run_keys:
+        candidates = {k: v for k, v in by_group.items() if k[0] == run_key}
+        best_key = max(candidates, key=lambda k: sum(c["fitPeak"] for c in candidates[k]) / len(candidates[k]))
+        result[run_key] = candidates[best_key]
+    return result
+
+    best_key = max(by_group, key=lambda k: sum(c["fitPeak"] for c in by_group[k]) / len(by_group[k]))
+    return by_group[best_key]
+
+
+def fetch_episode_detail(td: dict, best: dict, seeds: list[int], nreps: int,
+                          omp: int, timeout: int | None) -> pd.DataFrame | None:
+    """Run wann_eval_weights_{task} in --episode-detail mode for a fixed
+    (model, weight), across every seed in `seeds`. Returns a DataFrame with
+    columns run_key, seed, episode, reward — the individual episodes behind
+    each seed's average."""
+    run_key, rank, seed_idx, wi = (best["run_key"], best["rank"],
+                                    best["seed_idx"], best["weight_index"])
+    model_path = Path("log") / f"full_p3_{run_key}" / f"rank{rank:02d}_seed{seed_idx:02d}_best.out"
+    cfg_path   = (Path("screening_full") / run_key / "p3_configs"
+                  / f"rank{rank:02d}_seed{seed_idx:02d}.json")
+
     cmd = [td["executable"],
-           "-f", str(model["model_path"]),
+           "-f", str(model_path),
            "-d", td["base_config"],
-           "-p", str(model["cfg_path"]),
-           "--seeds", seeds_arg,
-           "--reward", td["reward"]]
+           "-p", str(cfg_path),
+           "--seeds", ",".join(str(s) for s in seeds),
+           "--reward", td["reward"],
+           "--nreps", str(nreps),
+           "--episode-detail", "--weight-index", str(wi)]
 
     env = os.environ.copy()
     env["OMP_NUM_THREADS"] = str(omp)
@@ -133,195 +249,161 @@ def eval_model(task: str, td: dict, model: dict, seeds: list[int],
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               env=env, timeout=timeout)
     except subprocess.TimeoutExpired:
-        print(f"  [TIMEOUT] {model['run_key']}/{model['cfg_path'].stem}", file=sys.stderr)
-        return None, None
+        print(f"  [TIMEOUT] episode-detail {run_key}", file=sys.stderr)
+        return None
 
     if proc.returncode != 0:
-        print(f"  [FAIL] {model['run_key']}/{model['cfg_path'].stem}\n{proc.stderr}",
-              file=sys.stderr)
-        return None, None
+        print(f"  [FAIL] episode-detail {run_key}\n{proc.stderr}", file=sys.stderr)
+        return None
 
-    raw = pd.read_csv(io.StringIO(proc.stdout))
-    w_cols = [c for c in raw.columns if c != "seed"]
-    means = raw[w_cols].mean()
-    stds  = raw[w_cols].std().fillna(0.0)  # std is NaN when only 1 seed was evaluated
+    df = pd.read_csv(io.StringIO(proc.stdout))
+    df.insert(0, "train_seed_idx", seed_idx)  # cuál de los 11 modelos entrenados es este
+    df.insert(0, "run_key", run_key)
+    return df
 
-    n_neurons, n_connections = model_size(model["model_path"])
 
-    row = {
-        "task":        task,
-        "reward":      td["reward"],
-        "run_key":     model["run_key"],
-        "rank":        model["rank"],
-        "seed_idx":    model["seed_idx"],
-        "n_seeds_eval": len(raw),
-        "n_neurons":     n_neurons,
-        "n_connections": n_connections,
-    }
-    for i, wc in enumerate(w_cols):
-        wval = td["weight_vals"][i]
-        row[f"w{i}_{wval:g}_mean"] = means[wc]
-        row[f"w{i}_{wval:g}_std"]  = stds[wc]
-    row["mean_across_weights"] = means.mean()
+def fetch_weights_sweep(td: dict, model: dict, seeds: list[int], nreps: int,
+                        omp: int, timeout: int | None) -> pd.DataFrame | None:
+    """Run wann_eval_weights_{task} in aggregate mode (sweeps los 6 pesos
+    compartidos, sin --weight-index) para un modelo a través de cada seed en
+    `seeds`. Devuelve un DataFrame: columnas seed, w0..w{N-1} (cada celda ya
+    promediada sobre nreps episodios)."""
+    run_key, rank, seed_idx = model["run_key"], model["rank"], model["seed_idx"]
+    model_path = Path("log") / f"full_p3_{run_key}" / f"rank{rank:02d}_seed{seed_idx:02d}_best.out"
+    cfg_path   = (Path("screening_full") / run_key / "p3_configs"
+                  / f"rank{rank:02d}_seed{seed_idx:02d}.json")
 
-    # Hiperparámetros con los que se optimizó este modelo (screening_full/*/p3_configs),
-    # para poder promediar por configuración en el *_summary.csv.
+    cmd = [td["executable"],
+           "-f", str(model_path),
+           "-d", td["base_config"],
+           "-p", str(cfg_path),
+           "--seeds", ",".join(str(s) for s in seeds),
+           "--reward", td["reward"],
+           "--nreps", str(nreps)]
+
+    env = os.environ.copy()
+    env["OMP_NUM_THREADS"] = str(omp)
+
     try:
-        hp = json.loads(model["cfg_path"].read_text())
-    except Exception:
-        hp = {}
-    for k, v in hp.items():
-        if k == "save_mod":
-            continue
-        row[f"hp_{k}"] = v
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"  [TIMEOUT] weights-sweep {run_key}", file=sys.stderr)
+        return None
 
-    return row, raw
+    if proc.returncode != 0:
+        print(f"  [FAIL] weights-sweep {run_key}\n{proc.stderr}", file=sys.stderr)
+        return None
+
+    return pd.read_csv(io.StringIO(proc.stdout))
 
 
-def run_task(task: str, seeds: list[int], jobs: int, omp: int,
+def run_task(task: str, seeds: list[int], nreps: int, jobs: int, omp: int,
              timeout: int | None, out_dir: Path,
-             reward_override: str | None = None) -> tuple[pd.DataFrame, list[dict]]:
+             reward_override: str | None = None) -> pd.DataFrame:
     td = dict(TASKS[task])
     if reward_override:
         td["reward"] = reward_override
     if not Path(td["executable"]).exists():
         print(f"ERROR: {td['executable']} no existe. Compilar primero "
               f"(cd build && ninja {Path(td['executable']).name}).", file=sys.stderr)
-        return pd.DataFrame(), []
+        return pd.DataFrame()
 
     prefix = td["screening_prefix"]
-    models = find_models(prefix)
-    if not models:
-        print(f"[{task}] no se encontraron modelos de fase 3 en "
-              f"screening_full/{prefix}_*/p3_configs.")
-        return pd.DataFrame(), []
+    groups = best_config_per_run_key(prefix)
+    if not groups:
+        print(f"[{task}] no se encontraron modelos/stats de fase 3 en "
+              f"screening_full/{prefix}_*/ (o log/full_p3_{prefix}_*/).")
+        return pd.DataFrame()
 
-    print(f"\n[{task}] {len(models)} modelos encontrados, "
-          f"evaluando con {len(seeds)} seeds cada uno (reward={td['reward']})...")
+    print(f"\n[{task}] {len(groups)} combinaciones encoder/decoder encontradas — "
+          f"revalidando cada una con su propia mejor config de hiperparámetros:")
+    models: list[dict] = []
+    for run_key, group in groups.items():
+        mean_fit_peak = sum(m["fitPeak"] for m in group) / len(group)
+        rank = group[0]["rank"]
+        print(f"  - {run_key}: rank={rank}  "
+              f"(mean fitPeak entre sus {len(group)} seeds de entrenamiento = {mean_fit_peak:.4f})")
+        models.extend(group)
 
-    results: list[dict] = []
-    raw_by_key: dict[tuple, pd.DataFrame] = {}
-    done = [0]
+    print(f"[{task}] revalidando {len(models)} modelos en total "
+          f"({len(groups)} combinaciones × hasta 11 seeds de entrenamiento c/u) "
+          f"con {len(seeds)} seeds × {nreps} episodios cada uno (reward={td['reward']})...")
+
+    rows: list[dict] = []
+    episode_dfs: list[pd.DataFrame] = []
     lock = threading.Lock()
+    done = [0]
 
-    def worker(m: dict) -> tuple[dict, pd.DataFrame] | tuple[None, None]:
-        r, raw = eval_model(task, td, m, seeds, omp, timeout)
+    def worker(w: dict) -> tuple[dict | None, pd.DataFrame | None]:
+        ep_df = fetch_episode_detail(td, w, seeds, nreps, omp, timeout)
+        if ep_df is None:
+            return None, None
+
+        seed_means = ep_df.groupby("seed")["reward"].mean()
+        peak_seed = int(seed_means.idxmax())  # solo informativo: la seed de mejor promedio
+        all_episodes = ep_df["reward"]        # las seeds × nreps episodios, todos juntos
+        n_neurons, n_connections = model_size(w["model_path"])
+
+        # Barrido de los 6 pesos compartidos (mismas seeds/nreps), para
+        # comparar el peso ganador contra el promedio general de la red.
+        sweep_df = fetch_weights_sweep(td, w, seeds, nreps, omp, timeout)
+        if sweep_df is not None:
+            sweep_vals = sweep_df[[c for c in sweep_df.columns if c != "seed"]].to_numpy().ravel()
+            mean_6weights, std_6weights = float(sweep_vals.mean()), float(sweep_vals.std())
+        else:
+            mean_6weights = std_6weights = None
+
+        row = {
+            "task":                  task,
+            "run_key":               w["run_key"],
+            "rank":                  w["rank"],
+            "seed_idx":              w["seed_idx"],
+            "weight_index":          w["weight_index"],
+            "weight_value":          td["weight_vals"][w["weight_index"]],
+            "reward_type":           td["reward"],
+            "training_fitPeak":      w["fitPeak"],
+            "training_fitTop":       w["fitTop"],
+            "training_fitTopOrig":   w.get("fitTopOrig"),
+            "reward":                float(seed_means.mean()),
+            "reward_std":            float(seed_means.std()),
+            "mean_across_6weights":      mean_6weights,
+            "mean_across_6weights_std":  std_6weights,
+            "peak_seed_idx":         peak_seed,
+            "peak_reward":           float(all_episodes.mean()),
+            "peak_reward_std":       float(all_episodes.std()),
+            "n_neurons":             n_neurons,
+            "n_connections":         n_connections,
+        }
         with lock:
             done[0] += 1
-            status = f"mean={r['mean_across_weights']:.4f}" if r is not None else "FAIL"
-            print(f"  [{done[0]:3d}/{len(models)}] "
-                  f"{m['run_key']}/{m['cfg_path'].stem}  {status}")
-        return r, raw
+            sweep_str = f"{mean_6weights:.4f}" if mean_6weights is not None else "FAIL"
+            print(f"  [{done[0]:3d}/{len(models)}] {w['run_key']} seed_idx={w['seed_idx']}  "
+                  f"peso={row['weight_value']:g}  training_fitPeak={w['fitPeak']:.4f}  "
+                  f"reward(mejor peso)={row['reward']:.4f}±{row['reward_std']:.4f}  "
+                  f"reward(6 pesos)={sweep_str}")
+        return row, ep_df
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        for r, raw in pool.map(worker, models):
-            if r is not None:
-                results.append(r)
-                raw_by_key[(r["run_key"], r["rank"], r["seed_idx"])] = raw
+        for row, ep_df in pool.map(worker, models):
+            if row is not None:
+                rows.append(row)
+                episode_dfs.append(ep_df)
 
-    df = pd.DataFrame(results)
+    df = pd.DataFrame(rows)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{task}_weight_means.csv"
-    df.to_csv(out_path, index=False)
-    print(f"[{task}] resultados → {out_path}  ({len(df)}/{len(models)} exitosos)")
 
-    bests: list[dict] = []
-    if not df.empty:
-        summary = summarize_by_config(df)
-        summary_path = out_dir / f"{task}_summary.csv"
-        summary.to_csv(summary_path, index=False)
-        print(f"[{task}] resumen por configuración → {summary_path}  "
-              f"({len(summary)} configuraciones)")
+    best_path = out_dir / f"{task}_best.csv"
+    df.to_csv(best_path, index=False)
+    print(f"[{task}] modelos de las {len(groups)} combinaciones encoder/decoder → {best_path}  "
+          f"({len(df)}/{len(models)} exitosos)")
 
-        bests = best_per_run_key(task, td, df, raw_by_key)
-        if bests:
-            best_path = out_dir / f"{task}_best.csv"
-            pd.DataFrame(bests).to_csv(best_path, index=False)
-            print(f"[{task}] mejor modelo/peso por run_key → {best_path}  "
-                  f"({len(bests)} run_keys)")
+    if episode_dfs:
+        episodes_path = out_dir / f"{task}_best_episodes.csv"
+        pd.concat(episode_dfs, ignore_index=True).to_csv(episodes_path, index=False)
+        print(f"[{task}] episodios individuales → {episodes_path}")
 
-    return df, bests
-
-
-def summarize_by_config(df: pd.DataFrame) -> pd.DataFrame:
-    """Group per-model rows by hyperparameter configuration (run_key + rank —
-    the same config is retrained across several phase-3 seeds) and average
-    the per-weight means across those seeds."""
-    group_keys = ["run_key", "rank"]
-    w_mean_cols = [c for c in df.columns if re.match(r"^w\d+_.*_mean$", c)]
-    agg_cols = w_mean_cols + ["mean_across_weights"]
-    hp_cols = [c for c in df.columns if c.startswith("hp_")]
-
-    stats = df.groupby(group_keys)[agg_cols].agg(["mean", "std"])
-    stats.columns = [f"{col}_{stat}" for col, stat in stats.columns]
-    stats = stats.fillna(0.0)  # std is NaN when a config has a single model
-
-    n_models = df.groupby(group_keys).size().rename("n_models")
-    hp_first = df.groupby(group_keys)[hp_cols].first() if hp_cols else None
-
-    summary = pd.concat([n_models, stats] + ([hp_first] if hp_first is not None else []),
-                        axis=1).reset_index()
-    summary = summary.sort_values("mean_across_weights_mean", ascending=False)
-    return summary
-
-
-def best_model_weight(task: str, td: dict, df: pd.DataFrame,
-                       raw_by_key: dict[tuple, pd.DataFrame]) -> dict | None:
-    """Within `df` (every model × weight evaluated), find the single
-    highest-reward (model, weight) combination. reward/reward_std are the
-    mean/std of that weight's reward across the evaluation seeds, and
-    eval_seed_* carries each individual evaluation (one per seed) for that
-    winning weight, taken from raw_by_key[(run_key, rank, seed_idx)]."""
-    if df.empty:
-        return None
-
-    w_mean_cols = [c for c in df.columns if re.match(r"^w\d+_.*_mean$", c)]
-    melted = df.melt(id_vars=["run_key", "rank", "seed_idx"],
-                      value_vars=w_mean_cols, var_name="w_col", value_name="reward_value")
-    best = melted.loc[melted["reward_value"].idxmax()]
-    wi = int(re.match(r"^w(\d+)_", best["w_col"]).group(1))
-    std_col = best["w_col"][:-len("_mean")] + "_std"
-
-    best_row = df.loc[(df["run_key"] == best["run_key"]) &
-                       (df["rank"] == best["rank"]) &
-                       (df["seed_idx"] == best["seed_idx"])].iloc[0]
-
-    result = {
-        "task":         task,
-        "run_key":      best["run_key"],
-        "rank":         int(best["rank"]),
-        "seed_idx":     int(best["seed_idx"]),
-        "weight_index": wi,
-        "weight_value": td["weight_vals"][wi],
-        "reward":       best["reward_value"],
-        "reward_std":   best_row[std_col],
-        "reward_type":  td["reward"],
-        "n_neurons":     int(best_row["n_neurons"]),
-        "n_connections": int(best_row["n_connections"]),
-    }
-
-    raw = raw_by_key.get((best["run_key"], int(best["rank"]), int(best["seed_idx"])))
-    if raw is not None:
-        w_col = f"w{wi}"
-        for _, r in raw.sort_values("seed").iterrows():
-            result[f"eval_seed_{int(r['seed'])}"] = r[w_col]
-
-    return result
-
-
-def best_per_run_key(task: str, td: dict, df: pd.DataFrame,
-                      raw_by_key: dict[tuple, pd.DataFrame]) -> list[dict]:
-    """Best (model, weight) combination for each encoder/decoder run_key
-    found for `task` (e.g. acrobot_ttfs_first_spike, acrobot_small_rate_argmax, ...)."""
-    if df.empty:
-        return []
-    bests = []
-    for run_key in sorted(df["run_key"].unique()):
-        sub = df.loc[df["run_key"] == run_key]
-        b = best_model_weight(task, td, sub, raw_by_key)
-        if b is not None:
-            bests.append(b)
-    return bests
+    return df
 
 
 def main() -> None:
@@ -329,16 +411,21 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--task", choices=list(TASKS), default=None,
                     help="Solo esta tarea (default: las 3)")
-    ap.add_argument("--seeds", type=int, default=10,
-                    help="Cantidad de seeds por modelo (default: 10)")
+    ap.add_argument("--seeds", type=int, default=11,
+                    help="Cantidad de seeds de revalidación (default: 11)")
     ap.add_argument("--seed0", type=int, default=0,
                     help="Primera seed de evaluación (default: 0)")
-    ap.add_argument("--jobs", type=int, default=8,
-                    help="Modelos evaluados en paralelo (default: 8)")
+    ap.add_argument("--nreps", type=int, default=11,
+                    help="Episodios promediados por seed (default: 11). "
+                         "Sobreescribe alg_nReps SOLO para esta evaluación "
+                         "(--nreps del binario) — no toca p/*.json ni el "
+                         "entrenamiento.")
+    ap.add_argument("--jobs", type=int, default=4,
+                    help="Modelos (seeds de entrenamiento) evaluados en paralelo (default: 4)")
     ap.add_argument("--omp", type=int, default=None,
                     help="OMP_NUM_THREADS por corrida (default: cpu_count // jobs)")
     ap.add_argument("--timeout", type=int, default=None,
-                    help="Timeout por modelo en segundos (default: sin límite)")
+                    help="Timeout por run_key en segundos (default: sin límite)")
     ap.add_argument("--out-dir", default="eval_p3_weights", dest="out_dir",
                     help="Directorio de salida (default: eval_p3_weights/)")
     ap.add_argument("--reward", choices=["shaped", "original"], default=None,
@@ -351,21 +438,23 @@ def main() -> None:
     tasks = [args.task] if args.task else list(TASKS)
     out_dir = Path(args.out_dir)
 
-    bests: list[dict] = []
+    dfs: list[pd.DataFrame] = []
     for task in tasks:
-        _, task_bests = run_task(task, seeds, args.jobs, omp, args.timeout, out_dir, args.reward)
-        bests.extend(task_bests)
+        dfs.append(run_task(task, seeds, args.nreps, args.jobs, omp,
+                            args.timeout, out_dir, args.reward))
 
     print(f"\n{'='*66}")
-    print("  Mejor modelo y peso por run_key (encoder/decoder)")
+    print("  Modelos revalidados: por cada run_key (encoder/decoder), su")
+    print("  propio rank de mayor fitPeak promedio, uno por seed de entrenamiento")
     print(f"{'='*66}")
-    if not bests:
+    all_df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+    if all_df.empty:
         print("  (sin resultados)")
-    for b in bests:
+    for _, b in all_df.iterrows():
         print(f"  [{b['task']}] run_key={b['run_key']}  rank={b['rank']}  "
-              f"seed_idx={b['seed_idx']}  peso={b['weight_value']:g} "
-              f"(w{b['weight_index']})  reward({b['reward_type']})="
-              f"{b['reward']:.4f} ± {b['reward_std']:.4f}")
+              f"seed_idx={b['seed_idx']}  peso={b['weight_value']:g}  "
+              f"training_fitPeak={b['training_fitPeak']:.4f}  "
+              f"reward={b['reward']:.4f} ± {b['reward_std']:.4f}")
     print(f"{'='*66}")
 
 
