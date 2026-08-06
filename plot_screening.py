@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import matplotlib
@@ -106,6 +107,19 @@ def _config_sort_index(enc_dec: str) -> int:
     key = _config_key(enc_dec)
     return _CONFIG_ORDER.index(key) if key in _CONFIG_ORDER else 99
 
+
+def _display_label(text: str) -> str:
+    """Texto para mostrar en los gráficos: 'small' se muestra como 'signed'
+    (los datos/directorios siguen llamándose 'small')."""
+    def repl(m: re.Match) -> str:
+        s = m.group(0)
+        if s.isupper():
+            return "SIGNED"
+        if s[0].isupper():
+            return "Signed"
+        return "signed"
+    return re.sub(r"small", repl, text, flags=re.IGNORECASE)
+
 plt.rcParams.update({
     "font.size": 9,
     "axes.titlesize": 10,
@@ -173,7 +187,7 @@ def plot_importance(run_key: str, df_ok: pd.DataFrame,
     has_rf = HAS_SKLEARN and len(df_ok) >= 10 and max(gini.values()) > 1e-9
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
-    fig.suptitle(f"{title_prefix}{run_key}", fontweight="bold")
+    fig.suptitle(f"{title_prefix}{_display_label(run_key)}", fontweight="bold")
 
     # Gini
     axes[0].set_title("RF Gini importance")
@@ -259,50 +273,39 @@ def plot_importance_combined(task: str,
     any_rf = any(hasrf_by_cfg.values())
 
     fig, axes = plt.subplots(1, 2, figsize=(12, max(3.5, 0.45 * n_hp + 1.2)), sharey=True)
-    fig.suptitle(f"{title_prefix}{task}  — Importancia HPs (todas las configuraciones)",
-                fontweight="bold")
+    fig.suptitle(f"{title_prefix}{task}  — Importancia HPs",
+                fontweight="bold", fontsize=15)
 
     ax = axes[0]
     for j, (label, _, _) in enumerate(configs):
         vals = [gini_by_cfg[label].get(p, np.nan) if hasrf_by_cfg[label] else np.nan
                 for p in hp_order]
         bars = ax.barh(y_base + offsets[j], vals, height=bar_h * 0.9,
-                       color=_config_color(label), label=label)
-        for bar, v in zip(bars, vals):
-            if not np.isnan(v) and v > 1e-9:
-                ax.text(bar.get_width() + 0.003, bar.get_y() + bar.get_height() / 2,
-                        f"{v:.3f}", va="center", ha="left", fontsize=6)
+                       color=_config_color(label), label=_display_label(label))
     ax.set_yticks(y_base)
-    ax.set_yticklabels(labels_hp)
-    ax.set_xlabel("RF Gini importance")
+    ax.set_yticklabels(labels_hp, fontsize=12)
+    ax.tick_params(axis="x", labelsize=11)
+    ax.set_xlabel("RF Gini importance", fontsize=13)
     if any_rf:
-        ax.set_title("Gini importance")
+        ax.set_title("Gini importance", fontsize=14)
     elif not HAS_SKLEARN:
-        ax.set_title("Gini importance (sklearn no instalado)")
+        ax.set_title("Gini importance (sklearn no instalado)", fontsize=14)
     else:
-        ax.set_title("Gini importance (todas las configs <10 trials)")
+        ax.set_title("Gini importance (todas las configs <10 trials)", fontsize=14)
 
     ax2 = axes[1]
     for j, (label, _, _) in enumerate(configs):
         vals = [rho_by_cfg[label].get(p, np.nan) for p in hp_order]
         bars = ax2.barh(y_base + offsets[j], vals, height=bar_h * 0.9,
                         color=_config_color(label))
-        for bar, p, v in zip(bars, hp_order, vals):
-            if np.isnan(v):
-                continue
-            pv  = pval_by_cfg[label].get(p, 1.0)
-            sig = "**" if pv < 0.01 else ("*" if pv < 0.05 else "")
-            off = 0.015 if v >= 0 else -0.015
-            ax2.text(v + off, bar.get_y() + bar.get_height() / 2,
-                     f"{v:+.2f}{sig}", va="center",
-                     ha="left" if v >= 0 else "right", fontsize=6)
     ax2.axvline(0, color="black", linewidth=0.8)
-    ax2.set_xlabel("Spearman ρ")
-    ax2.set_title("Spearman ρ")
+    ax2.tick_params(axis="x", labelsize=11)
+    ax2.set_xlabel("Spearman ρ", fontsize=13)
+    ax2.set_title("Spearman ρ", fontsize=14)
 
     handles, labels_ = ax.get_legend_handles_labels()
     fig.legend(handles, labels_, loc="upper center", ncol=n_cfg,
-              bbox_to_anchor=(0.5, 1.04), frameon=False)
+              bbox_to_anchor=(0.5, 1.04), frameon=False, fontsize=12)
 
     plt.tight_layout(rect=(0, 0, 1, 0.90))
     plt.savefig(out_path, bbox_inches="tight")
@@ -329,7 +332,7 @@ def plot_fitness_rounds(run_key: str, df: pd.DataFrame,
     for patch, c in zip(bp["boxes"], colors):
         patch.set_facecolor(c)
 
-    ax.set_title(f"{run_key}  — Fitness por round (reduce)")
+    ax.set_title(f"{_display_label(run_key)}  — Fitness por round (reduce)")
     ax.set_xlabel("Round")
     ax.set_ylabel("Peak fitness")
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.4g"))
@@ -373,7 +376,7 @@ def plot_space_reduction(run_key: str, space_log_path: Path,
     ax.set_yticks(range(len(labels)))
     ax.set_yticklabels(labels)
     ax.set_xlabel("Reducción del espacio (%)")
-    ax.set_title(f"{run_key}  — Reducción del espacio de búsqueda\n"
+    ax.set_title(f"{_display_label(run_key)}  — Reducción del espacio de búsqueda\n"
                  f"({len(entries)} rounds, INITIAL_SPACE → R{entries[-1]['round']})")
     ax.axvline(10, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
     ax.set_xlim(0, max(max(vals) * 1.25, 15))
@@ -432,7 +435,7 @@ def plot_space_ranges(run_key: str, space_log_path: Path,
     any_reduced = any(r["pct"] > 0.5 for r in rows)
 
     fig = plt.figure(figsize=(11, 4 + n * 0.35))
-    fig.suptitle(f"{run_key}  — Espacio de búsqueda: inicial vs final",
+    fig.suptitle(f"{_display_label(run_key)}  — Espacio de búsqueda: inicial vs final",
                  fontweight="bold", fontsize=10)
 
     # ── Top: range chart ──────────────────────────────────────────────────────
@@ -539,7 +542,7 @@ def plot_parallel_coords(run_key: str, df_ok: pd.DataFrame,
                        rotation=35, ha="right")
     ax.set_ylim(-0.05, 1.05)
     ax.set_ylabel("Valor normalizado [0, 1]")
-    ax.set_title(f"{run_key}  — Coordenadas paralelas (Phase 2)\n"
+    ax.set_title(f"{_display_label(run_key)}  — Coordenadas paralelas (Phase 2)\n"
                  "Verde = mayor fitness, rojo = menor fitness")
 
     sm = plt.cm.ScalarMappable(
@@ -569,7 +572,7 @@ def plot_phase3(run_key: str, summary: pd.DataFrame,
     ax.set_xticks(x)
     ax.set_xticklabels([f"Rank {int(r)}" for r in df["rank"]])
     ax.set_ylabel("Fitness media sobre pesos  (mean ± std, N seeds)")
-    ax.set_title(f"{run_key}  — Phase 3: validación multi-semilla\n"
+    ax.set_title(f"{_display_label(run_key)}  — Phase 3: validación multi-semilla\n"
                  "(rojo = mejor config)")
 
     ylim = ax.get_ylim()
@@ -601,7 +604,7 @@ def plot_phase3_summary(records: list[dict], out_path: Path) -> None:
             ax.set_visible(False)
             continue
 
-        labels     = [r["enc_dec"] or "default" for r in recs]
+        labels     = [_display_label(r["enc_dec"]) if r["enc_dec"] else "default" for r in recs]
         # Use original (unshaped) fitness when available, else shaped
         use_orig   = all("orig_mean" in r for r in recs)
         means      = [r.get("orig_mean", r["mean"]) for r in recs]
@@ -640,6 +643,7 @@ def plot_phase3_summary(records: list[dict], out_path: Path) -> None:
 def process_reduce(run_key: str, plots_dir: Path) -> None:
     out_dir  = plots_dir / "reduce"
     out_dir.mkdir(parents=True, exist_ok=True)
+    out_key  = _display_label(run_key)
 
     csv_path   = REDUCE_DIR / run_key / "results.csv"
     space_path = REDUCE_DIR / run_key / "space_log.jsonl"
@@ -655,23 +659,24 @@ def process_reduce(run_key: str, plots_dir: Path) -> None:
     print(f"\n[reduce] {run_key}: {len(df_ok)}/{len(df)} trials exitosos")
 
     plot_importance(run_key, df_ok, hp_cols,
-                    out_dir / f"{run_key}_importance.png",
+                    out_dir / f"{out_key}_importance.png",
                     title_prefix="[reduce] ")
 
     if "round" in df.columns and df["round"].nunique() > 1:
         plot_fitness_rounds(run_key, df,
-                            out_dir / f"{run_key}_fitness_rounds.png")
+                            out_dir / f"{out_key}_fitness_rounds.png")
 
     if space_path.exists():
         plot_space_reduction(run_key, space_path,
-                             out_dir / f"{run_key}_space_reduction.png")
+                             out_dir / f"{out_key}_space_reduction.png")
         plot_space_ranges(run_key, space_path,
-                          out_dir / f"{run_key}_space_ranges.png")
+                          out_dir / f"{out_key}_space_ranges.png")
 
 
 def process_full(run_key: str, plots_dir: Path) -> dict | None:
     out_dir = plots_dir / "full"
     out_dir.mkdir(parents=True, exist_ok=True)
+    out_key = _display_label(run_key)
 
     p2_path = FULL_DIR / run_key / "p2_results.csv"
     p3_path = FULL_DIR / run_key / "p3_summary.csv"
@@ -691,11 +696,11 @@ def process_full(run_key: str, plots_dir: Path) -> dict | None:
     print(f"\n[full] {run_key}: {len(p2_ok)}/{len(p2)} Phase 2 exitosos")
 
     plot_importance(run_key, p2_ok, hp_cols,
-                    out_dir / f"{run_key}_importance.png",
+                    out_dir / f"{out_key}_importance.png",
                     title_prefix="[full P2] ")
 
     plot_parallel_coords(run_key, p2_ok, hp_cols,
-                         out_dir / f"{run_key}_parallel.png")
+                         out_dir / f"{out_key}_parallel.png")
 
     if not p3_path.exists():
         return None
@@ -708,7 +713,7 @@ def process_full(run_key: str, plots_dir: Path) -> dict | None:
     if len(summary) == 0:
         return None
 
-    plot_phase3(run_key, summary, out_dir / f"{run_key}_phase3.png")
+    plot_phase3(run_key, summary, out_dir / f"{out_key}_phase3.png")
 
     best = summary.loc[summary["mean"].idxmax()]
     task, enc_dec = parse_run_key(run_key)
@@ -764,6 +769,8 @@ def main() -> None:
                     help="Qué fase graficar (default: both)")
     ap.add_argument("--out",   default="plots",
                     help="Directorio de salida (default: plots/)")
+    ap.add_argument("--only-combined", action="store_true",
+                    help="Generar solo los gráficos *_importance_combined.png")
     args = ap.parse_args()
 
     plots_dir = Path(args.out)
@@ -786,16 +793,17 @@ def main() -> None:
 
     p3_records: list[dict] = []
 
-    for rk in run_keys:
-        if args.phase in ("reduce", "both"):
-            process_reduce(rk, plots_dir)
-        if args.phase in ("full", "both"):
-            rec = process_full(rk, plots_dir)
-            if rec:
-                p3_records.append(rec)
+    if not args.only_combined:
+        for rk in run_keys:
+            if args.phase in ("reduce", "both"):
+                process_reduce(rk, plots_dir)
+            if args.phase in ("full", "both"):
+                rec = process_full(rk, plots_dir)
+                if rec:
+                    p3_records.append(rec)
 
-    if p3_records and args.phase in ("full", "both"):
-        plot_phase3_summary(p3_records, plots_dir / "phase3_summary.png")
+        if p3_records and args.phase in ("full", "both"):
+            plot_phase3_summary(p3_records, plots_dir / "phase3_summary.png")
 
     # Gráfico de importancia combinado: las 4 configuraciones (encoding x
     # decoding) de cada tarea superpuestas en un mismo gráfico.

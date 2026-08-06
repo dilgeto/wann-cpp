@@ -119,7 +119,7 @@ colors = cmap(np.linspace(0.0, 1.0, len(idxs)))
 # ─────────────────────────────────────────────────────────────────────────────
 fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(12, 5.6), facecolor="white",
                                         gridspec_kw={"width_ratios": [1.3, 1]})
-fig.suptitle(f"{TASK} — Steps de la trayectoria", fontsize=13, fontweight="bold")
+fig.suptitle(f"{TASK} — Steps de la trayectoria", fontsize=18, fontweight="bold")
 
 # ── Panel izquierdo: trayectoria con degradado de color ─────────────────────
 if env == "mountain_car":
@@ -141,9 +141,9 @@ if env == "mountain_car":
 
     ax_left.set_xlim(POS_MIN - 0.05, POS_MAX + 0.05)
     ax_left.set_ylim(0.0, 1.15)
-    ax_left.set_xlabel("Posición (m)", fontsize=9)
-    ax_left.set_ylabel("Altura", fontsize=9)
-    ax_left.legend(fontsize=8, loc="upper left")
+    ax_left.set_xlabel("Posición (m)", fontsize=13)
+    ax_left.set_ylabel("Altura", fontsize=13)
+    ax_left.legend(fontsize=12, loc="upper left")
 
 elif env == "acrobot":
     L = 1.0
@@ -168,9 +168,9 @@ elif env == "acrobot":
     ax_left.set_xlim(-2.2, 2.2)
     ax_left.set_ylim(-2.2, 2.2)
     ax_left.set_aspect("equal")
-    ax_left.set_xlabel("x (m)", fontsize=9)
-    ax_left.set_ylabel("y (m)", fontsize=9)
-    ax_left.legend(fontsize=8, loc="upper right")
+    ax_left.set_xlabel("x (m)", fontsize=13)
+    ax_left.set_ylabel("y (m)", fontsize=13)
+    ax_left.legend(fontsize=12, loc="upper right")
 
 else:  # car
     BOUND   = 2.5
@@ -225,12 +225,13 @@ else:  # car
     ax_left.set_xlim(-BOUND - 0.1, BOUND + 0.1)
     ax_left.set_ylim(-BOUND - 0.1, BOUND + 0.1)
     ax_left.set_aspect("equal")
-    ax_left.set_xlabel("x (m)", fontsize=9)
-    ax_left.set_ylabel("y (m)", fontsize=9)
-    ax_left.legend(fontsize=8, loc="upper right")
+    ax_left.set_xlabel("x (m)", fontsize=13)
+    ax_left.set_ylabel("y (m)", fontsize=13)
+    ax_left.legend(fontsize=12, loc="upper right")
 
-ax_left.set_title("Trayectoria (color = avance temporal)", fontsize=10)
+ax_left.set_title("Trayectoria (color = avance temporal)", fontsize=14)
 ax_left.grid(True, alpha=0.2, linewidth=0.4)
+ax_left.tick_params(labelsize=11)
 
 # ── Panel derecho: recompensa acumulada con el mismo degradado ──────────────
 points   = np.array([steps_col, cum_rew]).T.reshape(-1, 1, 2)
@@ -246,10 +247,11 @@ for k, i in enumerate(idxs):
 ax_right.set_xlim(0, max(steps_col[-1], 1))
 y_pad = 0.05 * max(abs(cum_rew.min()), abs(cum_rew.max()), 1.0)
 ax_right.set_ylim(min(cum_rew.min(), 0) - y_pad, max(cum_rew.max(), 0) + y_pad)
-ax_right.set_xlabel("Paso", fontsize=9)
-ax_right.set_ylabel("Reward acumulado", fontsize=9)
-ax_right.set_title("Recompensa acumulada", fontsize=10)
+ax_right.set_xlabel("Paso", fontsize=13)
+ax_right.set_ylabel("Reward acumulado", fontsize=13)
+ax_right.set_title("Recompensa acumulada", fontsize=14)
 ax_right.grid(True, alpha=0.3)
+ax_right.tick_params(labelsize=11)
 
 if args.save:
     out_path = args.out or (os.path.splitext(csv_path)[0] + "_steps.png")

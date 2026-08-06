@@ -72,8 +72,8 @@ FONT_SUPTITLE = 18
 
 
 def make_plots(rewards_snn: np.ndarray, rewards_ann: np.ndarray,
-              boot_ratio_signed: np.ndarray, out_path: Path,
-              suptitle: str, ann_label: str = "ANN") -> None:
+              boot_ratio_signed: np.ndarray, ci_lo: float, ci_hi: float, ci: float,
+              out_path: Path, suptitle: str, ann_label: str = "ANN") -> None:
     fig, axes = plt.subplots(2, 2, figsize=(11, 9))
 
     # Mismo rango de bins para ambos histogramas superiores, así el eje X
@@ -83,22 +83,26 @@ def make_plots(rewards_snn: np.ndarray, rewards_ann: np.ndarray,
     shared_bins = np.linspace(combined_min, combined_max, 21)
 
     ax = axes[0, 0]
-    ax.hist(rewards_snn, bins=shared_bins, color="#d62728", edgecolor="black", alpha=0.85)
+    ax.hist(rewards_snn, bins=shared_bins, color="#d62728", edgecolor="black", alpha=0.85,
+            label=f"Episodios individuales (n={len(rewards_snn)})")
     ax.set_title("Rewards SNN (episodios)", fontsize=FONT_TITLE)
     ax.set_xlabel("Reward", fontsize=FONT_LABEL)
     ax.set_ylabel("Frecuencia", fontsize=FONT_LABEL)
     ax.axvline(rewards_snn.mean(), color="black", linestyle="--", linewidth=1,
                label=f"media={rewards_snn.mean():.2f}")
-    ax.legend(fontsize=FONT_LEGEND)
+    ax.set_ylim(0, ax.get_ylim()[1] * 1.35)
+    ax.legend(fontsize=FONT_LEGEND, loc="upper left")
 
     ax = axes[0, 1]
-    ax.hist(rewards_ann, bins=shared_bins, color="#4C72B0", edgecolor="black", alpha=0.85)
+    ax.hist(rewards_ann, bins=shared_bins, color="#4C72B0", edgecolor="black", alpha=0.85,
+            label=f"Episodios individuales (n={len(rewards_ann)})")
     ax.set_title(f"Rewards {ann_label} (episodios)", fontsize=FONT_TITLE)
     ax.set_xlabel("Reward", fontsize=FONT_LABEL)
     ax.set_ylabel("Frecuencia", fontsize=FONT_LABEL)
     ax.axvline(rewards_ann.mean(), color="black", linestyle="--", linewidth=1,
                label=f"media={rewards_ann.mean():.2f}")
-    ax.legend(fontsize=FONT_LEGEND)
+    ax.set_ylim(0, ax.get_ylim()[1] * 1.35)
+    ax.legend(fontsize=FONT_LEGEND, loc="upper left")
 
     # Mismo eje X e Y en ambos histogramas superiores para que la
     # comparación SNN vs ANN sea visualmente directa.
@@ -109,16 +113,21 @@ def make_plots(rewards_snn: np.ndarray, rewards_ann: np.ndarray,
         ax.set_ylim(shared_ylim)
 
     ax = axes[1, 0]
-    ax.hist(boot_ratio_signed, bins=40, color="#808080", edgecolor="black", alpha=0.85)
-    ax.axvline(90.0, color="crimson", linestyle="--", linewidth=1.5, label="90%")
-    ci_lo, ci_hi = percentile_ci(boot_ratio_signed)
-    ax.axvline(ci_lo, color="black", linestyle=":", linewidth=1)
-    ax.axvline(ci_hi, color="black", linestyle=":", linewidth=1)
+    ax.hist(boot_ratio_signed, bins=40, color="#808080", edgecolor="black", alpha=0.85,
+            label="Remuestreos bootstrap")
+    ax.axvline(90.0, color="crimson", linestyle="--", linewidth=1.5,
+               label="Objetivo mínimo (90%)")
+    ax.axvline(ci_lo, color="black", linestyle=":", linewidth=1.3,
+               label=f"IC {int(round(ci * 100))}% (percentiles {(1 - ci) / 2 * 100:.1f}/{(1 + ci) / 2 * 100:.1f})")
+    ax.axvline(ci_hi, color="black", linestyle=":", linewidth=1.3)
     ax.set_title(f"Distribución bootstrap: % rendimiento SNN vs {ann_label}\n(consciente del signo)",
                 fontsize=FONT_TITLE)
     ax.set_xlabel("% de rendimiento", fontsize=FONT_LABEL)
     ax.set_ylabel("Frecuencia", fontsize=FONT_LABEL)
-    ax.legend(fontsize=FONT_LEGEND)
+    # Espacio reservado arriba para que la leyenda no tape las barras del
+    # histograma, sea cual sea la forma de la distribución.
+    ax.set_ylim(0, ax.get_ylim()[1] * 1.35)
+    ax.legend(fontsize=FONT_LEGEND, loc="upper left")
 
     ax = axes[1, 1]
     bp = ax.boxplot([rewards_snn, rewards_ann], tick_labels=["SNN", ann_label],
@@ -260,7 +269,9 @@ def run_comparison(rewards_snn: np.ndarray, rewards_ann: np.ndarray, args: argpa
     ci_df.to_csv(out_dir / "ci_results.csv", index=False)
 
     plot_path = out_dir / f"{plot_stem}.png"
-    make_plots(rewards_snn, rewards_ann, boot_ratio_signed, plot_path, suptitle, ann_label)
+    make_plots(rewards_snn, rewards_ann, boot_ratio_signed,
+              ratio_signed_ci_lo, ratio_signed_ci_hi, args.ci,
+              plot_path, suptitle, ann_label)
 
     print(f"\nResultados guardados en {out_dir}/:")
     print("  rewards.csv, bootstrap_samples.csv, summary_stats.csv, ci_results.csv")

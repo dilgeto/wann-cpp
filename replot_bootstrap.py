@@ -30,14 +30,16 @@ def main() -> None:
     out_dir = Path(args.out_dir)
     rewards_df = pd.read_csv(out_dir / "rewards.csv")
     boot_df = pd.read_csv(out_dir / "bootstrap_samples.csv")
+    ci_df = pd.read_csv(out_dir / "ci_results.csv").iloc[0]
 
     rewards_snn = rewards_df.loc[rewards_df["agent"] == "snn", "reward"].to_numpy()
     rewards_ann = rewards_df.loc[rewards_df["agent"] == "ann", "reward"].to_numpy()
     boot_ratio_signed = boot_df["boot_ratio_pct_signed"].to_numpy()
 
     plot_path = out_dir / f"{args.plot_stem}.png"
-    make_plots(rewards_snn, rewards_ann, boot_ratio_signed, plot_path,
-              args.suptitle, args.ann_label)
+    make_plots(rewards_snn, rewards_ann, boot_ratio_signed,
+              ci_df["ratio_signed_ci_lo_pct"], ci_df["ratio_signed_ci_hi_pct"], ci_df["ci_level"],
+              plot_path, args.suptitle, args.ann_label)
     print(f"Regenerado: {plot_path}")
 
 

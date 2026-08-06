@@ -145,6 +145,8 @@ n_input  = get("ann_nInput")
 n_output = get("ann_nOutput")
 encoder  = get("snn_encoder")
 decoder  = get("snn_decoder")
+if encoder == "small":
+    encoder = "signed"
 title   = f"{cap(display_name)} {cap(encoder)}+{cap(decoder)}"
 enc_dec = f"{encoder}_{decoder}"
 print(f"{n_input}\t{n_output}\t{title}\t{enc_dec}")
@@ -157,13 +159,18 @@ PY
             --nInput "$n_input" --nOutput "$n_output" \
             --save --title "$title"
 
-        base_name="${run_key}"
-        for suffix in training pareto_evolution network final_pop; do
+        base_name="${run_key/small/signed}"
+        for suffix in training training_zoom pareto_evolution network final_pop; do
             src="${prefix}_${suffix}.png"
             if [[ -f "$src" ]]; then
                 mv "$src" "${out_dir}/${base_name}_${suffix}.png"
             fi
         done
+
+        # Curvas de entrenamiento promediadas sobre las 11 semillas de esta
+        # misma configuración ganadora (mismo run_key + rank del campeón).
+        "$VENV_PY" graph_mean_training.py --run-key "$run_key" --rank "$rank" \
+            --title "$title" --out "${out_dir}/${base_name}_mean_training.png"
 
         printf '%s\t%s\n' "$enc_dec" "$seed_means" >> "$task_accum"
     done < <("$VENV_PY" - "$best_csv" <<'PY'
@@ -227,10 +234,16 @@ ax.set_xticklabels(labels, rotation=30, ha="right")
 ax.set_title(f"{display_name} — mejor config validada por combinación", fontweight="bold")
 ax.set_ylabel("Reward Gymnasiun (mejor rank, Phase 3)")
 
-ylim = ax.get_ylim()
-rng  = ylim[1] - ylim[0]
+ylim  = ax.get_ylim()
+rng   = ylim[1] - ylim[0]
+label_off = rng * 0.02
+# Reservar espacio arriba para que las etiquetas de texto no queden
+# cortadas por el borde superior del gráfico.
+top_needed = max(max(vals) for vals in data) + label_off + rng * 0.08
+ax.set_ylim(ylim[0], max(ylim[1], top_needed))
+
 for pos, vals in zip(x, data):
-    ax.text(pos, max(vals) + rng * 0.02, f"{np.mean(vals):.2f}",
+    ax.text(pos, max(vals) + label_off, f"{np.mean(vals):.2f}",
              ha="center", va="bottom", fontsize=8)
 
 plt.tight_layout()
