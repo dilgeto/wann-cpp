@@ -529,9 +529,13 @@ def cmd_full(
     executable:      str,
     encoder:         str | None = None,
     decoder:         str | None = None,
+    tag:             str | None = None,
+    space_override:  dict[str, tuple] | None = None,
 ) -> None:
     fidelity = dict(TASK_DEFAULTS[task]["fidelity"])
     rkey = make_run_key(task, encoder, decoder)
+    if tag:
+        rkey = f"{rkey}_{tag}"
 
     # Fixed overrides: encoder/decoder (+ ann_nInput for population encoders)
     fixed_overrides: dict = {}
@@ -560,6 +564,10 @@ def cmd_full(
 
     # Restore narrowed space from previous rounds if resuming
     space = dict(INITIAL_SPACE)
+    if space_override:
+        space.update(space_override)
+        print(f"  Space override applied ({len(space_override)} params) — "
+              f"scoped to run_key='{rkey}', INITIAL_SPACE unchanged for other runs.")
     if space_log.exists():
         with open(space_log) as f:
             last_entry = None
@@ -754,6 +762,16 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--decoder", default=None,
                     choices=sorted(VALID_DECODERS),
                     help="Override snn_decoder (also changes output dir)")
+    ap.add_argument("--tag", default=None,
+                    help="Suffix appended to the run_key (e.g. 'wide') so this "
+                         "run gets its own screening_reduce/{run_key}_{tag}/ "
+                         "output dir instead of colliding with / resuming an "
+                         "existing run for the same task/encoder/decoder.")
+    ap.add_argument("--space-override", default=None, dest="space_override",
+                    help="Path to a JSON file with {param: [kind, lo, hi]} "
+                         "entries that override INITIAL_SPACE for this run "
+                         "only (in-memory; INITIAL_SPACE itself is untouched, "
+                         "so other tasks/runs are unaffected).")
     return ap.parse_args()
 
 
@@ -762,6 +780,14 @@ def main() -> None:
     td   = TASK_DEFAULTS[args.task]
     omp  = args.omp or max(1, (os.cpu_count() or 4) // args.jobs)
     rkey = make_run_key(args.task, args.encoder, args.decoder)
+    if args.tag:
+        rkey = f"{rkey}_{args.tag}"
+
+    space_override = None
+    if args.space_override:
+        with open(args.space_override) as f:
+            raw = json.load(f)
+        space_override = {p: tuple(v) for p, v in raw.items()}
 
     if args.mode == "analyse":
         cmd_analyse(rkey, args.top)
@@ -776,19 +802,21 @@ def main() -> None:
         sys.exit(1)
 
     cmd_full(
-        task        = args.task,
-        max_rounds  = args.rounds,
-        n           = args.n,
-        jobs        = args.jobs,
-        omp         = omp,
-        seed        = args.seed,
-        K           = args.K,
-        alpha       = args.alpha,
-        n_top       = args.top,
-        base_config = base_config,
-        executable  = executable,
-        encoder     = args.encoder,
-        decoder     = args.decoder,
+        task           = args.task,
+        max_rounds     = args.rounds,
+        n              = args.n,
+        jobs           = args.jobs,
+        omp            = omp,
+        seed           = args.seed,
+        K              = args.K,
+        alpha          = args.alpha,
+        n_top          = args.top,
+        base_config    = base_config,
+        executable     = executable,
+        encoder        = args.encoder,
+        decoder        = args.decoder,
+        tag            = args.tag,
+        space_override = space_override,
     )
 
 

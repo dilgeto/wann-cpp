@@ -1,0 +1,12 @@
+{
+    "alg_probMoo":           ["float", 0.01, 0.90],
+    "prob_addConn":          ["float", 0.01, 0.70],
+    "prob_addNode":          ["float", 0.01, 0.55],
+    "prob_enable":           ["log",   0.001, 0.40],
+    "prob_mutAct":           ["float", 0.03, 0.90],
+    "prob_toggleExcitatory": ["float", 0.01, 0.45],
+    "prob_initEnable":       ["float", 0.05, 0.95],
+    "select_cullRatio":      ["float", 0.02, 0.70],
+    "select_eliteRatio":     ["float", 0.02, 0.55],
+    "select_tournSize":      ["int",   1,    24]
+}

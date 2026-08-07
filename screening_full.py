@@ -617,6 +617,13 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--decoder", default=None,
                     choices=sorted(VALID_DECODERS),
                     help="Override snn_decoder (must match screening_reduce run)")
+    ap.add_argument("--tag", default=None,
+                    help="Suffix appended to the run_key (e.g. 'wide') — must "
+                         "match the --tag used in the corresponding "
+                         "screening_reduce.py run so Phase 2 loads the right "
+                         "reduced space, and Phase 2/3 write to their own "
+                         "screening_full/{run_key}_{tag}/ output dir instead "
+                         "of colliding with an existing run.")
     return ap.parse_args()
 
 
@@ -625,6 +632,8 @@ def main() -> None:
     td   = TASK_DEFAULTS[args.task]
     omp  = args.omp or max(1, (os.cpu_count() or 4) // args.jobs)
     rkey = make_run_key(args.task, args.encoder, args.decoder)
+    if args.tag:
+        rkey = f"{rkey}_{args.tag}"
 
     # Fixed overrides passed to every C++ run
     fixed_overrides: dict = {}
