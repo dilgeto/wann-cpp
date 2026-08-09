@@ -43,6 +43,8 @@ N_INPUT  = args.nInput
 N_OUTPUT = args.nOutput
 TASK     = args.title if args.title is not None else os.path.basename(PREFIX)
 
+AXIS_LABEL_FONTSIZE = 13
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Curvas de entrenamiento
 # ─────────────────────────────────────────────────────────────────────────────
@@ -61,31 +63,64 @@ fit_peak  = stats[:, 4]
 node_med  = stats[:, 5]
 conn_med  = stats[:, 6]
 
-fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+# Acercamiento a la región inicial donde ocurre la mejora: el resto del
+# entrenamiento suele quedar plano y no aporta información visual,
+# comprimiendo la parte relevante de la curva de fitness. Se evalúa antes de
+# armar la figura para saber si hace falta la fila de abajo con el zoom.
+init_val, final_val = fit_best[0], fit_best[-1]
+imp_rng = final_val - init_val
+zoom_end = None
+if abs(imp_rng) > 1e-9 and len(gens) > 2:
+    threshold = init_val + 0.95 * imp_rng
+    idx95 = int(np.argmax(fit_best >= threshold)) if imp_rng > 0 else int(np.argmax(fit_best <= threshold))
+    candidate_end = min(len(gens) - 1, max(idx95 + 5, int(idx95 * 1.3)))
+    if candidate_end > 2:
+        zoom_end = candidate_end
+
+if zoom_end is not None:
+    fig = plt.figure(figsize=(13, 9))
+    gs  = fig.add_gridspec(2, 2, height_ratios=[1, 1])
+else:
+    fig = plt.figure(figsize=(13, 4))
+    gs  = fig.add_gridspec(1, 2)
 fig.suptitle(f"{TASK} — Curvas de entrenamiento", fontsize=12)
 
-ax = axes[0]
+ax = fig.add_subplot(gs[0, 0])
 ax.plot(gens, fit_med,   label="Mediana población", color="steelblue",  alpha=0.5, linewidth=1)
 ax.plot(gens, fit_elite, label="Elite (mejor gen.)", color="darkorange", linewidth=1.2)
 ax.plot(gens, fit_best,  label="Best (récord)",      color="green",      linewidth=1.5)
 ax.plot(gens, fit_peak,  label="Peak (mejor peso)",  color="red",        linewidth=1.5, linestyle="--")
-ax.set_xlabel("Generación")
-ax.set_ylabel("Fitness (reward)")
+ax.set_xlabel("Generación", fontsize=AXIS_LABEL_FONTSIZE)
+ax.set_ylabel("Fitness (reward)", fontsize=AXIS_LABEL_FONTSIZE)
 ax.set_title("Fitness a lo largo de la evolución")
 ax.legend(fontsize=13)
 ax.grid(True, alpha=0.3)
 
-ax  = axes[1]
+ax  = fig.add_subplot(gs[0, 1])
 ax2 = ax.twinx()
 ln1 = ax.plot( gens, node_med, label="Nodos (mediana)", color="purple", linewidth=1.5)
 ln2 = ax2.plot(gens, conn_med, label="Conns (mediana)", color="teal",   linewidth=1.5, linestyle="--")
-ax.set_xlabel("Generación")
-ax.set_ylabel("Nodos", color="purple")
-ax2.set_ylabel("Conexiones", color="teal")
+ax.set_xlabel("Generación", fontsize=AXIS_LABEL_FONTSIZE)
+ax.set_ylabel("Nodos", color="purple", fontsize=AXIS_LABEL_FONTSIZE)
+ax2.set_ylabel("Conexiones", color="teal", fontsize=AXIS_LABEL_FONTSIZE)
 ax.set_title("Complejidad de la red (mediana poblacional)")
 lns = ln1 + ln2
 ax.legend(lns, [l.get_label() for l in lns], fontsize=13)
 ax.grid(True, alpha=0.3)
+
+if zoom_end is not None:
+    sl   = slice(0, zoom_end + 1)
+    ax_z = fig.add_subplot(gs[1, :])
+    ax_z.plot(gens[sl], fit_med[sl],   label="Mediana población", color="steelblue",  alpha=0.5, linewidth=1)
+    ax_z.plot(gens[sl], fit_elite[sl], label="Elite (mejor gen.)", color="darkorange", linewidth=1.2)
+    ax_z.plot(gens[sl], fit_best[sl],  label="Best (récord)",      color="green",      linewidth=1.5)
+    ax_z.plot(gens[sl], fit_peak[sl],  label="Peak (mejor peso)",  color="red",        linewidth=1.5, linestyle="--")
+    ax_z.set_xlim(0, zoom_end)
+    ax_z.set_xlabel("Generación", fontsize=AXIS_LABEL_FONTSIZE)
+    ax_z.set_ylabel("Fitness (reward)", fontsize=AXIS_LABEL_FONTSIZE)
+    ax_z.set_title(f"Acercamiento a las primeras {zoom_end} generaciones", fontsize=11)
+    ax_z.legend(fontsize=11)
+    ax_z.grid(True, alpha=0.3)
 
 plt.tight_layout()
 if args.save:
@@ -93,37 +128,6 @@ if args.save:
     plt.savefig(out, dpi=150); print(f"Guardado: {out}")
 else:
     plt.show()
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 1b. Acercamiento a la región inicial donde ocurre la mejora (figura aparte):
-#     el resto del entrenamiento suele quedar plano y no aporta información
-#     visual, comprimiendo la parte relevante de la curva anterior.
-# ─────────────────────────────────────────────────────────────────────────────
-init_val, final_val = fit_best[0], fit_best[-1]
-rng = final_val - init_val
-if abs(rng) > 1e-9 and len(gens) > 2:
-    threshold = init_val + 0.95 * rng
-    idx95 = int(np.argmax(fit_best >= threshold)) if rng > 0 else int(np.argmax(fit_best <= threshold))
-    zoom_end = min(len(gens) - 1, max(idx95 + 5, int(idx95 * 1.3)))
-    if zoom_end > 2:
-        sl = slice(0, zoom_end + 1)
-        fig_z, ax_z = plt.subplots(figsize=(8, 4.5))
-        ax_z.plot(gens[sl], fit_med[sl],   label="Mediana población", color="steelblue",  alpha=0.5, linewidth=1)
-        ax_z.plot(gens[sl], fit_elite[sl], label="Elite (mejor gen.)", color="darkorange", linewidth=1.2)
-        ax_z.plot(gens[sl], fit_best[sl],  label="Best (récord)",      color="green",      linewidth=1.5)
-        ax_z.plot(gens[sl], fit_peak[sl],  label="Peak (mejor peso)",  color="red",        linewidth=1.5, linestyle="--")
-        ax_z.set_xlim(0, zoom_end)
-        ax_z.set_xlabel("Generación")
-        ax_z.set_ylabel("Fitness (reward)")
-        ax_z.set_title(f"{TASK} — Acercamiento a las primeras {zoom_end} generaciones", fontsize=11)
-        ax_z.legend(fontsize=10)
-        ax_z.grid(True, alpha=0.3)
-        plt.tight_layout()
-        if args.save:
-            out_z = PREFIX + "_training_zoom.png"
-            plt.savefig(out_z, dpi=150); print(f"Guardado: {out_z}")
-        else:
-            plt.show()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Evolución del frente de Pareto
@@ -145,8 +149,8 @@ if pareto_files:
         if d.ndim == 1: d = d.reshape(1, -1)
         ax.scatter(d[:, 2], d[:, 0], color=col, alpha=0.4, s=12, label=f"Gen {gen_num}")
 
-    ax.set_xlabel("nConn")
-    ax.set_ylabel("Fitness medio")
+    ax.set_xlabel("nConn", fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_ylabel("Fitness medio", fontsize=AXIS_LABEL_FONTSIZE)
     ax.set_title(f"{TASK} — Evolución del frente de Pareto")
     ax.legend(fontsize=13)
     ax.grid(True, alpha=0.3)
@@ -211,7 +215,8 @@ if os.path.exists(best_file):
     plt.colorbar(im, ax=ax, label="Peso (gris = sin conexión)")
     ax.set_xticks(range(N)); ax.set_xticklabels(node_labels[:N], rotation=45, ha="right", fontsize=7)
     ax.set_yticks(range(N)); ax.set_yticklabels(node_labels[:N], fontsize=7)
-    ax.set_xlabel("Nodo destino"); ax.set_ylabel("Nodo origen")
+    ax.set_xlabel("Nodo destino", fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_ylabel("Nodo origen", fontsize=AXIS_LABEL_FONTSIZE)
     ax.set_title("Matriz de conexiones")
 
     # Grafo por capas — Graphviz con profundidad topológica real
@@ -375,13 +380,14 @@ if pareto_files:
 
     h = axes[0].hist2d(nconn, fitness, bins=20, cmap="YlOrRd")
     plt.colorbar(h[3], ax=axes[0], label="Individuos")
-    axes[0].set_xlabel("nConn"); axes[0].set_ylabel("Fitness medio")
+    axes[0].set_xlabel("nConn", fontsize=AXIS_LABEL_FONTSIZE)
+    axes[0].set_ylabel("Fitness medio", fontsize=AXIS_LABEL_FONTSIZE)
     axes[0].set_title("Densidad: fitness vs conectividad")
 
     sc = axes[1].scatter(fitness, fitmax, s=8, alpha=0.4, c=nconn, cmap="viridis")
     plt.colorbar(sc, ax=axes[1], label="nConn")
-    axes[1].set_xlabel("Fitness medio (todos los pesos)")
-    axes[1].set_ylabel("Peak fitness (mejor peso)")
+    axes[1].set_xlabel("Fitness medio (todos los pesos)", fontsize=AXIS_LABEL_FONTSIZE)
+    axes[1].set_ylabel("Peak fitness (mejor peso)", fontsize=AXIS_LABEL_FONTSIZE)
     axes[1].set_title("Fitness medio vs peak (color = nConn)")
     axes[1].grid(True, alpha=0.3)
     diag = np.linspace(min(fitness.min(), fitmax.min()),

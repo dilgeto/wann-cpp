@@ -1,6 +1,6 @@
 {
     "task":                     "snn_car",
-    "maxGen":                   2048,
+    "maxGen":                   512,
     "popSize":                  480,
     "alg_nVals":                6,
     "alg_nReps":                6,

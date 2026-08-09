@@ -104,10 +104,18 @@ STATS_COLS = ["evals", "fitMed", "fitMax", "fitTop", "fitPeak", "nodeMed",
 MODEL_RE = re.compile(r"^rank(\d+)_seed(\d+)$")
 
 
-def find_models(prefix: str) -> list[dict]:
-    """Locate every phase-3 model under screening_full/<prefix>_*/p3_configs."""
-    cfg_dirs = sorted(Path("screening_full").glob(f"{prefix}_*/p3_configs"))
-    cfg_dirs += sorted(Path("screening_full").glob(f"{prefix}/p3_configs"))
+def find_models(prefix: str, run_keys: set[str] | None = None) -> list[dict]:
+    """Locate every phase-3 model under screening_full/<prefix>_*/p3_configs.
+    If run_keys is given, only those exact run_key directories are used
+    (instead of every screening_full/<prefix>_* match) — for revalidating a
+    single ad-hoc run (e.g. a '_wide' tag) without re-running every official
+    encoder/decoder combination for the task."""
+    if run_keys:
+        cfg_dirs = sorted(Path("screening_full") / rk / "p3_configs" for rk in run_keys)
+        cfg_dirs = [d for d in cfg_dirs if d.is_dir()]
+    else:
+        cfg_dirs = sorted(Path("screening_full").glob(f"{prefix}_*/p3_configs"))
+        cfg_dirs += sorted(Path("screening_full").glob(f"{prefix}/p3_configs"))
 
     models = []
     for cfg_dir in cfg_dirs:
@@ -177,12 +185,12 @@ def read_best_wi(log_prefix: Path) -> int | None:
         return None
 
 
-def _group_models_by_config(prefix: str) -> dict[tuple[str, int], list[dict]]:
+def _group_models_by_config(prefix: str, run_keys: set[str] | None = None) -> dict[tuple[str, int], list[dict]]:
     """Group every phase-3 model under `prefix` by (run_key, rank), attaching
     each model's own weight index (_best.wi) and last-generation training
     stats (_stats.out). Skips models missing either file. This does NOT
     re-evaluate anything; it only reads existing training logs."""
-    models = find_models(prefix)
+    models = find_models(prefix, run_keys)
     by_group: dict[tuple[str, int], list[dict]] = {}
     for m in models:
         log_prefix = Path("log") / f"full_p3_{m['run_key']}" / f"rank{m['rank']:02d}_seed{m['seed_idx']:02d}"
@@ -194,7 +202,7 @@ def _group_models_by_config(prefix: str) -> dict[tuple[str, int], list[dict]]:
     return by_group
 
 
-def best_config_per_run_key(prefix: str) -> dict[str, list[dict]]:
+def best_config_per_run_key(prefix: str, run_keys: set[str] | None = None) -> dict[str, list[dict]]:
     """For EVERY run_key (encoder/decoder combination) found under `prefix`,
     pick its own best rank (hyperparameter config) — the one with the
     highest MEAN training-time fitPeak across its own seeds (the real
@@ -205,7 +213,7 @@ def best_config_per_run_key(prefix: str) -> dict[str, list[dict]]:
     Returns {run_key: [models...]} — one dict per seed_idx within that
     run_key's winning rank, each carrying its own weight index (that seed's
     own _best.wi)."""
-    by_group = _group_models_by_config(prefix)
+    by_group = _group_models_by_config(prefix, run_keys)
     if not by_group:
         return {}
 
@@ -300,7 +308,8 @@ def fetch_weights_sweep(td: dict, model: dict, seeds: list[int], nreps: int,
 
 def run_task(task: str, seeds: list[int], nreps: int, jobs: int, omp: int,
              timeout: int | None, out_dir: Path,
-             reward_override: str | None = None) -> pd.DataFrame:
+             reward_override: str | None = None,
+             run_keys: set[str] | None = None) -> pd.DataFrame:
     td = dict(TASKS[task])
     if reward_override:
         td["reward"] = reward_override
@@ -310,10 +319,11 @@ def run_task(task: str, seeds: list[int], nreps: int, jobs: int, omp: int,
         return pd.DataFrame()
 
     prefix = td["screening_prefix"]
-    groups = best_config_per_run_key(prefix)
+    groups = best_config_per_run_key(prefix, run_keys)
     if not groups:
-        print(f"[{task}] no se encontraron modelos/stats de fase 3 en "
-              f"screening_full/{prefix}_*/ (o log/full_p3_{prefix}_*/).")
+        where = f"run_key(s) {sorted(run_keys)}" if run_keys else f"screening_full/{prefix}_*/"
+        print(f"[{task}] no se encontraron modelos/stats de fase 3 en {where} "
+              f"(o su carpeta log/full_p3_* correspondiente).")
         return pd.DataFrame()
 
     print(f"\n[{task}] {len(groups)} combinaciones encoder/decoder encontradas — "
@@ -431,17 +441,28 @@ def main() -> None:
     ap.add_argument("--reward", choices=["shaped", "original"], default=None,
                     help="Forzar shaped u original para todas las tareas corridas "
                          "(default por tarea: acrobot=original, mountain_car=original, car=shaped)")
+    ap.add_argument("--run-key", action="append", default=None, dest="run_keys",
+                    help="Restringe a este/estos run_key(s) exactos (ej. "
+                         "car_ttfs_first_spike_wide) en vez de TODOS los "
+                         "screening_full/<prefix>_* de la tarea — repetir la "
+                         "opción para pasar varios. Requiere --task. Útil para "
+                         "revalidar una corrida ad-hoc sin re-evaluar las "
+                         "combinaciones oficiales.")
     args = ap.parse_args()
+
+    if args.run_keys and not args.task:
+        ap.error("--run-key requiere --task (para saber a qué TASKS[...] pertenece)")
 
     omp   = args.omp or max(1, (os.cpu_count() or 4) // args.jobs)
     seeds = list(range(args.seed0, args.seed0 + args.seeds))
     tasks = [args.task] if args.task else list(TASKS)
     out_dir = Path(args.out_dir)
+    run_keys = set(args.run_keys) if args.run_keys else None
 
     dfs: list[pd.DataFrame] = []
     for task in tasks:
         dfs.append(run_task(task, seeds, args.nreps, args.jobs, omp,
-                            args.timeout, out_dir, args.reward))
+                            args.timeout, out_dir, args.reward, run_keys))
 
     print(f"\n{'='*66}")
     print("  Modelos revalidados: por cada run_key (encoder/decoder), su")

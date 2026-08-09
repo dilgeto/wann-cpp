@@ -65,6 +65,8 @@ conn_med  = mean_stats[:, 6]
 TASK = args.title if args.title is not None else f"{args.run_key} rank{rank_p}"
 N_SEEDS = len(files)
 
+AXIS_LABEL_FONTSIZE = 13
+
 fig, axes = plt.subplots(1, 2, figsize=(13, 4))
 fig.suptitle(f"{TASK} — Curvas de entrenamiento (promedio de {N_SEEDS} entrenamientos)",
             fontsize=12)
@@ -74,8 +76,8 @@ ax.plot(gens, fit_med,   label="Mediana población", color="steelblue",  alpha=0
 ax.plot(gens, fit_elite, label="Elite (mejor gen.)", color="darkorange", linewidth=1.2)
 ax.plot(gens, fit_best,  label="Best (récord)",      color="green",      linewidth=1.5)
 ax.plot(gens, fit_peak,  label="Peak (mejor peso)",  color="red",        linewidth=1.5, linestyle="--")
-ax.set_xlabel("Generación")
-ax.set_ylabel("Fitness (reward)")
+ax.set_xlabel("Generación", fontsize=AXIS_LABEL_FONTSIZE)
+ax.set_ylabel("Fitness (reward)", fontsize=AXIS_LABEL_FONTSIZE)
 ax.set_title("Fitness a lo largo de la evolución")
 ax.legend(fontsize=13)
 ax.grid(True, alpha=0.3)
@@ -84,9 +86,9 @@ ax  = axes[1]
 ax2 = ax.twinx()
 ln1 = ax.plot( gens, node_med, label="Nodos (mediana)", color="purple", linewidth=1.5)
 ln2 = ax2.plot(gens, conn_med, label="Conns (mediana)", color="teal",   linewidth=1.5, linestyle="--")
-ax.set_xlabel("Generación")
-ax.set_ylabel("Nodos", color="purple")
-ax2.set_ylabel("Conexiones", color="teal")
+ax.set_xlabel("Generación", fontsize=AXIS_LABEL_FONTSIZE)
+ax.set_ylabel("Nodos", color="purple", fontsize=AXIS_LABEL_FONTSIZE)
+ax2.set_ylabel("Conexiones", color="teal", fontsize=AXIS_LABEL_FONTSIZE)
 ax.set_title("Complejidad de la red (mediana poblacional)")
 lns = ln1 + ln2
 ax.legend(lns, [l.get_label() for l in lns], fontsize=13)

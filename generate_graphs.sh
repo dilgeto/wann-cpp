@@ -19,9 +19,12 @@
 # Pareto, topología, población final). Cada caja de phase3_summary_best.png
 # son las 11 medias por semilla ("reward" de cada una de las filas de ese
 # run_key), no episodios individuales.
-# Con --ann se puede agregar un boxplot de referencia (episodios individuales
-# de una ANN convencional) que siempre se muestra a la izquierda de todo, sin
-# participar del orden ni de la comparación de "mejor config".
+# phase3_summary_best.png siempre incluye además una caja de referencia PPO
+# (episodios individuales del agente ANN nativo/PPO de cada tarea, leídos de
+# bootstrap_*/rewards.csv — ver PPO_REWARDS_CSV más abajo), a la izquierda de
+# las combinaciones SNN, sin participar del orden ni de la comparación de
+# "mejor config". Con --ann se puede agregar además un boxplot de referencia
+# DQN (valores tipeados a mano), que se muestra a la izquierda de todo.
 #
 # Uso:
 #   bash generate_graphs.sh                        # las 3 tareas
@@ -43,6 +46,15 @@ ALL_TASKS=(
     "acrobot:Acrobot:p/acrobot_snn.json"
     "mountain_car:Mountain Car:p/disc_mc_snn.json"
     "car:Racing Car:p/car_snn.json"
+)
+
+# task_key -> rewards.csv de bootstrap_compare_*.py con la referencia PPO
+# (columna "agent"=="ann", 100 episodios). Se agrega automáticamente como
+# caja de referencia en phase3_summary_best.png de cada tarea.
+declare -A PPO_REWARDS_CSV=(
+    [acrobot]="bootstrap_acrobot_ppo_experiment/rewards.csv"
+    [mountain_car]="bootstrap_mountain_car/rewards.csv"
+    [car]="bootstrap_car/rewards.csv"
 )
 
 declare -A ANN_VALUES
@@ -160,7 +172,7 @@ PY
             --save --title "$title"
 
         base_name="${run_key/small/signed}"
-        for suffix in training training_zoom pareto_evolution network final_pop; do
+        for suffix in training pareto_evolution network final_pop; do
             src="${prefix}_${suffix}.png"
             if [[ -f "$src" ]]; then
                 mv "$src" "${out_dir}/${base_name}_${suffix}.png"
@@ -191,15 +203,21 @@ PY
 
     if [[ -s "$task_accum" ]]; then
         summary_path="${out_dir}/phase3_summary_best.png"
+        ppo_csv="${PPO_REWARDS_CSV[$task_key]:-}"
+        if [[ -n "$ppo_csv" && ! -f "$ppo_csv" ]]; then
+            echo "  [aviso] no existe $ppo_csv, se omite caja PPO"
+            ppo_csv=""
+        fi
         "$VENV_PY" - "$task_accum" "$summary_path" "$display_name" \
-            "${ANN_VALUES[$task_key]:-}" <<'PY'
+            "${ANN_VALUES[$task_key]:-}" "$ppo_csv" <<'PY'
+import csv
 import sys
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-accum_path, out_path, display_name, ann_values_arg = sys.argv[1:5]
+accum_path, out_path, display_name, ann_values_arg, ppo_csv_path = sys.argv[1:6]
 
 records = []
 with open(accum_path) as f:
@@ -213,11 +231,25 @@ labels = [r[0] for r in records]
 data   = [r[1] for r in records]
 colors = ["#d62728" if i == 0 else "#4C72B0" for i in range(len(records))]
 
+# Cajas de referencia (ANN convencional), siempre a la izquierda de las
+# combinaciones SNN, en el orden DQN (manual, --ann) y luego PPO (automático,
+# leído de bootstrap_*/rewards.csv).
+ref_labels, ref_data, ref_colors = [], [], []
 if ann_values_arg != "":
-    ann_values = [float(v) for v in ann_values_arg.split(",") if v != ""]
-    labels = ["DQN"] + labels
-    data   = [ann_values] + data
-    colors = ["#808080"] + colors
+    ref_labels.append("DQN")
+    ref_data.append([float(v) for v in ann_values_arg.split(",") if v != ""])
+    ref_colors.append("#808080")
+if ppo_csv_path != "":
+    with open(ppo_csv_path) as f:
+        ppo_values = [float(row["reward"]) for row in csv.DictReader(f) if row["agent"] == "ann"]
+    if ppo_values:
+        ref_labels.append("PPO")
+        ref_data.append(ppo_values)
+        ref_colors.append("#2ca02c")
+
+labels = ref_labels + labels
+data   = ref_data + data
+colors = ref_colors + colors
 
 x = np.arange(len(labels))
 fig, ax = plt.subplots(figsize=(max(4, len(labels) * 1.5), 5))
@@ -232,7 +264,7 @@ for patch, color in zip(bp["boxes"], colors):
 ax.set_xticks(x)
 ax.set_xticklabels(labels, rotation=30, ha="right")
 ax.set_title(f"{display_name} — mejor config validada por combinación", fontweight="bold")
-ax.set_ylabel("Reward Gymnasiun (mejor rank, Phase 3)")
+ax.set_ylabel("Reward Gymnasiun (mejor rank, Phase 3)", fontsize=13)
 
 ylim  = ax.get_ylim()
 rng   = ylim[1] - ylim[0]
