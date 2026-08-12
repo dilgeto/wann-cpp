@@ -21,12 +21,16 @@ entrenar ni evaluar nada nuevo):
 Fuentes de datos (todas ya existentes, no requiere C++ ni GPU):
   - SNN (campeón car_ttfs_first_spike, 11 seeds x 121 episodios de
     revalidación): eval_p3_weights/car_best_episodes.csv
+  - SNN ventana x2, mismos hiperparámetros que el campeón (rank02 de
+    car_ttfs_first_spike_40ms, 11 seeds x 121 episodios de revalidación):
+    eval_p3_weights_40ms_rank02/car_best_episodes.csv
   - PPO (11 seeds de entrenamiento x 11 seeds de evaluación, 1 episodio c/u):
     ../racing-car-ppo/validation/summary.csv
   - Comparación bootstrap de 100 episodios ya usada en la tesis (Tabla
     tab:comparacion_resumen): bootstrap_car/rewards.csv
-  - Misma comparación pero con el campeón revalidado a 40ms de ventana
-    (Tabla tab:disc_car_ablacion): bootstrap_car_40ms/rewards.csv
+  - Misma comparación pero con la variante de ventana x2 (mismos
+    hiperparámetros que el campeón, 11 seeds, Tabla tab:disc_car_ablacion):
+    bootstrap_car_40ms_seeds/rewards.csv
 
 Umbral de episodio fallido: reward < 100. Se eligió por ser el valor que
 reproduce exactamente las cifras ya publicadas en el texto (11% de
@@ -95,6 +99,13 @@ def part1() -> None:
     ppo_groups = [g["episode_return"].to_numpy() for _, g in ppo_ep.groupby("train_seed")]
     anova_between_within(ppo_groups, "PPO nativo (11 seeds x 11 episodios)")
 
+    snn40_ep = pd.read_csv("eval_p3_weights_40ms_rank02/car_best_episodes.csv")
+    snn40_ep = snn40_ep[snn40_ep["run_key"] == "car_ttfs_first_spike_40ms"]
+    snn40_groups = [g["reward"].to_numpy() for _, g in snn40_ep.groupby("train_seed_idx")]
+    anova_between_within(snn40_groups,
+        "SNN ventana x2 (car_ttfs_first_spike_40ms rank02, mismos hiperparámetros "
+        "que el campeón, 11 seeds x 121 episodios)")
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # Parte 2: % de rendimiento restringido a episodios exitosos
@@ -139,8 +150,9 @@ def part2() -> None:
 
     success_only_comparison(Path("bootstrap_car/rewards.csv"),
                             "Campeón oficial (20ms), Tabla tab:comparacion_resumen")
-    success_only_comparison(Path("bootstrap_car_40ms/rewards.csv"),
-                            "Campeón revalidado a 40ms, Tabla tab:disc_car_ablacion")
+    success_only_comparison(Path("bootstrap_car_40ms_seeds/rewards.csv"),
+                            "Ventana x2, mismos hiperparámetros que el campeón (11 seeds), "
+                            "Tabla tab:disc_car_ablacion")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -207,8 +219,9 @@ def part3() -> None:
     sizes = [100, 150, 200, 300, 500, 750, 1000, 1500, 2000, 3000]
     power_analysis(Path("bootstrap_car/rewards.csv"),
                    "Campeón oficial (20ms), Tabla tab:comparacion_resumen", sizes)
-    power_analysis(Path("bootstrap_car_40ms/rewards.csv"),
-                   "Campeón revalidado a 40ms, Tabla tab:disc_car_ablacion", sizes)
+    power_analysis(Path("bootstrap_car_40ms_seeds/rewards.csv"),
+                   "Ventana x2, mismos hiperparámetros que el campeón (11 seeds), "
+                   "Tabla tab:disc_car_ablacion", sizes)
 
 
 if __name__ == "__main__":
