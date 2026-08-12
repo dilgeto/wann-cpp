@@ -161,6 +161,23 @@ target_link_libraries(wann_mountain_car PRIVATE
     OpenMP::OpenMP_CXX)
 
 # ---------------------------------------------------------------------------
+# Executable: wann_l2f – WANN + SNN simulator + rl-tools L2F (Crazyflie quadrotor)
+# ---------------------------------------------------------------------------
+add_executable(wann_l2f
+    src/main_l2f.cpp
+    src/SnnL2FTask.cpp)
+
+target_include_directories(wann_l2f PRIVATE include)
+
+target_link_libraries(wann_l2f PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
 # Executable: wann_disc_mc – WANN + SNN simulator + Gymnasium MountainCar-v0 (discrete)
 # ---------------------------------------------------------------------------
 add_executable(wann_disc_mc
@@ -219,6 +236,22 @@ add_executable(wann_mountain_car_eval
 target_include_directories(wann_mountain_car_eval PRIVATE include)
 
 target_link_libraries(wann_mountain_car_eval PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_l2f_eval – evalúa N episodios con la mejor red L2F
+# ---------------------------------------------------------------------------
+add_executable(wann_l2f_eval
+    src/main_eval_l2f.cpp
+    src/SnnL2FTask.cpp)
+
+target_include_directories(wann_l2f_eval PRIVATE include)
+
+target_link_libraries(wann_l2f_eval PRIVATE
     wann_lib
     snn_engine_imp
     snn_encoding_imp

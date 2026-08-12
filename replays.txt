@@ -1,6 +1,0 @@
-python replay_acrobot.py --dir log/a_10_small_wta_replay
-python replay.py --csv log/c_extenso_ttfs_rate_best_ep18_replay.csv
-python replay_mountain_car.py --dir log/snn_mountain_car_replay
-
-Fallida:
-python replay.py --dir log/c_small_rate_replay
