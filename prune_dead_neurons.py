@@ -1,32 +1,45 @@
 #!/usr/bin/env python3
 """
-Poda neuronas ocultas "muertas" de un modelo WANN+SNN exportado (_best.out)
+Poda neuronas ocultas "inútiles" de un modelo WANN+SNN exportado (_best.out)
 y guarda el resultado como una segunda versión del archivo.
 
-Una neurona oculta se considera muerta cuando ninguna de sus conexiones
-entrantes activas es excitatoria (peso > 0), es decir, nunca puede cruzar
-el umbral de disparo del modelo de Izhikevich partiendo de reposo (este
-proyecto crea las neuronas con i_offset=0, noise=0, ver neuron.cpp) y por
-lo tanto nunca emite spikes. Al no disparar nunca, sus conexiones salientes
-no tienen ningún efecto sobre el resto de la red, así que se puede eliminar
-sin cambiar el comportamiento expresado por el genoma.
+Se usan dos criterios de poda independientes, evaluados juntos en el mismo
+punto fijo porque se retroalimentan entre sí:
 
-La detección es iterativa (punto fijo): al quitar una neurona muerta puede
-quedar otra neurona con solo entradas inhibitorias/nulas, que antes parecía
-viva porque su única fuente "excitatoria" era, en realidad, una neurona que
-nunca disparaba.
+  1. Sin entrada excitatoria ("no_exc_in"): ninguna de sus conexiones
+     entrantes activas es excitatoria (peso > 0), es decir, nunca puede
+     cruzar el umbral de disparo del modelo de Izhikevich partiendo de
+     reposo (este proyecto crea las neuronas con i_offset=0, noise=0, ver
+     neuron.cpp) y por lo tanto nunca emite spikes. Esto SÍ depende de la
+     dinámica de disparo, así que está sujeto a la excepción rebound-prone
+     de abajo.
 
-Advertencia importante: la regla es SOLO estructural (mira el signo de los
-pesos) y no simula la dinámica. Para neuronas LOW_THRESHOLD_SPIKING (act=4)
-existe "rebound spiking": el modelo de Izhikevich con b=0.25 puede disparar
-al liberarse de una hiperpolarización fuerte, así que una entrada puramente
-inhibitoria no garantiza que esté muerta. RESONATOR (act=6) también tiene
-dinámica subumbral no trivial. Por eso, por defecto, este script NO poda esos
-tipos de neurona aunque cumplan la regla: los reporta como "candidatas, no
-podadas" para que se verifiquen empíricamente (por ejemplo comparando el
-fitness del modelo original vs. el podado con el binario de evaluación
-correspondiente, p.ej. wann_eval_car). Usar --include-rebound-prone para
-forzar su poda si se acepta ese riesgo.
+  2. Sin salida ("no_out"): no tiene ninguna conexión saliente activa hacia
+     un nodo vivo. Da igual si la neurona dispara o no (incluso por rebound):
+     si nadie la escucha, su spike no tiene ningún efecto sobre la red. Este
+     criterio es puramente topológico y NO depende del tipo de neurona, así
+     que nunca se filtra por rebound-prone — una LTS/RESONATOR sin salida se
+     poda igual.
+
+La detección es iterativa (punto fijo): al quitar una neurona por cualquiera
+de los dos criterios, otra neurona vecina puede pasar a cumplir el otro
+criterio (p.ej. una neurona pierde su única fuente excitatoria porque esa
+fuente se podó por no tener salida; o una neurona se queda sin salida porque
+su único destino se podó por no tener entrada excitatoria).
+
+Advertencia importante sobre el criterio 1: es SOLO estructural (mira el
+signo de los pesos) y no simula la dinámica. Para neuronas
+LOW_THRESHOLD_SPIKING (act=4) existe "rebound spiking": el modelo de
+Izhikevich con b=0.25 puede disparar al liberarse de una hiperpolarización
+fuerte, así que una entrada puramente inhibitoria no garantiza que esté
+muerta. RESONATOR (act=6) también tiene dinámica subumbral no trivial. Por
+eso, por defecto, este script NO poda por el criterio 1 a esos tipos de
+neurona aunque lo cumplan: los reporta como "candidatas, no podadas" para
+que se verifiquen empíricamente (por ejemplo comparando el fitness del
+modelo original vs. el podado con el binario de evaluación correspondiente,
+p.ej. wann_eval_car). Usar --include-rebound-prone para forzar su poda por
+ese criterio si se acepta ese riesgo. El criterio 2 (sin salida) se les
+aplica siempre, sin excepción.
 
 Uso:
     python prune_dead_neurons.py --prefix log/snn_car --nInput 9 --nOutput 2
@@ -90,50 +103,94 @@ def parse_net(path):
     return tokens, W, act
 
 
-def find_dead_hidden(alive, hidden_idx, W, act, include_rebound_prone, max_iter):
-    """Punto fijo: devuelve (removed, flagged, rounds).
+def network_stats(indices, W, act):
+    """Cuenta conexiones activas (excitatorias/inhibitorias) y tipos de
+    neurona dentro del subconjunto `indices` (se evalúan solo los pesos
+    entre nodos de ese subconjunto, como quedaría la red expresada)."""
+    idx = list(indices)
+    n_exc = n_inh = 0
+    for i in idx:
+        for j in idx:
+            w = W[i][j]
+            if math.isnan(w) or w == 0.0:
+                continue
+            if w > 0.0:
+                n_exc += 1
+            else:
+                n_inh += 1
 
-    removed: lista de (idx, ronda) de neuronas ocultas eliminadas.
-    flagged: lista de idx de neuronas rebound-prone que cumplían la regla
-             pero se dejaron (no podadas) porque son rebound-prone y
-             include_rebound_prone=False.
+    type_counts = {}
+    for i in idx:
+        name = ACT_SHORT.get(act[i], f"?({act[i]})")
+        type_counts[name] = type_counts.get(name, 0) + 1
+
+    return n_exc, n_inh, type_counts
+
+
+def format_type_counts(type_counts):
+    if not type_counts:
+        return "(ninguna)"
+    return ", ".join(f"{name}={n}" for name, n in sorted(type_counts.items()))
+
+
+def find_prunable_hidden(alive, hidden_idx, W, act, include_rebound_prone, max_iter):
+    """Punto fijo con los dos criterios descritos en el docstring del
+    módulo. Devuelve (removed, flagged, rounds).
+
+    removed: lista de (idx, ronda, motivo) — motivo es "no_exc_in" o
+             "no_out".
+    flagged: lista de idx de neuronas rebound-prone que cumplían el
+             criterio 1 (sin entrada excitatoria) pero se dejaron porque
+             include_rebound_prone=False. (El criterio 2 nunca genera
+             flagged: se poda siempre.)
     """
     removed = []
     flagged = set()
 
     for rnd in range(1, max_iter + 1):
-        candidates = []
+        cand_no_exc_in = []
+        cand_no_out = []
         for h in hidden_idx:
             if h not in alive:
                 continue
-            has_excitatory_in = False
-            for i in alive:
-                if i == h:
-                    continue
-                w = W[i][h]
-                if not math.isnan(w) and w > 0.0:
-                    has_excitatory_in = True
-                    break
-            if not has_excitatory_in:
-                candidates.append(h)
 
-        if not candidates:
+            has_excitatory_in = any(
+                not math.isnan(W[i][h]) and W[i][h] > 0.0
+                for i in alive if i != h)
+            if not has_excitatory_in:
+                cand_no_exc_in.append(h)
+
+            has_out = any(
+                not math.isnan(W[h][j]) and W[h][j] != 0.0
+                for j in alive if j != h)
+            if not has_out:
+                cand_no_out.append(h)
+
+        if not cand_no_exc_in and not cand_no_out:
             return removed, sorted(flagged), rnd - 1
 
-        pruned_this_round = False
-        for h in candidates:
+        # "no_out" siempre se poda, sin excepción. "no_exc_in" se filtra por
+        # rebound-prone salvo que ya se esté podando por "no_out".
+        round_removed = {}
+        for h in cand_no_out:
+            round_removed[h] = "no_out"
+        for h in cand_no_exc_in:
+            if h in round_removed:
+                continue
             if act[h] in REBOUND_PRONE_IDS and not include_rebound_prone:
                 flagged.add(h)
                 continue
-            alive.discard(h)
-            removed.append((h, rnd))
-            flagged.discard(h)
-            pruned_this_round = True
+            round_removed[h] = "no_exc_in"
 
-        if not pruned_this_round:
-            # Todos los candidatos restantes son rebound-prone y no se
-            # incluyen: no hay más para hacer.
+        if not round_removed:
+            # Lo único pendiente son candidatas rebound-prone por
+            # "no_exc_in" que no se incluyen: no hay más para hacer.
             return removed, sorted(flagged), rnd
+
+        for h, reason in round_removed.items():
+            alive.discard(h)
+            removed.append((h, rnd, reason))
+            flagged.discard(h)
 
     return removed, sorted(flagged), max_iter
 
@@ -199,7 +256,7 @@ def main():
     hidden_idx = set(range(n_input + 1, N - n_output))
 
     alive = set(range(N))
-    removed, flagged, rounds = find_dead_hidden(
+    removed, flagged, rounds = find_prunable_hidden(
         alive, hidden_idx, W, act, args.include_rebound_prone, args.max_iter)
 
     kept = sorted(alive)
@@ -208,13 +265,15 @@ def main():
 
     print(f"Entrada:  {in_path}  (N={N}, hidden={n_hidden_before})")
     print(f"Punto fijo: {rounds} ronda(s)")
+    REASON_LABEL = {"no_exc_in": "sin entrada excitatoria",
+                     "no_out":    "sin conexión saliente (no llega a nadie)"}
     if removed:
         print(f"\nNeuronas ocultas eliminadas ({len(removed)}):")
-        for idx, rnd in removed:
+        for idx, rnd, reason in removed:
             print(f"  idx={idx:4d}  act={act[idx]:2d} ({ACT_SHORT.get(act[idx],'?')})"
-                  f"  ronda={rnd}")
+                  f"  ronda={rnd}  motivo={REASON_LABEL[reason]}")
     else:
-        print("\nNo se encontraron neuronas ocultas muertas.")
+        print("\nNo se encontraron neuronas ocultas podables.")
 
     if flagged:
         print(f"\nCandidatas NO podadas por ser rebound-prone ({len(flagged)}):")
@@ -225,6 +284,19 @@ def main():
 
     print(f"\nHidden: {n_hidden_before} -> {n_hidden_after}   "
           f"Nodos totales: {N} -> {len(kept)}")
+
+    exc_before, inh_before, types_before = network_stats(range(N), W, act)
+    exc_after,  inh_after,  types_after  = network_stats(kept, W, act)
+    hid_types_before = network_stats(hidden_idx, W, act)[2]
+    hid_types_after  = network_stats(hidden_idx & alive, W, act)[2]
+
+    print(f"\nConexiones activas — antes: {exc_before + inh_before} "
+          f"({exc_before} exc / {inh_before} inh)   "
+          f"después: {exc_after + inh_after} ({exc_after} exc / {inh_after} inh)")
+    print(f"Tipos de neurona (red completa) — antes: {format_type_counts(types_before)}")
+    print(f"Tipos de neurona (red completa) — después: {format_type_counts(types_after)}")
+    print(f"Tipos de neurona (solo ocultas) — antes: {format_type_counts(hid_types_before)}")
+    print(f"Tipos de neurona (solo ocultas) — después: {format_type_counts(hid_types_after)}")
 
     if args.dry_run:
         print("\n(--dry-run) no se escribió ningún archivo.")
