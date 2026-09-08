@@ -22,6 +22,7 @@
     "select_tournSize":         8,
     "save_mod":                 10,
     "bestReps":                 20,
+    "early_stop_patience":      0,
     "snn_encoder":              "ttfs",
     "snn_decoder":              "first_spike",
     "snn_reset_between_steps":  true,

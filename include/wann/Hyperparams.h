@@ -35,6 +35,11 @@ struct Hyperparams {
     int    save_mod           = 8;
     int    bestReps           = 20;
 
+    // --- early stopping ---
+    // Generations without a new fitTop record (running-best elite fitness)
+    // before stopping early. 0 = disabled (run the full maxGen).
+    int    early_stop_patience = 0;
+
     // --- task-specific (set in JSON or programmatically) ---
     int    ann_nInput         = 5;
     int    ann_nOutput        = 1;
@@ -85,6 +90,7 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.select_tournSize,       "select_tournSize");
     get(p.save_mod,               "save_mod");
     get(p.bestReps,               "bestReps");
+    get(p.early_stop_patience,    "early_stop_patience");
     get(p.ann_nInput,             "ann_nInput");
     get(p.ann_nOutput,            "ann_nOutput");
     get(p.ann_initAct,            "ann_initAct");

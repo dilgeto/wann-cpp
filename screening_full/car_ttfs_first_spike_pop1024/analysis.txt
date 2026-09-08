@@ -1,0 +1,30 @@
+==================================================================
+  Full-budget analysis — run: car_ttfs_first_spike_pop1024
+==================================================================
+
+Phase 2: 1/1 successful trials   peak range [461.0000, 461.0000]
+
+── Top 5 configs (Phase 2) ──
+ trial  peak_fitness  alg_probMoo  prob_addConn  prob_addNode  prob_enable  prob_mutAct  prob_toggleExcitatory  prob_initEnable  select_cullRatio  select_eliteRatio  select_tournSize
+    19      461.0000       0.3316        0.0547        0.2331       0.0107       0.6574                 0.1599           0.6145            0.3741             0.2213                13
+
+── Phase 3 Validation ──
+  Rank        Mean     ±Std       Min       Max  n_ok
+  0       477.1818 256.7021  237.0000  901.0000    11
+
+── Best validated config (rank 0) ──
+  mean=477.1818  std=256.7021  min=237.0000  max=901.0000
+  orig_mean                             477.1818
+  orig_std                              256.7021
+  alg_probMoo                           0.3316
+  prob_addConn                          0.0547
+  prob_addNode                          0.2331
+  prob_enable                           0.0107
+  prob_mutAct                           0.6574
+  prob_toggleExcitatory                 0.1599
+  prob_initEnable                       0.6145
+  select_cullRatio                      0.3741
+  select_eliteRatio                     0.2213
+  select_tournSize                      13.0000
+
+==================================================================

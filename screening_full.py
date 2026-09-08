@@ -47,7 +47,7 @@ import threading
 import time
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -75,6 +75,7 @@ from screening_reduce import (
     VALID_DECODERS,
     suggest_from_space,
     STATS_COLS,
+    _load_stats,
     _read_peak,
     _read_original,
     make_run_key,
@@ -88,6 +89,18 @@ from screening_reduce import (
 # Phase 3 additionally sets save_mod=10 to keep intermediate snapshots.
 
 PHASE3_SAVE_MOD = 10   # save every 10 gens during validation runs
+
+def _read_best_weight_peak(path: Path) -> float | None:
+    """fitPeak (last row): mean-over-nReps reward of the single best shared
+    weight of the running-best individual — unlike _read_peak's fitTop
+    (mean across all alg_nVals weights). Phase 3 uses this because the point
+    of validation is the model+weight pair that will actually be deployed,
+    not the topology's average robustness across the weight distribution."""
+    df = _load_stats(path)
+    if df is None or "fitPeak" not in df.columns:
+        return None
+    val = df["fitPeak"].iloc[-1]
+    return float(val) if pd.notna(val) else None
 
 # ── Load reduced space ────────────────────────────────────────────────────────
 
@@ -129,8 +142,11 @@ def _run_subprocess(
     cfg_path:    Path,
     timeout:     int | None = None,  # None = wait indefinitely
     return_original: bool = False,
+    peak_fn:     "Callable[[Path], float | None]" = _read_peak,
 ) -> "float | None | tuple[float | None, float | None]":
-    """Write config, launch C++ subprocess, return shaped fitness (and original if requested)."""
+    """Write config, launch C++ subprocess, return shaped fitness (and original if requested).
+    peak_fn selects which stats-file column counts as "peak" (default fitTop,
+    the mean-across-weights metric Optuna optimises in Phase 2)."""
     merged = {**params, **extra_cfg}
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(json.dumps(merged, indent=2))
@@ -164,8 +180,8 @@ def _run_subprocess(
 
     stats_file = Path("log") / (log_prefix + "_stats.out")
     if return_original:
-        return _read_peak(stats_file), _read_original(stats_file)
-    return _read_peak(stats_file)
+        return peak_fn(stats_file), _read_original(stats_file)
+    return peak_fn(stats_file)
 
 # ── Phase 2 ───────────────────────────────────────────────────────────────────
 
@@ -274,6 +290,16 @@ def run_phase3(
     """
     Re-run the top-K configs from Phase 2 with N different seeds.
     Parallelizes all (K × N) runs simultaneously.
+
+    peak_fitness (console "shaped(best_w)=", and the peak_fitness/mean/min/max
+    columns in p3_validation.csv / p3_summary.csv) is each model's fitPeak —
+    the mean-over-nReps reward of its single best shared weight — NOT Phase
+    2's fitTop (mean across all alg_nVals weights). This is training-time
+    telemetry (last generation, save_mod-interval snapshot), not a fresh
+    re-evaluation; for a rigorous per-weight sweep across many eval seeds use
+    eval_p3_weights.py, which re-evaluates every model here with the
+    _best.wi weight it recorded (and separately reports the mean across all
+    alg_nVals weights for comparison).
     """
     fixed_overrides = fixed_overrides or {}
     hp_cols = [c for c in p2_df.columns
@@ -313,17 +339,21 @@ def run_phase3(
 
         # Phase 3: save every PHASE3_SAVE_MOD gens for analysis
         # fixed_overrides applied last (encoder/decoder cannot be overridden)
+        # peak_fn=fitPeak (best single shared weight), not fitTop (mean
+        # across all alg_nVals weights, what Phase 2 optimises) — Phase 3's
+        # job is validating the model+weight pair that gets deployed.
         peak, original = _run_subprocess(
             params, {"save_mod": PHASE3_SAVE_MOD, **fixed_overrides},
             base_config, executable, omp,
             run_seed, log_prefix, cfg_path,
             timeout=timeout,
             return_original=True,
+            peak_fn=_read_best_weight_peak,
         )
 
         with lock:
             done[0] += 1
-            peak_str = f"shaped={peak:.4f}" if peak is not None else "FAIL"
+            peak_str = f"shaped(best_w)={peak:.4f}" if peak is not None else "FAIL"
             orig_str = f"  orig={original:.4f}" if original is not None else ""
             print(f"  [{done[0]:3d}/{total}]  rank={rank}  seed={si}  {peak_str}{orig_str}")
             results.append({

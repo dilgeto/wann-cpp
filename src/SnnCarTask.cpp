@@ -84,6 +84,32 @@ NeuronType SnnCarTask::wannActToNeuronType(int actId) {
         case 4:  return NeuronType::LOW_THRESHOLD_SPIKING;
         case 5:  return NeuronType::INTRINSICALLY_BURSTING;
         case 6:  return NeuronType::RESONATOR;
+
+        // Izhikevich (2004) Fig. 1 — 20 patrones de disparo (RESONATOR ya
+        // cubre el patrón "Resonator" con case 6). 15/17/20 son físicamente
+        // idénticos a 7/13/18 respectivamente (mismos a,b,c,d) — se
+        // mapean igual por completitud, pero ann_actRange los deja afuera
+        // para no gastar probabilidad de mutación en gemelos redundantes.
+        case 7:  return NeuronType::TONIC_SPIKING;
+        case 8:  return NeuronType::PHASIC_SPIKING;
+        case 9:  return NeuronType::TONIC_BURSTING;
+        case 10: return NeuronType::PHASIC_BURSTING;
+        case 11: return NeuronType::MIXED_MODE;
+        case 12: return NeuronType::SPIKE_FREQUENCY_ADAPTATION;
+        case 13: return NeuronType::CLASS1_EXCITABLE;
+        case 14: return NeuronType::CLASS2_EXCITABLE;
+        case 15: return NeuronType::SPIKE_LATENCY;              // == case 7
+        case 16: return NeuronType::SUBTHRESHOLD_OSCILLATIONS;
+        case 17: return NeuronType::INTEGRATOR;                 // == case 13
+        case 18: return NeuronType::REBOUND_SPIKE;
+        case 19: return NeuronType::REBOUND_BURST;
+        case 20: return NeuronType::THRESHOLD_VARIABILITY;      // == case 18
+        case 21: return NeuronType::BISTABILITY;
+        case 22: return NeuronType::DEPOLARIZING_AFTERPOTENTIAL;
+        case 23: return NeuronType::ACCOMMODATION;
+        case 24: return NeuronType::INHIBITION_INDUCED_SPIKING;
+        case 25: return NeuronType::INHIBITION_INDUCED_BURSTING;
+
         default: return NeuronType::REGULAR_SPIKING;
     }
 }

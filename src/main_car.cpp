@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -99,6 +100,12 @@ int main(int argc, char* argv[]) {
     using Clock = std::chrono::steady_clock;
     auto t_start = Clock::now();
 
+    // Early stopping: stop once early_stop_patience generations pass with no
+    // new fitTop record (running-best elite fitness). 0 = disabled.
+    double bestFitnessSoFar   = -std::numeric_limits<double>::infinity();
+    int    gensSinceImprove   = 0;
+    int    lastGen            = hyp.maxGen - 1;
+
     for (int gen = 0; gen < hyp.maxGen; ++gen) {
         auto& pop    = alg.ask();
         auto  reward = evalPop(pop, task, static_cast<int>(seed) + gen);
@@ -118,7 +125,25 @@ int main(int argc, char* argv[]) {
         data.gatherData(pop);
         std::cout << gen << "\t - \t" << data.display() << '\n';
 
-        if (gen % hyp.save_mod == 0) {
+        bool earlyStop = false;
+        if (hyp.early_stop_patience > 0) {
+            double eliteFitness = pop[eliteIdx].fitness;
+            if (eliteFitness > bestFitnessSoFar) {
+                bestFitnessSoFar = eliteFitness;
+                gensSinceImprove = 0;
+            } else {
+                ++gensSinceImprove;
+            }
+            if (gensSinceImprove >= hyp.early_stop_patience) {
+                earlyStop = true;
+                lastGen   = gen;
+                std::cout << "Early stopping: sin mejora de fitTop en "
+                          << hyp.early_stop_patience << " generaciones "
+                          << "(gen " << gen << "/" << hyp.maxGen - 1 << ")\n";
+            }
+        }
+
+        if (gen % hyp.save_mod == 0 || earlyStop) {
             data.save(gen);
             data.savePareto(pop, gen);
             if (dbgFile) {
@@ -129,7 +154,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Export elite trajectory periodically for replay visualization.
-        if ((gen % REPLAY_INTERVAL == 0 || gen == hyp.maxGen - 1)
+        if ((gen % REPLAY_INTERVAL == 0 || gen == hyp.maxGen - 1 || earlyStop)
                 && !pop[eliteIdx].wVec.empty()) {
 
             std::ostringstream fname;
@@ -146,16 +171,20 @@ int main(int argc, char* argv[]) {
                           << ": " << e.what() << '\n';
             }
         }
+
+        if (earlyStop) break;
     }
 
+    int    gensRun = lastGen + 1;
     double total_s = std::chrono::duration<double>(Clock::now() - t_start).count();
-    double per_gen = total_s / hyp.maxGen;
+    double per_gen = total_s / gensRun;
 
     std::ofstream tlog("log/" + outPrefix + "_time.log");
     tlog << std::fixed << std::setprecision(3)
          << "total_s   " << total_s           << '\n'
          << "per_gen_s " << per_gen            << '\n'
          << "maxGen    " << hyp.maxGen         << '\n'
+         << "gensRun   " << gensRun            << '\n'
          << "popSize   " << hyp.popSize        << '\n';
     std::cout << "Time: " << total_s << " s  ("
               << per_gen << " s/gen)\n";
