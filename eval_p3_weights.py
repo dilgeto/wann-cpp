@@ -436,8 +436,8 @@ def main() -> None:
                     help="OMP_NUM_THREADS por corrida (default: cpu_count // jobs)")
     ap.add_argument("--timeout", type=int, default=None,
                     help="Timeout por run_key en segundos (default: sin límite)")
-    ap.add_argument("--out-dir", default="eval_p3_weights", dest="out_dir",
-                    help="Directorio de salida (default: eval_p3_weights/)")
+    ap.add_argument("--out-dir", default="eval_results", dest="out_dir",
+                    help="Directorio de salida (default: eval_results/)")
     ap.add_argument("--reward", choices=["shaped", "original"], default=None,
                     help="Forzar shaped u original para todas las tareas corridas "
                          "(default por tarea: acrobot=original, mountain_car=original, car=shaped)")

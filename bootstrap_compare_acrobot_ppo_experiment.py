@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 bootstrap_compare_acrobot_ppo_experiment.py — EXPERIMENTO: igual que
-bootstrap_compare_acrobot.py, pero comparando contra PPO (../ppo-Acrobot-v1)
+bootstrap_compare_acrobot_auto.py, pero comparando contra PPO (../ppo-Acrobot-v1)
 en vez de DQN (../dqn-Acrobot-v1), para ver cuánto cambian los resultados.
 
-No modifica bootstrap_compare_acrobot.py ni ningún archivo de la tesis.
+No modifica bootstrap_compare_acrobot_auto.py ni ningún archivo de la tesis.
 
 Uso:
   python bootstrap_compare_acrobot_ppo_experiment.py
@@ -20,7 +20,7 @@ import pandas as pd
 
 from bootstrap_compare_lib import build_arg_parser, run_comparison
 
-# ── Modelo SNN ganador (idéntico a bootstrap_compare_acrobot.py) ────────────
+# ── Modelo SNN ganador (idéntico a bootstrap_compare_acrobot_auto.py) ────────────
 SNN_EXECUTABLE  = "./build/wann_eval_weights_acrobot"
 SNN_BASE_CONFIG = "p/acrobot_snn.json"
 SNN_RUN_KEY     = "acrobot_small_first_spike"

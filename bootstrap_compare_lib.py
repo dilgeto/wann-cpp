@@ -148,7 +148,10 @@ def make_plots(rewards_snn: np.ndarray, rewards_ann: np.ndarray,
     plt.close()
 
 
-def build_arg_parser(doc: str, default_out_dir: str) -> argparse.ArgumentParser:
+def build_arg_parser(doc: str, default_out_dir: str | None) -> argparse.ArgumentParser:
+    """default_out_dir=None (used by bootstrap_auto_lib.py's *_auto.py scripts,
+    which derive the actual default from --run-key after parsing) leaves
+    --out-dir defaulting to None instead of a fixed string."""
     ap = argparse.ArgumentParser(description=doc, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--n", type=int, default=100,
                     help="Episodios a evaluar por agente (default: 100)")
@@ -164,8 +167,9 @@ def build_arg_parser(doc: str, default_out_dir: str) -> argparse.ArgumentParser:
                     help="OMP_NUM_THREADS para el binario SNN (default: cpu_count)")
     ap.add_argument("--timeout", type=int, default=None,
                     help="Timeout en segundos por evaluación (default: sin límite)")
-    ap.add_argument("--out-dir", default=default_out_dir, dest="out_dir",
-                    help=f"Directorio de salida (default: {default_out_dir}/)")
+    out_dir_help = (f"Directorio de salida (default: {default_out_dir}/)" if default_out_dir
+                    else "Directorio de salida (default: bootstrap_results/<run_key>/)")
+    ap.add_argument("--out-dir", default=default_out_dir, dest="out_dir", help=out_dir_help)
     return ap
 
 
