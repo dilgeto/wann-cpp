@@ -184,7 +184,7 @@ def part3() -> None:
 
     rows = []
     for task, run_keys in ALL_RUN_KEYS.items():
-        best_csv = pd.read_csv(f"eval_p3_weights/{task}_best.csv")
+        best_csv = pd.read_csv(f"eval_results/{task}_best.csv")
         for run_key in run_keys:
             g = best_csv[best_csv["run_key"] == run_key]
             if g.empty:

@@ -18,12 +18,12 @@ Objetivo tipo "alcanzar al menos el X% de un benchmark" (--pct):
 
 Uso:
   # Comparacion directa contra el score exacto reportado
-  python bootstrap_compare.py \
+  python bootstrap_results/bootstrap_compare.py \
       --csv screening_full/mountain_car_ttfs_rate_argmax/p3_validation.csv \
       --rank 0 --ann -110 --gym -100
 
   # Objetivo: alcanzar al menos el 90% del score de stable-baselines3
-  python bootstrap_compare.py \
+  python bootstrap_results/bootstrap_compare.py \
       --csv screening_full/mountain_car_ttfs_rate_argmax/p3_validation.csv \
       --rank 0 --ann -110 --pct 0.9
 
@@ -32,15 +32,22 @@ Uso:
   # en vez de tratar el ANN como una constante, se simula su distribucion
   # muestral de la media ~ Normal(mean_reward, std_reward/sqrt(n_eval_episodes))
   # y se bootstrapea la diferencia (tu_agente - ANN).
-  python bootstrap_compare.py \
+  python bootstrap_results/bootstrap_compare.py \
       --csv screening_full/mountain_car_ttfs_rate_argmax/p3_validation.csv \
       --rank 0 --ann -110 --ann-std 25 --ann-n 10
 """
 
 import argparse
+import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+# Ancla CWD a la raíz del repo (un nivel arriba de bootstrap_results/) para
+# que un --csv relativo (ej. screening_full/.../p3_validation.csv) siga
+# resolviendo igual sin importar desde dónde se invoque este script.
+os.chdir(Path(__file__).resolve().parent.parent)
 
 
 def bootstrap_ci(samples, n_boot=10000, ci=0.95, rng=None):

@@ -6,14 +6,22 @@ re-evalúa episodios ni re-muestrea: sirve para iterar rápido sobre cambios
 de estilo/escala en make_plots().
 
 Uso:
-  python replot_bootstrap.py bootstrap_car \
+  python bootstrap_results/replot_bootstrap.py bootstrap_car \
       --suptitle "Racing Car — SNN vs ANN (PPO nativo), bootstrap no pareado" \
       --plot-stem car_snn_vs_ann --ann-label "ANN (PPO)"
 """
 import argparse
+import os
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+# Ancla CWD y sys.path a la raíz del repo (un nivel arriba de
+# bootstrap_results/) — ver el mismo bloque en bootstrap_compare_car_auto.py.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+os.chdir(_REPO_ROOT)
 
 from bootstrap_compare_lib import make_plots
 

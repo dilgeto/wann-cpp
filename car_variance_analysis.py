@@ -20,7 +20,7 @@ entrenar ni evaluar nada nuevo):
 
 Fuentes de datos (todas ya existentes, no requiere C++ ni GPU):
   - SNN (campeón car_ttfs_first_spike, 11 seeds x 121 episodios de
-    revalidación): eval_p3_weights/car_best_episodes.csv
+    revalidación): eval_results/car_best_episodes.csv
   - SNN ventana x2, mismos hiperparámetros que el campeón (rank02 de
     car_ttfs_first_spike_40ms, 11 seeds x 121 episodios de revalidación):
     eval_p3_weights_40ms_rank02/car_best_episodes.csv
@@ -85,7 +85,7 @@ def part1() -> None:
     print("=" * 70)
     print()
 
-    snn_ep = pd.read_csv("eval_p3_weights/car_best_episodes.csv")
+    snn_ep = pd.read_csv("eval_results/car_best_episodes.csv")
     snn_ep = snn_ep[snn_ep["run_key"] == "car_ttfs_first_spike"]
     snn_groups = [g["reward"].to_numpy() for _, g in snn_ep.groupby("train_seed_idx")]
     anova_between_within(snn_groups, "SNN (car_ttfs_first_spike, 11 seeds x 121 episodios)")

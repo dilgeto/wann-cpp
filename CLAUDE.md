@@ -55,7 +55,7 @@ Per task `<X>` in `{acrobot, car, mountain_car, disc_mc, l2f}` (plus a generic
 - `wann_<X>_eval` — evaluates N episodes with the best saved network.
 - `wann_eval_weights_<X>` (acrobot/car/disc_mc only) — loads a saved network and sweeps
   its `alg_nVals` shared-weight values across a list of seeds, printing per-seed CSV
-  to stdout; see `eval_p3_weights.py` for the orchestrating script. `--reward
+  to stdout; see `eval_results/eval_p3_weights.py` for the orchestrating script. `--reward
   shaped|original` and `--episode-detail --weight-index N` control output.
   The task is fixed at compile time (`EVAL_TASK_ACROBOT`/`_CAR`/`_DISC_MC`) because
   linking two `SnnXxxTask.cpp` translation units together causes multiple-definition
@@ -73,7 +73,7 @@ second, separate rl-tools *continuous* MountainCar task (code identifier
 `mountain_car`; binary `wann_mountain_car`, config `p/mountain_car_snn.json`) that
 also exists in this repo — always refer to it explicitly as "continuous Mountain Car"
 to avoid ambiguity, never as plain "Mountain Car". This matches the convention
-`eval_p3_weights.py` already uses for its `--task mountain_car` flag (which maps to
+`eval_results/eval_p3_weights.py` already uses for its `--task mountain_car` flag (which maps to
 the `disc_mc` binary/config internally — see the comment above its `TASKS` dict).
 
 ### Screening / evaluation pipeline (Python, orchestrates the C++ binaries)
@@ -86,9 +86,9 @@ python screening_reduce.py --task car --encoder ttfs --decoder first_spike \
     --rounds 4 --n 30 --jobs 8 --omp 64        # Phase 1: narrow hyperparam space
 python screening_full.py --task car --encoder ttfs --decoder first_spike \
     --mode both --n 20 --top 3 --seeds 11 --jobs 3 --omp 190   # Phase 2+3: full runs
-python eval_p3_weights.py --task car --seeds 11         # sweep shared weights over seeds
+python eval_results/eval_p3_weights.py --task car --seeds 11   # sweep shared weights over seeds
 bash generate_graphs.sh car                              # training curves, Pareto front, topology plots
-python bootstrap_compare_car_auto.py --run-key car_ttfs_first_spike     # bootstrap CI vs ANN/PPO baseline
+python bootstrap_results/bootstrap_compare_car_auto.py --run-key car_ttfs_first_spike  # bootstrap CI vs ANN/PPO
 ```
 
 `JOBS_*`/`OMP_*` env vars in `run_all.sh` control parallel process count vs. OpenMP
@@ -96,8 +96,8 @@ threads per process — tune jointly against available cores, they multiply.
 
 Results land in per-combination directories: `screening_reduce/<run_key>/`,
 `screening_full/<run_key>/` (includes `p3_configs/rank<NN>_seed<NN>.json`),
-`eval_p3_weights[_*]/<task>_best.csv`, `log/full_p3_<run_key>/rank<NN>_seed<NN>_*`,
-`bootstrap_<task>*/`, `graficos/<Tarea>/`.
+`eval_results/<task>_best.csv`, `log/full_p3_<run_key>/rank<NN>_seed<NN>_*`,
+`bootstrap_results/<run_key>/`, `graficos/<Tarea>/`.
 
 ## Architecture
 
@@ -154,17 +154,27 @@ and Pareto snapshots consumed by `graph.py`/`graph_network.py`. Mirrors a Python
 - `log/` — training run outputs (`*_best.gen/.wi`, replay CSVs, per-run subdirs
   `full_p2_*`, `full_p3_*`, `reduce_*` matching screening `run_key`s).
 - `screening_reduce/`, `screening_full/` — phase 1 / phase 2+3 screening outputs.
-- `eval_results/<run_key>/` — shared-weight sweep results (`<task>_best.csv`,
-  `<task>_best_episodes.csv`), default output of `eval_p3_weights.py` and of the
-  revalidation step in `bootstrap_compare_{car,acrobot,mountain_car}_auto.py`
-  (override with `--out-dir`/`--eval-out-dir`). Older ad-hoc `eval_p3_weights_*/`
-  dirs at repo root predate this convention.
-- `bootstrap_results/<run_key>/` — bootstrap CI comparison outputs (SNN vs
-  ANN/PPO/DQN baselines) from the `*_auto.py` scripts (override with `--out-dir`).
-  Older non-`_auto` scripts (`bootstrap_compare_car_no_inhibitory.py`,
-  `bootstrap_compare_car_simulation.py`, `bootstrap_compare_acrobot_ppo_experiment.py`)
-  still default to `bootstrap_<name>/` at repo root — these are one-off ad-hoc
-  comparisons, not the run_key+rank+seed_idx pattern the `_auto.py` scripts cover.
+- `eval_results/` — holds both `eval_p3_weights.py` (the shared-weight sweep
+  script — anchors its CWD to the repo root at startup, same as the
+  `bootstrap_results/*.py` scripts, so it behaves identically run from the repo
+  root, from inside `eval_results/`, or by absolute path) and its output:
+  `<task>_best.csv`/`<task>_best_episodes.csv` at the top level when run without
+  `--run-key` (sweeps every run_key of a task into one file), or nested under
+  `eval_results/<run_key>/` when the revalidation step of a
+  `bootstrap_results/bootstrap_compare_{car,acrobot,mountain_car}_auto.py`
+  script calls it for one specific run_key (override with `--out-dir`/
+  `--eval-out-dir`). Older ad-hoc `eval_p3_weights_*/` dirs at repo root
+  predate this convention.
+- `bootstrap_results/` — holds both the bootstrap comparison scripts
+  (`bootstrap_compare_lib.py`, `bootstrap_auto_lib.py`, the `*_auto.py` scripts
+  for car/acrobot/mountain_car, `bootstrap_compare_acrobot_ppo_experiment.py`,
+  `bootstrap_compare.py`, `bootstrap_two_sample.py`, `replot_bootstrap.py`) and
+  their output (`bootstrap_results/<run_key>/`, one subdir per comparison —
+  `rewards.csv`, `bootstrap_samples.csv`, `summary_stats.csv`, `ci_results.csv`,
+  a `.png`). Every script there anchors its CWD and `sys.path` to the repo root
+  at startup (see the `_REPO_ROOT = Path(__file__).resolve().parent.parent`
+  block near the top of each), so they behave identically whether invoked from
+  the repo root, from inside `bootstrap_results/`, or by absolute path.
 - `graficos/`, `plots/` — generated figures, organized by task.
 - `lib/` — vendored front-end JS assets (`vis-9.1.2`, `tom-select`) unrelated to the
   C++/Python pipeline — not part of the WANN codebase proper.

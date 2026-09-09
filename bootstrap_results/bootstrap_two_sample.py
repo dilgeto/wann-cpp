@@ -13,18 +13,25 @@ Muestras independientes (no pareadas): se remuestrea cada CSV por su cuenta,
 con su propio tamano, sin importar si tienen distinto numero de episodios.
 
 Modo 1 - diferencia de medias (SNN - ANN):
-  python bootstrap_two_sample.py --a car_snn.csv --b car_ann.csv
+  python bootstrap_results/bootstrap_two_sample.py --a car_snn.csv --b car_ann.csv
 
 Modo 2 - objetivo "SNN >= pct%% de ANN" (ej. 90%%), propagando incertidumbre
 de ambos lados (target se recalcula en cada remuestreo a partir de ANN,
 no de un numero fijo):
-  python bootstrap_two_sample.py --a car_snn.csv --b car_ann.csv --pct 0.9
+  python bootstrap_results/bootstrap_two_sample.py --a car_snn.csv --b car_ann.csv --pct 0.9
 """
 
 import argparse
+import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+# Ancla CWD a la raíz del repo (un nivel arriba de bootstrap_results/) para
+# que rutas relativas de --a/--b sigan resolviendo igual sin importar desde
+# dónde se invoque este script.
+os.chdir(Path(__file__).resolve().parent.parent)
 
 
 def load_rewards(path, col):

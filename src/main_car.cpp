@@ -105,6 +105,7 @@ int main(int argc, char* argv[]) {
     double bestFitnessSoFar   = -std::numeric_limits<double>::infinity();
     int    gensSinceImprove   = 0;
     int    lastGen            = hyp.maxGen - 1;
+    bool   stoppedEarly       = false;
 
     for (int gen = 0; gen < hyp.maxGen; ++gen) {
         auto& pop    = alg.ask();
@@ -135,8 +136,9 @@ int main(int argc, char* argv[]) {
                 ++gensSinceImprove;
             }
             if (gensSinceImprove >= hyp.early_stop_patience) {
-                earlyStop = true;
-                lastGen   = gen;
+                earlyStop    = true;
+                stoppedEarly = true;
+                lastGen      = gen;
                 std::cout << "Early stopping: sin mejora de fitTop en "
                           << hyp.early_stop_patience << " generaciones "
                           << "(gen " << gen << "/" << hyp.maxGen - 1 << ")\n";
@@ -181,13 +183,19 @@ int main(int argc, char* argv[]) {
 
     std::ofstream tlog("log/" + outPrefix + "_time.log");
     tlog << std::fixed << std::setprecision(3)
-         << "total_s   " << total_s           << '\n'
-         << "per_gen_s " << per_gen            << '\n'
-         << "maxGen    " << hyp.maxGen         << '\n'
-         << "gensRun   " << gensRun            << '\n'
-         << "popSize   " << hyp.popSize        << '\n';
+         << "total_s           " << total_s                                 << '\n'
+         << "per_gen_s         " << per_gen                                 << '\n'
+         << "maxGen            " << hyp.maxGen                              << '\n'
+         << "gensRun           " << gensRun                                 << '\n'
+         << "popSize           " << hyp.popSize                             << '\n'
+         << "early_stopped     " << (stoppedEarly ? "true" : "false")       << '\n'
+         << "early_stop_gen    " << (stoppedEarly ? lastGen : -1)           << '\n'
+         << "early_stop_patience " << hyp.early_stop_patience               << '\n';
     std::cout << "Time: " << total_s << " s  ("
               << per_gen << " s/gen)\n";
+    if (stoppedEarly)
+        std::cout << "Early stopping activo: se detuvo en la generación "
+                  << lastGen << " de " << hyp.maxGen - 1 << " máximas.\n";
 
     data.save();
     std::cout << "Done. Results written to log/" << outPrefix << "_*\n";

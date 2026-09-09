@@ -7,7 +7,7 @@ en vez de DQN (../dqn-Acrobot-v1), para ver cuánto cambian los resultados.
 No modifica bootstrap_compare_acrobot_auto.py ni ningún archivo de la tesis.
 
 Uso:
-  python bootstrap_compare_acrobot_ppo_experiment.py
+  python bootstrap_results/bootstrap_compare_acrobot_ppo_experiment.py
 """
 import io
 import os
@@ -17,6 +17,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+# Ancla CWD y sys.path a la raíz del repo (un nivel arriba de
+# bootstrap_results/) — ver el mismo bloque en bootstrap_compare_car_auto.py.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+os.chdir(_REPO_ROOT)
 
 from bootstrap_compare_lib import build_arg_parser, run_comparison
 
@@ -33,7 +39,7 @@ SNN_WEIGHT_VALUE = 2.5
 SNN_REWARD_TYPE  = "original"
 
 # ── Modelo ANN (PPO + VecNormalize, Stable-Baselines3) ───────────────────────
-PPO_VENV_PY       = "/home/dilget/Tesis/ppo-MountainCar-v0/.venv/bin/python3"
+PPO_VENV_PY       = "../ppo-MountainCar-v0/.venv/bin/python3"
 PPO_MODEL_ZIP     = "../ppo-Acrobot-v1/ppo-Acrobot-v1.zip"
 PPO_VECNORM_PATH  = "../ppo-Acrobot-v1/vec_normalize.pkl"
 GYM_ENV_ID        = "Acrobot-v1"
@@ -113,7 +119,7 @@ def eval_ann(n: int, seed0: int, timeout: int | None) -> np.ndarray:
 
 
 def main() -> None:
-    ap = build_arg_parser(__doc__, "bootstrap_acrobot_ppo_experiment")
+    ap = build_arg_parser(__doc__, "bootstrap_results/bootstrap_acrobot_ppo_experiment")
     args = ap.parse_args()
     omp = args.omp or (os.cpu_count() or 4)
 

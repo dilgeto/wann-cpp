@@ -13,14 +13,23 @@ reward "original" (sin potential-based shaping) para esta comparación —
 ver TASKS["acrobot"] en eval_p3_weights.py.
 
 Uso:
-  python bootstrap_compare_acrobot_auto.py --run-key acrobot_small_first_spike
-  python bootstrap_compare_acrobot_auto.py --run-key acrobot_ttfs_rate_argmax \\
+  python bootstrap_results/bootstrap_compare_acrobot_auto.py --run-key acrobot_small_first_spike
+  python bootstrap_results/bootstrap_compare_acrobot_auto.py --run-key acrobot_ttfs_rate_argmax \\
       --seeds 21 --nreps 21 --n 200 --resamples 20000
 """
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
+
+# Ancla CWD y sys.path a la raíz del repo (un nivel arriba de
+# bootstrap_results/) — ver el mismo bloque en bootstrap_compare_car_auto.py.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT / "eval_results"))  # eval_p3_weights.py vive ahí
+os.chdir(_REPO_ROOT)
 
 from bootstrap_auto_lib import build_auto_arg_parser, run_auto_comparison
 

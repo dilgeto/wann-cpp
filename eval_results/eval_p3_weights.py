@@ -44,10 +44,10 @@ Tareas (--task): acrobot | mountain_car | car
   tarea "disc_mc" del código — ver comentario junto a TASKS más abajo).
 
 Uso:
-  python eval_p3_weights.py                       # las 3 tareas, todos los run_keys encontrados
-  python eval_p3_weights.py --task acrobot         # solo acrobot
-  python eval_p3_weights.py --task mountain_car    # solo Mountain Car discreto
-  python eval_p3_weights.py --seeds 11 --nreps 11
+  python eval_results/eval_p3_weights.py                       # las 3 tareas, todos los run_keys encontrados
+  python eval_results/eval_p3_weights.py --task acrobot         # solo acrobot
+  python eval_results/eval_p3_weights.py --task mountain_car    # solo Mountain Car discreto
+  python eval_results/eval_p3_weights.py --seeds 11 --nreps 11
 """
 import argparse
 import concurrent.futures
@@ -60,6 +60,13 @@ import threading
 from pathlib import Path
 
 import pandas as pd
+
+# Ancla CWD a la raíz del repo (un nivel arriba de eval_results/) para que
+# las rutas relativas del proyecto (build/, p/*.json, screening_full/, log/)
+# y el --out-dir default ("eval_results") sigan resolviendo igual sin
+# importar desde dónde se invoque este script — mismo patrón que
+# bootstrap_results/bootstrap_compare_car_auto.py y compañía.
+os.chdir(Path(__file__).resolve().parent.parent)
 
 # Claves públicas del script (lo que el usuario pide con --task). "mountain_car"
 # es la tarea que en el código sigue llamándose "disc_mc" (Mountain Car

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # generate_graphs.sh — genera las imágenes de graph.py (curvas de
 # entrenamiento, frente de Pareto, topología de la mejor red, población
-# final) para cada modelo listado en eval_p3_weights/{task}_best.csv (uno
+# final) para cada modelo listado en eval_results/{task}_best.csv (uno
 # por combinación encoder/decoder), y las organiza en graficos/<Tarea>/.
 #
 # nInput/nOutput/encoder/decoder de cada modelo se leen de
@@ -38,7 +38,7 @@
 set -euo pipefail
 
 VENV_PY="${VENV_PY:-/home/dilget/Tesis/cluster_results/venv/bin/python3}"
-BEST_DIR="eval_p3_weights"
+BEST_DIR="eval_results"
 OUT_ROOT="graficos"
 
 # task_key:display_name:base_config
