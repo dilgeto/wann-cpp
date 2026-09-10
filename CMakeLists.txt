@@ -275,6 +275,50 @@ target_link_libraries(wann_car_eval PRIVATE
     rl_tools_iface)
 
 # ---------------------------------------------------------------------------
+# Executable: wann_car_odin_export – convierte una red car ya entrenada
+# (.out/.wi) a una configuración para el core neuromórfico ODIN (mapeo de
+# neuronas a direcciones físicas, parámetros Izhikevich, sinapsis de 3 bits).
+# Solo necesita el enum NeuronType (header-only) de snn-simulator, no el
+# motor de simulación ni rl-tools — corre en la máquina de desarrollo, sin
+# el ZCU104.
+# ---------------------------------------------------------------------------
+add_executable(wann_car_odin_export
+    src/main_odin_export.cpp
+    src/OdinExport.cpp)
+
+target_include_directories(wann_car_odin_export PRIVATE include ${SNN_DIR}/include)
+target_link_libraries(wann_car_odin_export PRIVATE wann_lib)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_car_odin_eval – corre episodios de car sobre el core ODIN
+# real (ZCU104/PYNQ). Linux/ARM-only (usa /dev/mem vía mmap) y solo tiene
+# sentido compilarlo en el propio board, así que va detrás de una opción
+# apagada por defecto para no afectar el build normal de x86.
+# See include/wann/hw/OdinRegisters.h — hasta que tenga el mapa de registros
+# real, este binario compila pero falla en tiempo de ejecución con un error
+# explícito.
+# ---------------------------------------------------------------------------
+option(WANN_ODIN_HW "Build the ODIN hardware backend (car_odin_eval, ARM/Linux only)" OFF)
+
+if(WANN_ODIN_HW)
+  add_executable(wann_car_odin_eval
+      src/main_car_odin_eval.cpp
+      src/SnnCarOdinTask.cpp
+      src/OdinExport.cpp
+      src/hw/OdinDriver.cpp
+      src/hw/OdinNetwork.cpp)
+
+  target_include_directories(wann_car_odin_eval PRIVATE include)
+
+  target_link_libraries(wann_car_odin_eval PRIVATE
+      wann_lib
+      snn_engine_imp
+      snn_encoding_imp
+      snn_core_imp
+      rl_tools_iface)
+endif()
+
+# ---------------------------------------------------------------------------
 # Executable: wann_disc_mc_eval – evalúa N episodios con la mejor red MountainCar discreto
 # ---------------------------------------------------------------------------
 add_executable(wann_disc_mc_eval
