@@ -47,40 +47,64 @@ NeuronType actIdToNeuronType(int actId) {
     }
 }
 
-// Izhikevich (2004) parameters — mirrors the switch in
-// snn-simulator/src/core/neuron.cpp (IzhikevichNeuron's NeuronType
-// constructor). Duplicated here because those fields are private on
-// IzhikevichNeuron with no accessor; keep in sync if that table changes.
-struct AbcdName { double a, b, c, d; const char* name; };
-
-AbcdName neuronParams(NeuronType nt) {
+const char* neuronTypeName(NeuronType nt) {
     switch (nt) {
-        case NeuronType::REGULAR_SPIKING:             return {0.02, 0.2,  -65.0, 8.0,   "REGULAR_SPIKING"};
-        case NeuronType::FAST_SPIKING:                return {0.1,  0.2,  -65.0, 2.0,   "FAST_SPIKING"};
-        case NeuronType::INTRINSICALLY_BURSTING:      return {0.02, 0.2,  -55.0, 4.0,   "INTRINSICALLY_BURSTING"};
-        case NeuronType::CHATTERING:                  return {0.02, 0.2,  -50.0, 2.0,   "CHATTERING"};
-        case NeuronType::LOW_THRESHOLD_SPIKING:       return {0.02, 0.25, -65.0, 2.0,   "LOW_THRESHOLD_SPIKING"};
-        case NeuronType::RESONATOR:                   return {0.1,  0.26, -65.0, 2.0,   "RESONATOR"};
-        case NeuronType::TONIC_SPIKING:               return {0.02, 0.2,  -65.0, 6.0,   "TONIC_SPIKING"};
-        case NeuronType::PHASIC_SPIKING:              return {0.02, 0.25, -65.0, 6.0,   "PHASIC_SPIKING"};
-        case NeuronType::TONIC_BURSTING:              return {0.02, 0.2,  -50.0, 2.0,   "TONIC_BURSTING"};
-        case NeuronType::PHASIC_BURSTING:             return {0.02, 0.25, -55.0, 0.05,  "PHASIC_BURSTING"};
-        case NeuronType::MIXED_MODE:                  return {0.02, 0.2,  -55.0, 4.0,   "MIXED_MODE"};
-        case NeuronType::SPIKE_FREQUENCY_ADAPTATION:  return {0.01, 0.2,  -65.0, 8.0,   "SPIKE_FREQUENCY_ADAPTATION"};
-        case NeuronType::CLASS1_EXCITABLE:            return {0.02, -0.1, -55.0, 6.0,   "CLASS1_EXCITABLE"};
-        case NeuronType::CLASS2_EXCITABLE:            return {0.2,  0.26, -65.0, 0.0,   "CLASS2_EXCITABLE"};
-        case NeuronType::SPIKE_LATENCY:               return {0.02, 0.2,  -65.0, 6.0,   "SPIKE_LATENCY"};
-        case NeuronType::SUBTHRESHOLD_OSCILLATIONS:   return {0.05, 0.26, -60.0, 0.0,   "SUBTHRESHOLD_OSCILLATIONS"};
-        case NeuronType::INTEGRATOR:                  return {0.02, -0.1, -55.0, 6.0,   "INTEGRATOR"};
-        case NeuronType::REBOUND_SPIKE:                return {0.03, 0.25, -60.0, 4.0,   "REBOUND_SPIKE"};
-        case NeuronType::REBOUND_BURST:                return {0.03, 0.25, -52.0, 0.0,   "REBOUND_BURST"};
-        case NeuronType::THRESHOLD_VARIABILITY:        return {0.03, 0.25, -60.0, 4.0,   "THRESHOLD_VARIABILITY"};
-        case NeuronType::BISTABILITY:                  return {1.0,  1.5,  -60.0, 0.0,   "BISTABILITY"};
-        case NeuronType::DEPOLARIZING_AFTERPOTENTIAL:  return {1.0,  0.2,  -60.0, -21.0, "DEPOLARIZING_AFTERPOTENTIAL"};
-        case NeuronType::ACCOMMODATION:                return {0.02, 1.0,  -55.0, 4.0,   "ACCOMMODATION"};
-        case NeuronType::INHIBITION_INDUCED_SPIKING:   return {-0.02, -1.0, -60.0, 8.0,  "INHIBITION_INDUCED_SPIKING"};
-        case NeuronType::INHIBITION_INDUCED_BURSTING:  return {-0.026, -1.0, -45.0, -2.0,"INHIBITION_INDUCED_BURSTING"};
-        default:                                       return {0.02, 0.2,  -65.0, 8.0,   "REGULAR_SPIKING"};
+        case NeuronType::REGULAR_SPIKING:        return "REGULAR_SPIKING";
+        case NeuronType::FAST_SPIKING:           return "FAST_SPIKING";
+        case NeuronType::CHATTERING:              return "CHATTERING";
+        case NeuronType::LOW_THRESHOLD_SPIKING:  return "LOW_THRESHOLD_SPIKING";
+        case NeuronType::INTRINSICALLY_BURSTING: return "INTRINSICALLY_BURSTING";
+        case NeuronType::RESONATOR:              return "RESONATOR";
+        default:                                 return "UNKNOWN";
+    }
+}
+
+// ODIN IZH hardware parameters for the 6 classic cortical/thalamic
+// behaviours (Izhikevich 2004, Fig. 2) — the only ones car_snn.json's base
+// ann_actRange=[1..6] evolves with. Deliberately doesn't cover the other 19
+// Izhikevich behaviours: see IzhParams's doc comment in OdinExport.h for why
+// (no published ODIN behaviour table, and this deployment's genomes only
+// ever use these 6). Throws for anything else rather than guessing.
+IzhParams izhParamsFor(NeuronType nt) {
+    IzhParams p;
+    switch (nt) {
+        case NeuronType::REGULAR_SPIKING:
+            // Plain leaky integrator, tonic regular firing, no special enables.
+            p.thr = 4; p.rfr = 2; p.leakStr = 10; p.leakEn = 1;
+            return p;
+        case NeuronType::FAST_SPIKING:
+            // Low threshold, no refractory period -> fast sustained firing.
+            p.thr = 2; p.rfr = 0; p.leakStr = 6; p.leakEn = 1;
+            return p;
+        case NeuronType::CHATTERING:
+            // Short, high-frequency bursts: high spk_ref, minimal isi_ref.
+            p.thr = 4; p.rfr = 2; p.leakStr = 10; p.leakEn = 1;
+            p.spkRef = 5; p.isiRef = 1;
+            return p;
+        case NeuronType::LOW_THRESHOLD_SPIKING:
+            // Low threshold + rebound (LTS neurons classically rebound after
+            // inhibitory release) -> needs neg_en for the hyperpolarized state.
+            p.thr = 2; p.rfr = 1; p.leakStr = 8; p.leakEn = 1;
+            p.reboundEn = true; p.negEn = true;
+            return p;
+        case NeuronType::INTRINSICALLY_BURSTING:
+            // Slower/longer bursts than chattering.
+            p.thr = 4; p.rfr = 2; p.leakStr = 10; p.leakEn = 1;
+            p.spkRef = 3; p.isiRef = 3;
+            return p;
+        case NeuronType::RESONATOR:
+            // Direct match: ODIN's dedicated resonant-behaviour circuit.
+            p.thr = 4; p.rfr = 2; p.leakStr = 10; p.leakEn = 1;
+            p.resonEn = true;
+            return p;
+        default:
+            throw std::runtime_error(
+                std::string("izhParamsFor: NeuronType ") + neuronTypeName(nt) +
+                " is outside the 6 behaviours this deployment supports "
+                "(REGULAR_SPIKING..RESONATOR) — either car_snn.json's "
+                "ann_actRange grew beyond [1..6], or this genome wasn't "
+                "evolved with the base config. Add a table entry (see "
+                "IzhParams's doc comment) before deploying it.");
     }
 }
 
@@ -181,11 +205,13 @@ OdinNetworkConfig buildOdinConfig(const std::vector<double>& wVec,
         std::string role = (i <= nInput) ? "input"
                           : (i >= N0 - nOutput) ? "output"
                           : "hidden";
-        auto p = neuronParams(actIdToNeuronType(aVec[i]));
-        cfg.neurons[i] = {i, role, p.name, p.a, p.b, p.c, p.d, twinOf[i]};
+        NeuronType nt = actIdToNeuronType(aVec[i]);
+        IzhParams  izh = izhParamsFor(nt);
+        const char* name = neuronTypeName(nt);
+        cfg.neurons[i] = {i, role, name, izh, twinOf[i]};
         if (twinOf[i] >= 0) {
             std::string twinRole = role + "_twin";
-            cfg.neurons[twinOf[i]] = {twinOf[i], twinRole, p.name, p.a, p.b, p.c, p.d, i};
+            cfg.neurons[twinOf[i]] = {twinOf[i], twinRole, name, izh, i};
         }
     }
 
@@ -213,10 +239,24 @@ void writeOdinConfig(const std::string& path, const OdinNetworkConfig& cfg) {
     auto& neurons = j["neurons"];
     neurons = nlohmann::json::array();
     for (const auto& n : cfg.neurons) {
+        const auto& p = n.izh;
         neurons.push_back({
             {"addr", n.addr}, {"role", n.role}, {"neuron_type", n.neuronType},
-            {"a", n.a}, {"b", n.b}, {"c", n.c}, {"d", n.d},
             {"twin_addr", n.twinAddr},
+            {"izh", {
+                {"leak_str", p.leakStr}, {"leak_en", p.leakEn}, {"fi_sel", p.fiSel},
+                {"thr", p.thr}, {"rfr", p.rfr},
+                {"spk_ref", p.spkRef}, {"isi_ref", p.isiRef},
+                {"dapdel", p.dapdel}, {"stim_thr", p.stimThr}, {"thrleak", p.thrleak},
+                {"reson_sharp_amt", p.resonSharpAmt},
+                {"spklat_en", p.spklatEn}, {"dap_en", p.dapEn},
+                {"phasic_en", p.phasicEn}, {"mixed_en", p.mixedEn},
+                {"class2_en", p.class2En}, {"neg_en", p.negEn},
+                {"rebound_en", p.reboundEn}, {"inhin_en", p.inhinEn},
+                {"bist_en", p.bistEn}, {"reson_en", p.resonEn},
+                {"thrvar_en", p.thrvarEn}, {"thr_sel_of", p.thrSelOf},
+                {"acc_en", p.accEn}, {"reson_sharp_en", p.resonSharpEn},
+            }},
         });
     }
 
@@ -248,11 +288,25 @@ OdinNetworkConfig readOdinConfig(const std::string& path) {
     cfg.nNeurons     = j.at("n_neurons").get<int>();
 
     for (const auto& n : j.at("neurons")) {
+        IzhParams p;
+        const auto& ij = n.at("izh");
+        p.leakStr = ij.at("leak_str"); p.leakEn = ij.at("leak_en"); p.fiSel = ij.at("fi_sel");
+        p.thr = ij.at("thr"); p.rfr = ij.at("rfr");
+        p.spkRef = ij.at("spk_ref"); p.isiRef = ij.at("isi_ref");
+        p.dapdel = ij.at("dapdel"); p.stimThr = ij.at("stim_thr"); p.thrleak = ij.at("thrleak");
+        p.resonSharpAmt = ij.at("reson_sharp_amt");
+        p.spklatEn = ij.at("spklat_en"); p.dapEn = ij.at("dap_en");
+        p.phasicEn = ij.at("phasic_en"); p.mixedEn = ij.at("mixed_en");
+        p.class2En = ij.at("class2_en"); p.negEn = ij.at("neg_en");
+        p.reboundEn = ij.at("rebound_en"); p.inhinEn = ij.at("inhin_en");
+        p.bistEn = ij.at("bist_en"); p.resonEn = ij.at("reson_en");
+        p.thrvarEn = ij.at("thrvar_en"); p.thrSelOf = ij.at("thr_sel_of");
+        p.accEn = ij.at("acc_en"); p.resonSharpEn = ij.at("reson_sharp_en");
+
         cfg.neurons.push_back({
             n.at("addr").get<int>(), n.at("role").get<std::string>(),
             n.at("neuron_type").get<std::string>(),
-            n.at("a").get<double>(), n.at("b").get<double>(),
-            n.at("c").get<double>(), n.at("d").get<double>(),
+            p,
             n.value("twin_addr", -1),
         });
     }

@@ -26,16 +26,15 @@ namespace wann::hw {
 // used below for both AXI GPIO and AXI Quad SPI).
 inline constexpr std::size_t ODIN_IP_WINDOW = 0x1000;
 
-// TODO: fill in from ov.ip_dict on the board (see comment above).
-inline constexpr std::uintptr_t ODIN_AER_IN_BASE_ADDR      = 0x0;  // axi_gpio_0
-inline constexpr std::uintptr_t ODIN_AER_IN_ACK_BASE_ADDR  = 0x0;  // axi_gpio_1
-inline constexpr std::uintptr_t ODIN_AER_OUT_BASE_ADDR     = 0x0;  // axi_gpio_2
-inline constexpr std::uintptr_t ODIN_AER_OUT_ACK_BASE_ADDR = 0x0;  // axi_gpio_3
-inline constexpr std::uintptr_t ODIN_SPI_BASE_ADDR         = 0x0;  // axi_quad_spi_0
+// Confirmed via odin_bootstrap.py on the board (2026-09-10), overlay
+// jupyter_notebooks/neat_comun_ranc_odin/odin.bit:
+inline constexpr std::uintptr_t ODIN_AER_IN_BASE_ADDR      = 0xa0000000;  // axi_gpio_0
+inline constexpr std::uintptr_t ODIN_AER_IN_ACK_BASE_ADDR  = 0xa0010000;  // axi_gpio_1
+inline constexpr std::uintptr_t ODIN_AER_OUT_BASE_ADDR     = 0xa0020000;  // axi_gpio_2
+inline constexpr std::uintptr_t ODIN_AER_OUT_ACK_BASE_ADDR = 0xa0030000;  // axi_gpio_3
+inline constexpr std::uintptr_t ODIN_SPI_BASE_ADDR         = 0xa0040000;  // axi_quad_spi_0
 
-// Set to true once every *_BASE_ADDR above has been replaced with the real
-// physical address from ov.ip_dict.
-inline constexpr bool ODIN_REGISTERS_CONFIGURED = false;
+inline constexpr bool ODIN_REGISTERS_CONFIGURED = true;
 
 // ------------------------------------------------------------------
 // AXI GPIO (Xilinx LogiCORE PG144) register offsets — standard, fixed.

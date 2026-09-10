@@ -57,14 +57,18 @@ public:
     void stop();   // GATE_ACTIVITY = 1 (safe to program)
     void start();  // GATE_ACTIVITY = 0 (chip runs)
 
-    // Programs one neuron as LIF. See OdinExport.h — ODIN's Izhikevich mode
-    // (LSB=0 in the 128-bit word) exists in the RTL but this driver doesn't
-    // implement it yet: the per-behaviour parameter table was never
-    // published by the ODIN project and needs empirical validation, unlike
-    // this LIF path which mirrors the user's already-working odin.py.
+    // Programs one neuron as LIF — used internally by init()/resetAllNeurons()
+    // to put every neuron in a safe disabled state (thr=255) before loading a
+    // real config. Mirrors odin.py's neuron_lif().
     void neuronLif(int neuronId, int thr = 14, int leakStr = 10, int leakEn = 1,
                    int caEn = 0, int thetamem = 0, int caTheta1 = 0,
                    int caTheta2 = 0, int caTheta3 = 0, int caLeak = 0);
+
+    // Programs one neuron as a phenomenological Izhikevich (IZH) model — bit
+    // layout confirmed against neuron_core.v (LSB=0 selects IZH mode). See
+    // wann::IzhParams (OdinExport.h) for the caveats on the parameter values
+    // themselves (best-effort mapping, not an ODIN-published table).
+    void neuronIzh(int neuronId, const wann::IzhParams& p);
 
     // weight in [0,7]; mapped=0 clears the synapse (matches odin.py).
     void synapse(int pre, int post, int weight, int mapped = 1);
@@ -105,6 +109,8 @@ private:
     QuadSpiMaster spi_;
 
     std::array<std::uint32_t, 16> synSignCache_{};
+
+    void sendNeuronWord(int neuronId, const std::array<int, 128>& bits);
 
     static std::uint32_t addrGlobal(int index);
     static std::uint32_t addrNeuronByte(int neuronId, int byteOffset);

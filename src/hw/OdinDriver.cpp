@@ -224,6 +224,14 @@ void OdinDriver::resetAllSynapses() {
 // Neurons (LIF) — bit layout confirmed against ODIN's official doc
 // (section 3.3.2) and odin.py's neuron_lif().
 // ------------------------------------------------------------------
+void OdinDriver::sendNeuronWord(int neuronId, const std::array<int, 128>& bits) {
+    for (int byteIdx = 0; byteIdx < 16; ++byteIdx) {
+        int val = 0;
+        for (int b = 0; b < 8; ++b) val |= (bits[byteIdx * 8 + b] & 1) << b;
+        spiSend40(addrNeuronByte(neuronId, byteIdx), static_cast<std::uint32_t>(val));
+    }
+}
+
 void OdinDriver::neuronLif(int neuronId, int thr, int leakStr, int leakEn,
                            int caEn, int thetamem, int caTheta1, int caTheta2,
                            int caTheta3, int caLeak) {
@@ -241,12 +249,46 @@ void OdinDriver::neuronLif(int neuronId, int thr, int leakStr, int leakEn,
     setb(29, caTheta2, 3);
     setb(32, caTheta3, 3);
     setb(35, caLeak, 5);
+    sendNeuronWord(neuronId, bits);
+}
 
-    for (int byteIdx = 0; byteIdx < 16; ++byteIdx) {
-        int val = 0;
-        for (int b = 0; b < 8; ++b) val |= (bits[byteIdx * 8 + b] & 1) << b;
-        spiSend40(addrNeuronByte(neuronId, byteIdx), static_cast<std::uint32_t>(val));
-    }
+// Bit layout confirmed against neuron_core.v's izh_neuron_0 instantiation
+// (LSB=0 selects IZH mode over LIF). SDSP/learning fields (ca_en=48,
+// thetamem=51:49, ca_theta1-3, caleak=65:61, burst_incr=66) are always left
+// at 0 — no on-chip learning, weights come pre-evolved. See wann::IzhParams
+// (OdinExport.h) for the caveat on what these parameter *values* mean.
+void OdinDriver::neuronIzh(int neuronId, const wann::IzhParams& p) {
+    std::array<int, 128> bits{};
+    auto setb = [&](int pos, int val, int w) {
+        for (int i = 0; i < w; ++i) bits[pos + i] = (val >> i) & 1;
+    };
+    setb(0, 0, 1);                          // lif_izh_sel = 0 (IZH)
+    setb(1, p.leakStr, 7);
+    setb(8, p.leakEn, 1);
+    setb(9, p.fiSel, 3);
+    setb(12, p.spkRef, 3);
+    setb(15, p.isiRef, 3);
+    setb(18, p.resonSharpEn ? 1 : 0, 1);
+    setb(19, p.thr, 3);
+    setb(22, p.rfr, 3);
+    setb(25, p.dapdel, 3);
+    setb(28, p.spklatEn ? 1 : 0, 1);
+    setb(29, p.dapEn ? 1 : 0, 1);
+    setb(30, p.stimThr, 3);
+    setb(33, p.phasicEn ? 1 : 0, 1);
+    setb(34, p.mixedEn ? 1 : 0, 1);
+    setb(35, p.class2En ? 1 : 0, 1);
+    setb(36, p.negEn ? 1 : 0, 1);
+    setb(37, p.reboundEn ? 1 : 0, 1);
+    setb(38, p.inhinEn ? 1 : 0, 1);
+    setb(39, p.bistEn ? 1 : 0, 1);
+    setb(40, p.resonEn ? 1 : 0, 1);
+    setb(41, p.thrvarEn ? 1 : 0, 1);
+    setb(42, p.thrSelOf ? 1 : 0, 1);
+    setb(43, p.thrleak, 4);
+    setb(47, p.accEn ? 1 : 0, 1);
+    setb(67, p.resonSharpAmt, 3);
+    sendNeuronWord(neuronId, bits);
 }
 
 // ------------------------------------------------------------------
@@ -277,13 +319,7 @@ void OdinDriver::setSynSign(int neuronId, bool inhibitory) {
 // ------------------------------------------------------------------
 void OdinDriver::loadConfig(const wann::OdinNetworkConfig& cfg, bool verbose) {
     init(verbose);
-    for (const auto& n : cfg.neurons) {
-        // Default LIF params — see OdinExport.h/OdinDriver.h: Izhikevich
-        // mode exists in the RTL but isn't wired up in this driver yet, so
-        // every neuron currently runs as a generic LIF spiker regardless of
-        // which of the 20 Izhikevich behaviours WANN evolved for it.
-        neuronLif(n.addr, /*thr=*/14, /*leakStr=*/10, /*leakEn=*/1);
-    }
+    for (const auto& n : cfg.neurons) neuronIzh(n.addr, n.izh);
 
     // Sign is per source neuron (Dale's law) — buildOdinConfig already
     // rejects genomes where one node's outgoing connections mix signs, so
