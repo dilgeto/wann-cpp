@@ -1,11 +1,14 @@
 // wann_car_odin_eval – corre N episodios de car sobre el core ODIN real
 // (ZCU104/PYNQ), usando la configuración exportada por wann_car_odin_export.
 //
-// Solo se compila con -DWANN_ODIN_HW=ON, y solo puede correr de verdad en el
-// ZCU104 una vez que include/wann/hw/OdinRegisters.h tenga el mapa de
-// registros real (ver ese archivo) y OdinDriver.cpp implemente el protocolo
-// SPI/AER real — hasta entonces construye pero falla al abrir /dev/mem o al
-// mandar el primer spike, con un error explícito señalando qué falta.
+// Solo se compila con -DWANN_ODIN_HW=ON. Antes de correrlo, en cada power
+// cycle / recarga del bitstream, hay que correr una vez:
+//   python3 odin_bootstrap.py /ruta/a/odin.bit
+// (descarga el overlay y hace que PYNQ configure la direccion de los AXI
+// GPIO — ver ese script). Ademas necesita que
+// include/wann/hw/OdinRegisters.h tenga las 5 direcciones fisicas reales
+// (el propio odin_bootstrap.py las imprime) — hasta entonces este binario
+// compila pero falla al construir OdinDriver con un error explicito.
 //
 // Uso:
 //   ./wann_car_odin_eval -c odin_config.json -d p/car_snn.json -n 10 -s 0 -m 40

@@ -38,10 +38,14 @@ public:
     double getCurrentTime() const { return currentTime_; }
 
 private:
-    OdinDriver&      driver_;
-    std::vector<int> inputAddrs_;   // channel index -> ODIN address
-    std::vector<int> outputAddrs_;  // output index -> ODIN address
-    double           currentTime_ = 0.0;
+    OdinDriver& driver_;
+    // channel/output index -> physical ODIN address(es). A logical
+    // input/output can have two physical addresses if buildOdinConfig had
+    // to split it for Dale's-law sign consistency (see OdinExport.h) — both
+    // must be stimulated/read together so the twins stay in lockstep.
+    std::vector<std::vector<int>> inputAddrs_;
+    std::vector<std::vector<int>> outputAddrs_;
+    double            currentTime_ = 0.0;
     std::vector<bool> lastOutputSpikes_;
 };
 

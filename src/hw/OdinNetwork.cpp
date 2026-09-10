@@ -9,9 +9,22 @@ OdinNetwork::OdinNetwork(const wann::OdinNetworkConfig& cfg, OdinDriver& driver)
     : driver_(driver)
 {
     driver_.loadConfig(cfg);
+    // Only walk the non-twin roles, in address order — that reproduces the
+    // exact channel/output ordering SnnCarOdinTask expects (0=bias,
+    // 1..nInput, then outputs at fixed indices). For each, also grab its
+    // twin's address (if any, see buildOdinConfig's Dale's-law splitting)
+    // so both physical copies get stimulated/read together.
     for (const auto& n : cfg.neurons) {
-        if (n.role == "input")  inputAddrs_.push_back(n.addr);
-        if (n.role == "output") outputAddrs_.push_back(n.addr);
+        if (n.role == "input") {
+            std::vector<int> addrs{n.addr};
+            if (n.twinAddr >= 0) addrs.push_back(n.twinAddr);
+            inputAddrs_.push_back(std::move(addrs));
+        }
+        if (n.role == "output") {
+            std::vector<int> addrs{n.addr};
+            if (n.twinAddr >= 0) addrs.push_back(n.twinAddr);
+            outputAddrs_.push_back(std::move(addrs));
+        }
     }
     lastOutputSpikes_.assign(outputAddrs_.size(), false);
 }
@@ -30,7 +43,11 @@ void OdinNetwork::applyInputSpikes(const std::vector<std::vector<double>>& encod
     for (std::size_t ch = 0; ch < encoded_spikes.size() && ch < inputAddrs_.size(); ++ch) {
         if (t >= 0 && t < static_cast<int>(encoded_spikes[ch].size()) &&
             encoded_spikes[ch][static_cast<std::size_t>(t)] > 0.0) {
-            driver_.sendSpike(inputAddrs_[ch]);
+            // Weight 7 (max drive) matches the convention already validated
+            // in the user's working Iris pipeline (odin.py's run_sample) —
+            // input stimulation bypasses the synaptic crossbar entirely via
+            // a virtual event, it isn't a real synapse.
+            for (int addr : inputAddrs_[ch]) driver_.sendVirtual(addr, /*weight=*/7);
         }
     }
 }
@@ -47,13 +64,17 @@ void OdinNetwork::step(double /*sharedWeight*/) {
     // ODIN is event-driven with no exposed clock, so "one software timestep"
     // has no exact hardware equivalent (see plan's timing-fidelity note).
     constexpr int STEP_TIMEOUT_US = 1000;  // placeholder, needs empirical tuning
-    auto fired = driver_.pollOutputs(STEP_TIMEOUT_US);
+    auto fired = driver_.drainSpikes(STEP_TIMEOUT_US);
 
     std::fill(lastOutputSpikes_.begin(), lastOutputSpikes_.end(), false);
     for (int addr : fired) {
-        auto it = std::find(outputAddrs_.begin(), outputAddrs_.end(), addr);
-        if (it != outputAddrs_.end())
-            lastOutputSpikes_[static_cast<std::size_t>(it - outputAddrs_.begin())] = true;
+        for (std::size_t k = 0; k < outputAddrs_.size(); ++k) {
+            const auto& addrs = outputAddrs_[k];
+            if (std::find(addrs.begin(), addrs.end(), addr) != addrs.end()) {
+                lastOutputSpikes_[k] = true;
+                break;
+            }
+        }
     }
     currentTime_ += 1.0;
 }

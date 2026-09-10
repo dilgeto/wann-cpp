@@ -9,9 +9,16 @@ namespace wann {
 // in the exported file — ODIN itself makes no such distinction.
 struct OdinNeuronConfig {
     int         addr;
-    std::string role;         // "input" | "hidden" | "output"
+    std::string role;         // "input" | "hidden" | "output" (+ "_twin" — see buildOdinConfig)
     std::string neuronType;   // NeuronType enum name (snn-simulator/include/core/neuron.hpp)
     double      a, b, c, d;   // Izhikevich parameters for that behaviour
+    // Address of this neuron's Dale's-law excitatory/inhibitory twin (see
+    // buildOdinConfig), or -1 if this node didn't need splitting. Symmetric:
+    // if A's twinAddr is B, B's twinAddr is A. Both addresses must receive
+    // identical stimulation/incoming synapses to stay in lockstep — this is
+    // how a caller (e.g. OdinNetwork) finds the other half of a split input
+    // or output node.
+    int         twinAddr = -1;
 };
 
 // One ODIN synapse (crossbar entry). weight3bit is a 0..7 magnitude bucket;

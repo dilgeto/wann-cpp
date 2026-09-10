@@ -2,6 +2,7 @@
 
 #include <core/neuron.hpp>
 
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -93,15 +94,74 @@ OdinNetworkConfig buildOdinConfig(const std::vector<double>& wVec,
                                    const std::string& task,
                                    const std::string& runKey)
 {
-    const int N = static_cast<int>(aVec.size());
-    if (N > ODIN_MAX_NEURONS) {
-        throw std::runtime_error(
-            "buildOdinConfig: network has " + std::to_string(N) +
-            " nodes, ODIN's core only has " + std::to_string(ODIN_MAX_NEURONS) +
-            " physical neurons — this genome cannot be deployed as-is.");
-    }
+    const int N0 = static_cast<int>(aVec.size());
     if (magnitude3bit < 0 || magnitude3bit > 7) {
         throw std::runtime_error("buildOdinConfig: magnitude3bit must be in [0,7]");
+    }
+
+    // Collect the raw edge list first (src, dst, excitatory) before deciding
+    // on physical addresses — needed below to detect and fix Dale's-law
+    // violations.
+    struct Edge { int src, dst; bool excitatory; };
+    std::vector<Edge> edges;
+    for (int i = 0; i < N0; ++i)
+        for (int j = 0; j < N0; ++j) {
+            if (i == j) continue;
+            double w = wVec[i * N0 + j];
+            if (w == 0.0) continue;
+            edges.push_back({i, j, w > 0.0});
+        }
+
+    // Real ODIN hardware stores synapse sign per PRE-SYNAPTIC NEURON, not
+    // per synapse (Dale's law) — the synapse SRAM only has weight + a mapped
+    // bit, confirmed against ODIN's official doc (section 3.2) and its
+    // set_syn_sign() API. WANN has no such constraint (mutToggleExcitatory
+    // flips sign per connection), so a node with both excitatory and
+    // inhibitory outgoing edges — which is the common case, not an edge
+    // case — can't be given a single physical address as-is.
+    //
+    // Fix: give such a node two physical addresses ("twins") with identical
+    // neuron parameters and identical incoming edges, so they fire in
+    // lockstep; each twin only keeps the outgoing edges of one sign. This
+    // exactly reproduces the original node's function — downstream neurons
+    // see the same excitatory/inhibitory drive they would have from a
+    // single mixed-sign node.
+    std::vector<std::array<int, 2>> outSignSeen(N0, std::array<int, 2>{0, 0});
+    for (const auto& e : edges) outSignSeen[e.src][e.excitatory ? 1 : 0]++;
+
+    // addr[origId][0]=primary physical address, addr[origId][1]=twin address
+    // (-1 if this node didn't need splitting) mapped by "excitatory" (index
+    // 1) vs "inhibitory" (index 0) — primary always keeps whichever sign has
+    // more outgoing edges (ties favour excitatory).
+    std::vector<std::array<int, 2>> addrForSign(N0, std::array<int, 2>{-1, -1});
+    std::vector<int> primarySign(N0, 1);
+    int nextAddr = N0;
+    std::vector<int> twinOf(N0, -1);  // orig id -> twin's orig-id-space slot (for role/param copy)
+
+    for (int i = 0; i < N0; ++i) {
+        bool hasExc = outSignSeen[i][1] > 0;
+        bool hasInh = outSignSeen[i][0] > 0;
+        if (hasExc && hasInh) {
+            primarySign[i] = (outSignSeen[i][0] > outSignSeen[i][1]) ? 0 : 1;
+            addrForSign[i][primarySign[i]] = i;
+            addrForSign[i][1 - primarySign[i]] = nextAddr;
+            twinOf[i] = nextAddr;
+            ++nextAddr;
+        } else {
+            // Single sign (or no outgoing edges at all, sign irrelevant).
+            addrForSign[i][0] = i;
+            addrForSign[i][1] = i;
+        }
+    }
+
+    const int N = nextAddr;
+    if (N > ODIN_MAX_NEURONS) {
+        throw std::runtime_error(
+            "buildOdinConfig: network needs " + std::to_string(N) +
+            " physical ODIN addresses (" + std::to_string(N0) + " original nodes + " +
+            std::to_string(N - N0) + " excitatory/inhibitory twins for Dale's-law "
+            "splitting), but ODIN's core only has " + std::to_string(ODIN_MAX_NEURONS) +
+            " — this genome cannot be deployed as-is.");
     }
 
     OdinNetworkConfig cfg;
@@ -111,24 +171,31 @@ OdinNetworkConfig buildOdinConfig(const std::vector<double>& wVec,
     cfg.sharedWeight = sharedWeight;
     cfg.nNeurons     = N;
 
-    // Same node ordering as SnnCarTask::buildNetwork(wVec,aVec):
-    // 0 = bias/first input, 1..nInput = inputs, then hidden, then nOutput outputs.
-    cfg.neurons.reserve(N);
-    for (int i = 0; i < N; ++i) {
+    // Same node ordering as SnnCarTask::buildNetwork(wVec,aVec) for the
+    // original N0 addresses: 0 = bias/first input, 1..nInput = inputs, then
+    // hidden, then nOutput outputs. Twins appended after N0 inherit their
+    // origin's role/behaviour (they're the same logical neuron, split only
+    // for hardware sign routing).
+    cfg.neurons.resize(N);
+    for (int i = 0; i < N0; ++i) {
         std::string role = (i <= nInput) ? "input"
-                          : (i >= N - nOutput) ? "output"
+                          : (i >= N0 - nOutput) ? "output"
                           : "hidden";
         auto p = neuronParams(actIdToNeuronType(aVec[i]));
-        cfg.neurons.push_back({i, role, p.name, p.a, p.b, p.c, p.d});
+        cfg.neurons[i] = {i, role, p.name, p.a, p.b, p.c, p.d, twinOf[i]};
+        if (twinOf[i] >= 0) {
+            std::string twinRole = role + "_twin";
+            cfg.neurons[twinOf[i]] = {twinOf[i], twinRole, p.name, p.a, p.b, p.c, p.d, i};
+        }
     }
 
-    for (int i = 0; i < N; ++i) {
-        for (int j = 0; j < N; ++j) {
-            if (i == j) continue;
-            double w = wVec[i * N + j];
-            if (w == 0.0) continue;
-            cfg.synapses.push_back({i, j, w > 0.0, magnitude3bit});
-        }
+    for (const auto& e : edges) {
+        int resolvedSrc = addrForSign[e.src][e.excitatory ? 1 : 0];
+        // Every physical address representing `dst` (1, or 2 if dst was
+        // split) must receive this edge so both twins stay in lockstep.
+        cfg.synapses.push_back({resolvedSrc, e.dst, e.excitatory, magnitude3bit});
+        if (twinOf[e.dst] >= 0)
+            cfg.synapses.push_back({resolvedSrc, twinOf[e.dst], e.excitatory, magnitude3bit});
     }
 
     return cfg;
@@ -149,6 +216,7 @@ void writeOdinConfig(const std::string& path, const OdinNetworkConfig& cfg) {
         neurons.push_back({
             {"addr", n.addr}, {"role", n.role}, {"neuron_type", n.neuronType},
             {"a", n.a}, {"b", n.b}, {"c", n.c}, {"d", n.d},
+            {"twin_addr", n.twinAddr},
         });
     }
 
@@ -185,6 +253,7 @@ OdinNetworkConfig readOdinConfig(const std::string& path) {
             n.at("neuron_type").get<std::string>(),
             n.at("a").get<double>(), n.at("b").get<double>(),
             n.at("c").get<double>(), n.at("d").get<double>(),
+            n.value("twin_addr", -1),
         });
     }
     for (const auto& s : j.at("synapses")) {
