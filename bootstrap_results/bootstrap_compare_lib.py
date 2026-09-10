@@ -73,7 +73,8 @@ FONT_SUPTITLE = 18
 
 def make_plots(rewards_snn: np.ndarray, rewards_ann: np.ndarray,
               boot_ratio_signed: np.ndarray, ci_lo: float, ci_hi: float, ci: float,
-              out_path: Path, suptitle: str, ann_label: str = "ANN") -> None:
+              out_path: Path, suptitle: str, ann_label: str = "ANN",
+              snn_label: str = "SNN") -> None:
     fig, axes = plt.subplots(2, 2, figsize=(11, 9))
 
     # Mismo rango de bins para ambos histogramas superiores, así el eje X
@@ -85,7 +86,7 @@ def make_plots(rewards_snn: np.ndarray, rewards_ann: np.ndarray,
     ax = axes[0, 0]
     ax.hist(rewards_snn, bins=shared_bins, color="#d62728", edgecolor="black", alpha=0.85,
             label=f"Episodios individuales (n={len(rewards_snn)})")
-    ax.set_title("Rewards SNN (episodios)", fontsize=FONT_TITLE)
+    ax.set_title(f"Rewards {snn_label} (episodios)", fontsize=FONT_TITLE)
     ax.set_xlabel("Reward", fontsize=FONT_LABEL)
     ax.set_ylabel("Frecuencia", fontsize=FONT_LABEL)
     ax.axvline(rewards_snn.mean(), color="black", linestyle="--", linewidth=1,
@@ -120,7 +121,7 @@ def make_plots(rewards_snn: np.ndarray, rewards_ann: np.ndarray,
     ax.axvline(ci_lo, color="black", linestyle=":", linewidth=1.3,
                label=f"IC {int(round(ci * 100))}% (percentiles {(1 - ci) / 2 * 100:.1f}/{(1 + ci) / 2 * 100:.1f})")
     ax.axvline(ci_hi, color="black", linestyle=":", linewidth=1.3)
-    ax.set_title(f"Distribución bootstrap: % rendimiento SNN vs {ann_label}\n(consciente del signo)",
+    ax.set_title(f"Distribución bootstrap: % rendimiento {snn_label} vs {ann_label}\n(consciente del signo)",
                 fontsize=FONT_TITLE)
     ax.set_xlabel("% de rendimiento", fontsize=FONT_LABEL)
     ax.set_ylabel("Frecuencia", fontsize=FONT_LABEL)
@@ -130,7 +131,7 @@ def make_plots(rewards_snn: np.ndarray, rewards_ann: np.ndarray,
     ax.legend(fontsize=FONT_LEGEND, loc="upper left")
 
     ax = axes[1, 1]
-    bp = ax.boxplot([rewards_snn, rewards_ann], tick_labels=["SNN", ann_label],
+    bp = ax.boxplot([rewards_snn, rewards_ann], tick_labels=[snn_label, ann_label],
                     patch_artist=True, widths=0.6, medianprops=dict(color="black"))
     for patch, color in zip(bp["boxes"], ["#d62728", "#4C72B0"]):
         patch.set_facecolor(color)
@@ -174,7 +175,8 @@ def build_arg_parser(doc: str, default_out_dir: str | None) -> argparse.Argument
 
 
 def run_comparison(rewards_snn: np.ndarray, rewards_ann: np.ndarray, args: argparse.Namespace,
-                   suptitle: str, plot_stem: str, ann_label: str = "ANN") -> None:
+                   suptitle: str, plot_stem: str, ann_label: str = "ANN",
+                   snn_label: str = "SNN") -> None:
     """Calcula estadísticas + bootstrap, imprime el resumen, guarda los CSV
     y genera el gráfico — igual para cualquier tarea."""
     if args.resamples < 10000:
@@ -207,20 +209,20 @@ def run_comparison(rewards_snn: np.ndarray, rewards_ann: np.ndarray, args: argpa
     print(f"\n{'='*70}")
     print(f"  {suptitle}")
     print(f"{'='*70}")
-    print(f"  SNN  (n={stats_snn['n_episodes']}): "
+    print(f"  {snn_label}  (n={stats_snn['n_episodes']}): "
           f"media={stats_snn['mean']:.4f} ± {stats_snn['std']:.4f}  "
           f"mediana={stats_snn['median']:.4f}  min={stats_snn['min']:.4f}  max={stats_snn['max']:.4f}")
     print(f"  {ann_label}  (n={stats_ann['n_episodes']}): "
           f"media={stats_ann['mean']:.4f} ± {stats_ann['std']:.4f}  "
           f"mediana={stats_ann['median']:.4f}  min={stats_ann['min']:.4f}  max={stats_ann['max']:.4f}")
-    print(f"  % rendimiento consciente del signo (100%=igual, >100%=SNN mejor) = "
+    print(f"  % rendimiento consciente del signo (100%=igual, >100%={snn_label} mejor) = "
           f"{ratio_signed_point:.2f}%")
     print(f"  IC{int(args.ci*100)}% bootstrap del % rendimiento (con signo) = "
           f"[{ratio_signed_ci_lo:.2f}%, {ratio_signed_ci_hi:.2f}%]")
-    print(f"  [ref.] % rendimiento literal (mean SNN / mean {ann_label} × 100, SIN ajuste "
+    print(f"  [ref.] % rendimiento literal (mean {snn_label} / mean {ann_label} × 100, SIN ajuste "
           f"de signo — engañoso con reward negativo) = {ratio_point:.2f}%  "
           f"IC{int(args.ci*100)}%=[{ratio_ci_lo:.2f}%, {ratio_ci_hi:.2f}%]")
-    print(f"  IC{int(args.ci*100)}% bootstrap de la diferencia (SNN-{ann_label}) = "
+    print(f"  IC{int(args.ci*100)}% bootstrap de la diferencia ({snn_label}-{ann_label}) = "
           f"[{diff_ci_lo:.4f}, {diff_ci_hi:.4f}]")
     print(f"  P(bootstrap) de que % rendimiento (con signo) >= 90% = {prob_ge_90:.4f}")
     print(f"  ¿Límite inferior del IC del % rendimiento (con signo) >= 90%? "
@@ -275,7 +277,7 @@ def run_comparison(rewards_snn: np.ndarray, rewards_ann: np.ndarray, args: argpa
     plot_path = out_dir / f"{plot_stem}.png"
     make_plots(rewards_snn, rewards_ann, boot_ratio_signed,
               ratio_signed_ci_lo, ratio_signed_ci_hi, args.ci,
-              plot_path, suptitle, ann_label)
+              plot_path, suptitle, ann_label, snn_label)
 
     print(f"\nResultados guardados en {out_dir}/:")
     print("  rewards.csv, bootstrap_samples.csv, summary_stats.csv, ci_results.csv")

@@ -137,11 +137,23 @@ def eval_snn(task: str, winner: pd.Series, n: int, seed0: int, omp: int,
 
 def run_auto_comparison(task: str, args: argparse.Namespace,
                         eval_ann_fn: Callable[[int, int, int | None], np.ndarray],
-                        ann_desc: str, ann_label: str, task_label: str) -> None:
+                        ann_desc: str, ann_label: str, task_label: str,
+                        eval_target_fn: Callable[[str, "pd.Series", int, int, int, int | None], np.ndarray] | None = None,
+                        target_label: str = "SNN",
+                        target_desc: str | None = None,
+                        plot_suffix: str = "snn_vs_ann") -> None:
     """Orquesta los 2 pasos completos y llama a run_comparison(). eval_ann_fn
     recibe (n, seed0, timeout) — cualquier otro parámetro específico del ANN
     (ruta de modelo, venv, etc.) va ya cerrado sobre la función via
-    functools.partial/lambda en el script de la tarea."""
+    functools.partial/lambda en el script de la tarea.
+
+    eval_target_fn (default: eval_snn — el simulador SNN por software) tiene
+    la misma firma que eval_snn: (task, winner, n, seed0, omp, timeout) ->
+    rewards. Pasar uno propio (p.ej. eval_odin en
+    bootstrap_compare_car_odin_auto.py) reusa el mismo paso 1 de
+    revalidación/selección de ganador pero evalúa el modelo ganador en otro
+    backend en vez del simulador de software — target_label/target_desc
+    ajustan las etiquetas de la salida/gráfico en consecuencia."""
     eval_out_dir = Path(args.eval_out_dir or f"eval_results/{args.run_key}")
     best_csv = eval_out_dir / f"{task}_best.csv"
 
@@ -161,17 +173,21 @@ def run_auto_comparison(task: str, args: argparse.Namespace,
     if args.out_dir is None:
         args.out_dir = f"bootstrap_results/{args.run_key}"
 
-    print(f"\n── Paso 2/2: bootstrap SNN vs ANN ({args.n} episodios, "
+    target_fn = eval_target_fn or eval_snn
+    target_desc = target_desc or target_label
+
+    print(f"\n── Paso 2/2: bootstrap {target_label} vs ANN ({args.n} episodios, "
           f"{args.resamples} resamples) ──")
-    print(f"Evaluando SNN ({args.run_key} rank={int(winner['rank'])} "
+    print(f"Evaluando {target_desc} ({args.run_key} rank={int(winner['rank'])} "
           f"seed_idx={int(winner['seed_idx'])} peso={winner['weight_value']:g} "
           f"[índice {int(winner['weight_index'])}]): {args.n} episodios...")
-    rewards_snn = eval_snn(task, winner, args.n, args.seed0, omp, args.timeout)
+    rewards_target = target_fn(task, winner, args.n, args.seed0, omp, args.timeout)
 
     print(f"Evaluando ANN ({ann_desc}): {args.n} episodios...")
     rewards_ann = eval_ann_fn(args.n, args.seed0, args.timeout)
 
-    run_comparison(rewards_snn, rewards_ann, args,
-                  suptitle=f"{task_label} ({args.run_key}) — SNN vs ANN ({ann_label}), "
+    run_comparison(rewards_target, rewards_ann, args,
+                  suptitle=f"{task_label} ({args.run_key}) — {target_label} vs ANN ({ann_label}), "
                            f"bootstrap no pareado",
-                  plot_stem=f"{args.run_key}_snn_vs_ann", ann_label=f"ANN ({ann_label})")
+                  plot_stem=f"{args.run_key}_{plot_suffix}", ann_label=f"ANN ({ann_label})",
+                  snn_label=target_label)

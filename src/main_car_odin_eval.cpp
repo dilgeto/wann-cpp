@@ -17,6 +17,12 @@
 // el modelo exportado (no viene en car_snn.json — es una constante de
 // compilación en SnnCarTask.h, WANN_CAR_SIM_WINDOW_MS). Un modelo podado
 // (pruned) puede haberse evolucionado con una ventana distinta a la base.
+//
+// --csv: imprime SOLO "episode,reward\n0,123.45\n..." a stdout (todo lo
+// demás va a stderr) — pensado para que un script Python capture stdout
+// directo con pd.read_csv(io.StringIO(...)), igual que hace
+// bootstrap_auto_lib.eval_snn() con el binario wann_eval_weights_car
+// (--episode-detail). Usado por bootstrap_compare_car_odin_auto.py.
 
 #include "../include/wann/Hyperparams.h"
 #include "../include/wann/OdinExport.h"
@@ -37,6 +43,7 @@ int main(int argc, char* argv[]) {
     int         seed       = 0;
     double      windowMs   = 40.0;
     bool        windowMsSet = false;
+    bool        csvMode    = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -46,9 +53,10 @@ int main(int argc, char* argv[]) {
         else if (arg == "-s" && i+1 < argc) { seed       = std::atoi(argv[++i]); }
         else if ((arg == "-m" || arg == "--window-ms") && i+1 < argc) {
             windowMs = std::atof(argv[++i]); windowMsSet = true;
+        } else if (arg == "--csv") { csvMode = true;
         } else {
             std::cerr << "Uso: wann_car_odin_eval [-c odin_config.json] "
-                         "[-d config.json] [-n episodios] [-s seed] [-m window_ms]\n";
+                         "[-d config.json] [-n episodios] [-s seed] [-m window_ms] [--csv]\n";
             return 1;
         }
     }
@@ -65,18 +73,28 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // In --csv mode every diagnostic line goes to stderr so stdout is pure
+    // CSV for a caller to pipe into pandas.
+    std::ostream& log = csvMode ? std::cerr : std::cout;
+
     try {
         auto cfg = wann::readOdinConfig(cfgFile);
-        std::cout << "Config ODIN cargada de " << cfgFile
-                  << " (" << cfg.nNeurons << " neuronas, "
-                  << cfg.synapses.size() << " sinapsis, run_key=" << cfg.runKey << ")\n";
+        log << "Config ODIN cargada de " << cfgFile
+            << " (" << cfg.nNeurons << " neuronas, "
+            << cfg.synapses.size() << " sinapsis, run_key=" << cfg.runKey << ")\n";
 
         wann::hw::OdinDriver driver;
         wann::SnnCarOdinTask task(hyp, cfg, driver, windowMs);
 
-        std::cout << "Evaluando " << nEpisodes << " episodios en hardware "
-                     "(seed base=" << seed << ")...\n\n";
+        log << "Evaluando " << nEpisodes << " episodios en hardware "
+               "(seed base=" << seed << ")...\n\n";
         auto rewards = task.evalEpisodes(nEpisodes, seed);
+
+        if (csvMode) {
+            std::cout << "episode,reward\n" << std::fixed << std::setprecision(6);
+            for (int i = 0; i < nEpisodes; ++i) std::cout << i << ',' << rewards[i] << '\n';
+            return 0;
+        }
 
         double mean = std::accumulate(rewards.begin(), rewards.end(), 0.0) / nEpisodes;
         double sq = 0; for (double r : rewards) sq += (r - mean) * (r - mean);
