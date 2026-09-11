@@ -74,7 +74,11 @@ SnnCarTask::SnnCarTask(const Hyperparams& hyp)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
     , resetBetweenSteps_(hyp.snn_reset_between_steps)
-    , windowMs_(hyp.snn_window_ms)
+    // Rounded defensively: with dt=1ms fixed, a fractional window makes
+    // TTFSEncoder's round-then-clamp produce an off-grid spike time that the
+    // integer-stepped simulation loop can never match (silently dropped
+    // spike) — see ttfsEncoder.cpp:29-30. Integers avoid this entirely.
+    , windowMs_(std::round(hyp.snn_window_ms))
     , tauExc_(hyp.snn_tau_exc)
     , tauInh_(hyp.snn_tau_inh)
     , ttfsThreshold_(hyp.snn_ttfs_threshold)

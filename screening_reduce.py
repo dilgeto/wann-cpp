@@ -175,7 +175,7 @@ def validate_task_files(task: str, executable: str, base_config: str) -> None:
                   f"¿--base copiado de otra tarea?", file=sys.stderr)
             sys.exit(1)
 
-# ── Initial search space (10 hyperparameters) ─────────────────────────────────
+# ── Initial search space (14 hyperparameters) ─────────────────────────────────
 # Format: param → (kind, lo, hi)
 #   "float" – uniform in [lo, hi]
 #   "log"   – log-uniform in [lo, hi]
@@ -192,6 +192,19 @@ INITIAL_SPACE: dict[str, tuple] = {
     "select_cullRatio":      ("float", 0.05, 0.50),
     "select_eliteRatio":     ("float", 0.05, 0.40),
     "select_tournSize":      ("int",   2,    16),
+
+    # --- SNN simulator microparameters (SnnCarTask only; ttfs + first_spike) ---
+    # Do NOT add "dt" or "snn_ttfs_tmax_ratio" here — both are collinear with
+    # snn_window_ms (see Hyperparams.h comments) and are kept fixed instead.
+    # snn_window_ms is "int", not "float": with dt=1ms fixed, a fractional
+    # window makes TTFSEncoder's round-then-clamp (ttfsEncoder.cpp:29-30)
+    # produce an off-grid spike time near duration-dt that the simulation
+    # loop's integer-only clock can never match — the spike is silently
+    # dropped for the affected input band. Integers avoid this entirely.
+    "snn_window_ms":         ("int",   20,    100),
+    "snn_tau_exc":           ("float", 2.0,   15.0),
+    "snn_tau_inh":           ("float", 4.0,   30.0),
+    "snn_ttfs_threshold":    ("log",   1e-6,  0.30),
 }
 
 # ── Search space helpers ──────────────────────────────────────────────────────
@@ -454,6 +467,7 @@ def run_round(
         sampler=optuna.samplers.TPESampler(
             seed=seed + round_idx,
             constant_liar=True,
+            multivariate=True,
             n_startup_trials=max(5, n // 4),
         ),
         pruner=optuna.pruners.MedianPruner(
@@ -740,10 +754,12 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--mode",   default="full",
                     choices=["full", "analyse"],
                     help="'full': run on cluster. 'analyse': report only (local).")
-    ap.add_argument("--rounds", type=int, default=4,
-                    help="Max reduction rounds (default: 4)")
-    ap.add_argument("--n",      type=int, default=30,
-                    help="Trials per round (default: 30)")
+    ap.add_argument("--rounds", type=int, default=6,
+                    help="Max reduction rounds (default: 6 — raised from 4 "
+                         "when the space grew from 10 to 14 dims)")
+    ap.add_argument("--n",      type=int, default=45,
+                    help="Trials per round (default: 45 — raised from 30 "
+                         "when the space grew from 10 to 14 dims)")
     ap.add_argument("--jobs",   type=int, default=8,
                     help="Parallel workers (default: 8)")
     ap.add_argument("--omp",    type=int, default=None,

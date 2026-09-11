@@ -212,6 +212,7 @@ def run_phase2(
         sampler=optuna.samplers.TPESampler(
             seed=seed,
             constant_liar=True,
+            multivariate=True,
             n_startup_trials=max(5, n_trials // 4),
         ),
         # No pruner: full-budget runs are too expensive to cut short
@@ -622,8 +623,9 @@ def parse_args() -> argparse.Namespace:
                     choices=["phase2", "phase3", "both", "analyse"],
                     help="Which phase(s) to run (default: both).")
     # Phase 2
-    ap.add_argument("--n",     type=int, default=20,
-                    help="Phase 2: Optuna trials (default: 20)")
+    ap.add_argument("--n",     type=int, default=28,
+                    help="Phase 2: Optuna trials (default: 28 — raised from "
+                         "20 when the space grew from 10 to 14 dims)")
     # Phase 3
     ap.add_argument("--top",   type=int, default=3,
                     help="Phase 3: top-K configs to validate (default: 3)")

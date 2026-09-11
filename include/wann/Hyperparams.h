@@ -69,7 +69,11 @@ struct Hyperparams {
     // it here lets it be searched at runtime. Do NOT also search a separate
     // "dt" alongside this — the decoder's quantization step is 2*dt/window,
     // so dt and window are collinear for that effect; keep dt fixed and vary
-    // only the window.
+    // only the window. Should be integer-valued: with dt=1ms fixed, a
+    // fractional window makes TTFSEncoder's round-then-clamp produce a spike
+    // time that the integer-stepped simulation clock can never match, so the
+    // spike is silently dropped (SnnCarTask rounds this defensively, but
+    // don't rely on that — pass an integer in the first place).
     double snn_window_ms       = 40.0;
     // Izhikevich AMPA/GABA conductance decay time constants (ms). Govern how
     // long an input spike's effect survives before decaying — directly
