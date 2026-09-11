@@ -62,6 +62,28 @@ struct Hyperparams {
     // When true (default): reset SNN membrane state before each env step.
     // When false: state persists across steps (implicit recurrence).
     bool snn_reset_between_steps = true;
+
+    // --- SNN simulator microparameters (currently wired for SnnCarTask only) ---
+    // ms per env step (decision window given to the SNN before decoding an
+    // action). Was a compile-time constant (WANN_CAR_SIM_WINDOW_MS); exposing
+    // it here lets it be searched at runtime. Do NOT also search a separate
+    // "dt" alongside this — the decoder's quantization step is 2*dt/window,
+    // so dt and window are collinear for that effect; keep dt fixed and vary
+    // only the window.
+    double snn_window_ms       = 40.0;
+    // Izhikevich AMPA/GABA conductance decay time constants (ms). Govern how
+    // long an input spike's effect survives before decaying — directly
+    // interacts with snn_window_ms for late-arriving TTFS spikes (see
+    // ttfsEncoder: low observation values spike near the end of the window).
+    double snn_tau_exc         = 5.0;
+    double snn_tau_inh         = 10.0;
+    // TTFS encoder: observation values below this produce no input spike at
+    // all. Independent of snn_window_ms (not part of the t_max formula), but
+    // interacts with it in effect (both can push toward more "no spike"
+    // fallback actions). Do NOT also search snn_ttfs_tmax_ratio alongside
+    // snn_window_ms — t_max = (window-dt)*tmax_ratio is a product, so the two
+    // are collinear for that formula; tmax_ratio stays fixed at 1.0.
+    double snn_ttfs_threshold  = 1e-9;
 };
 
 namespace detail {
@@ -101,6 +123,10 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.snn_neurons_per_var,    "snn_neurons_per_var");
     get(p.reward_shaping_scale,      "reward_shaping_scale");
     get(p.snn_reset_between_steps,   "snn_reset_between_steps");
+    get(p.snn_window_ms,             "snn_window_ms");
+    get(p.snn_tau_exc,               "snn_tau_exc");
+    get(p.snn_tau_inh,               "snn_tau_inh");
+    get(p.snn_ttfs_threshold,        "snn_ttfs_threshold");
 }
 
 // Parse a string that is either a file path or an inline JSON object.

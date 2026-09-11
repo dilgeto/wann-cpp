@@ -26,5 +26,9 @@
     "snn_encoder":              "ttfs",
     "snn_decoder":              "first_spike",
     "snn_reset_between_steps":  true,
-    "snn_neurons_per_var":      5
+    "snn_neurons_per_var":      5,
+    "snn_window_ms":            40.0,
+    "snn_tau_exc":              5.0,
+    "snn_tau_inh":              10.0,
+    "snn_ttfs_threshold":       1e-9
 }

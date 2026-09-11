@@ -35,7 +35,7 @@ using ObsMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 9, false>>;
 using ActMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 2, false>>;
 
 namespace {
-std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed) {
+std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed, double ttfsThreshold) {
     constexpr double MAX_RATE   = 100.0;
     constexpr double REF_PERIOD = 2.0;
     switch (type) {
@@ -50,9 +50,9 @@ std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed) {
             return e;
         }
         case wann::SnnEncoder::TTFS:
-            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LINEAR, 1e-9);
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LINEAR, ttfsThreshold);
         case wann::SnnEncoder::TTFS_LOG:
-            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LOGARITHMIC, 1e-9);
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LOGARITHMIC, ttfsThreshold);
         case wann::SnnEncoder::SMALL:
         case wann::SnnEncoder::LARGE:
             return nullptr;  // current injection, not spike trains
@@ -74,6 +74,10 @@ SnnCarTask::SnnCarTask(const Hyperparams& hyp)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
     , resetBetweenSteps_(hyp.snn_reset_between_steps)
+    , windowMs_(hyp.snn_window_ms)
+    , tauExc_(hyp.snn_tau_exc)
+    , tauInh_(hyp.snn_tau_inh)
+    , ttfsThreshold_(hyp.snn_ttfs_threshold)
 {}
 
 NeuronType SnnCarTask::wannActToNeuronType(int actId) {
@@ -141,6 +145,7 @@ Network SnnCarTask::buildNetwork(const Ind& ind) const
         net.addSynapse(it_src->second, it_dst->second, cg.excitatory);
     }
 
+    net.setTimeConstants(tauExc_, tauInh_);
     return net;
 }
 
@@ -168,6 +173,7 @@ Network SnnCarTask::buildNetwork(const std::vector<double>& wVec,
         }
     }
 
+    net.setTimeConstants(tauExc_, tauInh_);
     return net;
 }
 
@@ -223,17 +229,17 @@ std::pair<double,double> SnnCarTask::runEpisode(Network& net, double sharedWeigh
     // Track bounds (TRACK_SCALE=0.05, WIDTH=HEIGHT=100).
     constexpr double BOUND = CarSpec::TRACK_SCALE * 100 / 2.0;  // ±2.5 m
 
-    const int window_steps = static_cast<int>(SIM_WINDOW_MS);
+    const int window_steps = static_cast<int>(windowMs_);
     const int n_channels   = nInput_ + 1;  // bias + 9 observations
 
     constexpr double DT = 1.0;
-    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu, ttfsThreshold_);
 
     const RLDecoder::DecodingType dec_type =
         (decoder_ == SnnDecoder::FIRST_SPIKE) ? RLDecoder::DecodingType::FIRST_SPIKE :
         (decoder_ == SnnDecoder::SPIKE_COUNT) ? RLDecoder::DecodingType::SPIKE_COUNT :
                                                 RLDecoder::DecodingType::RATE;
-    RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
+    RLDecoder rl_decoder(dec_type, windowMs_);
     const double max_spikes = static_cast<double>(window_steps) / 2.0;
 
     double total_reward = 0.0;
@@ -265,7 +271,7 @@ std::pair<double,double> SnnCarTask::runEpisode(Network& net, double sharedWeigh
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch) {
                 double v = std::clamp(norm[ch], 0.0, 1.0);
-                spike_trains[ch] = enc->encode(v, SIM_WINDOW_MS, DT);
+                spike_trains[ch] = enc->encode(v, windowMs_, DT);
             }
 
             for (int t = 0; t < window_steps; ++t) {
@@ -440,17 +446,17 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
     rlt::sample_initial_state(device, env, params, state, rng);
 
     constexpr double BOUND = CarSpec::TRACK_SCALE * 100 / 2.0;
-    const int  window_steps = static_cast<int>(SIM_WINDOW_MS);
+    const int  window_steps = static_cast<int>(windowMs_);
     const int  n_channels   = nInput_ + 1;
 
     constexpr double DT = 1.0;
-    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu, ttfsThreshold_);
 
     const RLDecoder::DecodingType dec_type =
         (decoder_ == SnnDecoder::FIRST_SPIKE) ? RLDecoder::DecodingType::FIRST_SPIKE :
         (decoder_ == SnnDecoder::SPIKE_COUNT) ? RLDecoder::DecodingType::SPIKE_COUNT :
                                                 RLDecoder::DecodingType::RATE;
-    RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
+    RLDecoder rl_decoder(dec_type, windowMs_);
     const double max_spikes = static_cast<double>(window_steps) / 2.0;
 
     for (int step = 0; step < episodeSteps_; ++step) {
@@ -486,7 +492,7 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch) {
                 double v = std::clamp(norm[ch], 0.0, 1.0);
-                spike_trains[ch] = enc->encode(v, SIM_WINDOW_MS, DT);
+                spike_trains[ch] = enc->encode(v, windowMs_, DT);
             }
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());

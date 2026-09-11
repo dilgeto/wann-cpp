@@ -142,6 +142,18 @@ once that many generations pass with no new `fitTop` record (running-best elite
 fitness) — set it per JSON like any other hyperparameter. Currently only wired into
 `src/main_car.cpp`'s generation loop (not the other tasks' `main_*.cpp`).
 
+`snn_window_ms`/`snn_tau_exc`/`snn_tau_inh`/`snn_ttfs_threshold` are SNN-simulator
+microparameters (`ms` per env step given to the SNN before decoding an action; AMPA/
+GABA conductance decay time constants; TTFS no-spike cutoff) — **currently wired only
+into `SnnCarTask`** (`snn_window_ms` replaced what used to be the compile-time
+`WANN_CAR_SIM_WINDOW_MS` macro; the other `Snn<Task>Task.cpp` files still hardcode
+their own `SIM_WINDOW_MS` and never touch `tau_exc`/`tau_inh`/TTFS threshold at all).
+Do not add `DT` to a search alongside `snn_window_ms` (the FIRST_SPIKE decoder's
+quantization step is `2*dt/window` — the two are collinear for that effect; `dt` stays
+a fixed `1.0` in `SnnCarTask.cpp`), and do not add TTFS's `t_max_ratio` alongside
+`snn_window_ms` either (`t_max = (window-dt)*t_max_ratio` is the same kind of product;
+`t_max_ratio` stays fixed at `1.0`, not exposed as a hyperparameter).
+
 **Logging** (`src/DataGatherer.cpp`): appends per-generation population statistics,
 writes `<prefix>_best.gen`/`.wi` (best individual + which shared-weight index won)
 and Pareto snapshots consumed by `graph.py`/`graph_network.py`. Mirrors a Python
