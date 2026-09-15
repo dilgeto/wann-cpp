@@ -82,7 +82,20 @@ SnnCarTask::SnnCarTask(const Hyperparams& hyp)
     , tauExc_(hyp.snn_tau_exc)
     , tauInh_(hyp.snn_tau_inh)
     , ttfsThreshold_(hyp.snn_ttfs_threshold)
-{}
+{
+    // populationVectorDecode indexes outSpikes[0..2*neuronsPerVar_-1]
+    // unconditionally (throttle population, then steering population) — a
+    // mismatched ann_nOutput means an out-of-bounds vector access, not a
+    // clean error. Catch it here instead.
+    if (decoder_ == SnnDecoder::POPULATION_VECTOR && nOutput_ != 2 * neuronsPerVar_) {
+        throw std::runtime_error(
+            "snn_decoder=population_vector requires ann_nOutput == 2 * "
+            "snn_neurons_per_var (2 actions: throttle, steering); got ann_nOutput=" +
+            std::to_string(nOutput_) + ", snn_neurons_per_var=" +
+            std::to_string(neuronsPerVar_) + " (expected ann_nOutput=" +
+            std::to_string(2 * neuronsPerVar_) + ")");
+    }
+}
 
 NeuronType SnnCarTask::wannActToNeuronType(int actId) {
     switch (actId) {
