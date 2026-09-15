@@ -181,30 +181,55 @@ Network SnnCarTask::buildNetwork(const std::vector<double>& wVec,
     return net;
 }
 
-// Decode two output spike trains into (throttle, steering) ∈ [-1, 1].
-// FIRST_SPIKE: latency → [0,1] → [-1,1].
-// SPIKE_COUNT: min(1, n/10)*2-1 (RLDecoder handles saturation).
+// Classical population vector: neuron k of a `count`-sized population has a
+// fixed preferred value uniformly spaced in [-1,1] (no trainable readout —
+// stays weight-agnostic, unlike PopSAN's learned linear decoder). The action
+// is the spike-count-weighted average of preferred values; no spikes at all
+// in the population falls back to 0.0, matching the other decoders' neutral
+// default when there is no signal to decode.
+static double populationVectorDecode(
+    const std::vector<std::vector<double>>& outSpikes, int start, int count)
+{
+    double weightedSum = 0.0, totalCount = 0.0;
+    for (int k = 0; k < count; ++k) {
+        double pref = (count > 1) ? (-1.0 + 2.0 * k / (count - 1)) : 0.0;
+        double cnt  = static_cast<double>(outSpikes[start + k].size());
+        weightedSum += cnt * pref;
+        totalCount  += cnt;
+    }
+    return (totalCount > 0.0) ? (weightedSum / totalCount) : 0.0;
+}
+
+// Decode output spike trains into (throttle, steering) ∈ [-1, 1].
+// FIRST_SPIKE: latency → [0,1] → [-1,1]. Uses outSpikes[0]/[1] (nOutput=2).
+// SPIKE_COUNT: min(1, n/10)*2-1 (RLDecoder handles saturation). outSpikes[0]/[1].
+// POPULATION_VECTOR: outSpikes[0..P-1] = throttle population, [P..2P-1] =
+// steering population (P = neuronsPerVar); requires nOutput = 2*P.
 // default (RATE/TTFS/POISSON/RATE_ARGMAX/VOTING): n_spikes / max_spikes → [-1,1].
 static std::pair<double,double> decodeActions(
-    const std::vector<double>& spikes0,
-    const std::vector<double>& spikes1,
+    const std::vector<std::vector<double>>& outSpikes,
     SnnDecoder decoder,
     const RLDecoder& rl_decoder,
-    double max_spikes)
+    double max_spikes,
+    int neuronsPerVar)
 {
     double t, s;
     switch (decoder) {
         case SnnDecoder::FIRST_SPIKE:
-            t = rl_decoder.decodeContinuousAction(spikes0) * 2.0 - 1.0;
-            s = rl_decoder.decodeContinuousAction(spikes1) * 2.0 - 1.0;
+            t = rl_decoder.decodeContinuousAction(outSpikes[0]) * 2.0 - 1.0;
+            s = rl_decoder.decodeContinuousAction(outSpikes[1]) * 2.0 - 1.0;
             break;
         case SnnDecoder::SPIKE_COUNT:
-            t = rl_decoder.decodeContinuousAction(spikes0);
-            s = rl_decoder.decodeContinuousAction(spikes1);
+            t = rl_decoder.decodeContinuousAction(outSpikes[0]);
+            s = rl_decoder.decodeContinuousAction(outSpikes[1]);
+            break;
+        case SnnDecoder::POPULATION_VECTOR:
+            t = populationVectorDecode(outSpikes, 0, neuronsPerVar);
+            s = populationVectorDecode(outSpikes, neuronsPerVar, neuronsPerVar);
             break;
         default:
-            t = static_cast<double>(spikes0.size()) / max_spikes * 2.0 - 1.0;
-            s = static_cast<double>(spikes1.size()) / max_spikes * 2.0 - 1.0;
+            t = static_cast<double>(outSpikes[0].size()) / max_spikes * 2.0 - 1.0;
+            s = static_cast<double>(outSpikes[1].size()) / max_spikes * 2.0 - 1.0;
             break;
     }
     return { std::clamp(t, -1.0, 1.0), std::clamp(s, -1.0, 1.0) };
@@ -253,7 +278,7 @@ std::pair<double,double> SnnCarTask::runEpisode(Network& net, double sharedWeigh
 
         if (resetBetweenSteps_) net.fastReset();
 
-        std::vector<double> out_spikes0, out_spikes1;
+        std::vector<std::vector<double>> outSpikes(nOutput_);
 
         if (encoder_ != SnnEncoder::CURRENT && encoder_ != SnnEncoder::SMALL && encoder_ != SnnEncoder::LARGE) {
             std::vector<double> norm(n_channels, 0.0);
@@ -282,8 +307,8 @@ std::pair<double,double> SnnCarTask::runEpisode(Network& net, double sharedWeigh
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
                 net.step(sharedWeight);
                 const auto& out = net.getOutputSpikes();
-                if (out.size() > 0 && out[0]) out_spikes0.push_back(static_cast<double>(t));
-                if (out.size() > 1 && out[1]) out_spikes1.push_back(static_cast<double>(t));
+                for (int oi = 0; oi < nOutput_ && oi < static_cast<int>(out.size()); ++oi)
+                    if (out[oi]) outSpikes[oi].push_back(static_cast<double>(t));
             }
         } else {
             std::vector<double> currents(n_channels, 0.0);
@@ -341,13 +366,13 @@ std::pair<double,double> SnnCarTask::runEpisode(Network& net, double sharedWeigh
                 net.setInputCurrents(currents);
                 net.step(sharedWeight);
                 const auto& out = net.getOutputSpikes();
-                if (out.size() > 0 && out[0]) out_spikes0.push_back(static_cast<double>(t));
-                if (out.size() > 1 && out[1]) out_spikes1.push_back(static_cast<double>(t));
+                for (int oi = 0; oi < nOutput_ && oi < static_cast<int>(out.size()); ++oi)
+                    if (out[oi]) outSpikes[oi].push_back(static_cast<double>(t));
             }
         }
 
         auto [throttle, steering] = decodeActions(
-            out_spikes0, out_spikes1, decoder_, rl_decoder, max_spikes);
+            outSpikes, decoder_, rl_decoder, max_spikes, neuronsPerVar_);
 
         rlt::set(action_mat, 0, 0, throttle);
         rlt::set(action_mat, 0, 1, steering);
@@ -478,7 +503,7 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
 
         if (resetBetweenSteps_) net.fastReset();
 
-        std::vector<double> out_spikes0, out_spikes1;
+        std::vector<std::vector<double>> outSpikes(nOutput_);
 
         if (encoder_ != SnnEncoder::CURRENT && encoder_ != SnnEncoder::SMALL && encoder_ != SnnEncoder::LARGE) {
             std::vector<double> norm(n_channels, 0.0);
@@ -502,8 +527,8 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
                 net.step(weight);
                 const auto& out = net.getOutputSpikes();
-                if (out.size() > 0 && out[0]) out_spikes0.push_back(static_cast<double>(t));
-                if (out.size() > 1 && out[1]) out_spikes1.push_back(static_cast<double>(t));
+                for (int oi = 0; oi < nOutput_ && oi < static_cast<int>(out.size()); ++oi)
+                    if (out[oi]) outSpikes[oi].push_back(static_cast<double>(t));
             }
         } else {
             std::vector<double> currents(n_channels, 0.0);
@@ -557,13 +582,13 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
                 net.setInputCurrents(currents);
                 net.step(weight);
                 const auto& out = net.getOutputSpikes();
-                if (out.size() > 0 && out[0]) out_spikes0.push_back(static_cast<double>(t));
-                if (out.size() > 1 && out[1]) out_spikes1.push_back(static_cast<double>(t));
+                for (int oi = 0; oi < nOutput_ && oi < static_cast<int>(out.size()); ++oi)
+                    if (out[oi]) outSpikes[oi].push_back(static_cast<double>(t));
             }
         }
 
         auto [throttle, steering] = decodeActions(
-            out_spikes0, out_spikes1, decoder_, rl_decoder, max_spikes);
+            outSpikes, decoder_, rl_decoder, max_spikes, neuronsPerVar_);
 
         rlt::set(action_mat, 0, 0, throttle);
         rlt::set(action_mat, 0, 1, steering);

@@ -128,9 +128,25 @@ each implements `ITask` by bridging a WANN genome to the SNN simulator
 (`../snn-simulator`, encoder → spiking network → decoder) driving an rl-tools or
 Gymnasium environment. `snn_encoder` (`current`/`poisson`/`rate`/`ttfs`/`ttfs_log`/
 `small`/`large`) turns continuous observations into spikes; `snn_decoder`
-(`spike_count`/`rate`/`first_spike`/`voting`/`rate_argmax`) turns output spikes back
-into an action. `snn_reset_between_steps` toggles whether membrane state persists
-across env steps (implicit recurrence) or resets each step.
+(`spike_count`/`rate`/`first_spike`/`voting`/`rate_argmax`/`population_vector`) turns
+output spikes back into an action. `snn_reset_between_steps` toggles whether
+membrane state persists across env steps (implicit recurrence) or resets each step.
+
+`population_vector` (**`SnnCarTask` only**) is a classical population-vector decode,
+not PopSAN's literal learned linear readout — that would need per-connection trained
+decoder weights, which doesn't fit WANN's weight-agnostic (shared-scalar-only)
+design. Each of the two actions (throttle, steering) is decoded from a population of
+`snn_neurons_per_var` output neurons (so `ann_nOutput` must be `2 * snn_neurons_per_var`,
+not `2`); each neuron in a population has a **fixed** preferred value uniformly spaced
+in `[-1,1]` (`populationVectorDecode` in `SnnCarTask.cpp`), and the action is the
+spike-count-weighted average of preferred values (no spikes at all in a population
+falls back to `0.0`). Screening scripts auto-set `ann_nOutput` via
+`decoder_nOutput()` in `screening_reduce.py` when `--decoder population_vector` is
+passed (mirrors `encoder_nInput()` for the `small`/`large` population-coding
+encoders) — for a manual run, set `ann_nOutput` yourself in the override JSON.
+`main_odin_export.cpp`'s firmware export path forwards `ann_nOutput` generically but
+has not been checked against a population-decoded network — verify before exporting
+one.
 
 **Config** (`include/wann/Hyperparams.h`): all algorithm/task/SNN hyperparameters live
 in one struct, loaded from JSON under `p/*.json` (one base config per task, e.g.

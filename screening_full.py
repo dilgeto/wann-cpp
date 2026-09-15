@@ -80,6 +80,7 @@ from screening_reduce import (
     _read_original,
     make_run_key,
     encoder_nInput,
+    decoder_nOutput,
     validate_task_files,
 )
 
@@ -623,9 +624,8 @@ def parse_args() -> argparse.Namespace:
                     choices=["phase2", "phase3", "both", "analyse"],
                     help="Which phase(s) to run (default: both).")
     # Phase 2
-    ap.add_argument("--n",     type=int, default=28,
-                    help="Phase 2: Optuna trials (default: 28 — raised from "
-                         "20 when the space grew from 10 to 14 dims)")
+    ap.add_argument("--n",     type=int, default=20,
+                    help="Phase 2: Optuna trials (default: 20)")
     # Phase 3
     ap.add_argument("--top",   type=int, default=3,
                     help="Phase 3: top-K configs to validate (default: 3)")
@@ -676,6 +676,9 @@ def main() -> None:
             fixed_overrides["ann_nInput"] = n_input
     if args.decoder:
         fixed_overrides["snn_decoder"] = args.decoder
+        n_output = decoder_nOutput(args.decoder)
+        if n_output is not None:
+            fixed_overrides["ann_nOutput"] = n_output
 
     if args.mode == "analyse":
         cmd_analyse(rkey, args.top_analyse)

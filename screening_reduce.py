@@ -71,7 +71,8 @@ except ImportError:
 # ── Valid encoder / decoder values ───────────────────────────────────────────
 
 VALID_ENCODERS = {"current", "poisson", "rate", "ttfs", "ttfs_log", "small", "large"}
-VALID_DECODERS = {"spike_count", "rate", "first_spike", "voting", "rate_argmax"}
+VALID_DECODERS = {"spike_count", "rate", "first_spike", "voting", "rate_argmax",
+                   "population_vector"}
 
 
 def make_run_key(task: str, encoder: str | None, decoder: str | None) -> str:
@@ -149,6 +150,22 @@ def encoder_nInput(encoder: str | None, n_obs: int,
     return None
 
 
+def decoder_nOutput(decoder: str | None, n_actions: int = 2,
+                    neurons_per_var: int = 5) -> int | None:
+    """
+    Return the ann_nOutput required for population-coding decoders, or None
+    if the decoder uses one neuron per action (no change needed).
+
+      population_vector : neurons_per_var per action → n_actions * neurons_per_var
+      others             : 1 neuron per action        → no override needed
+
+    SnnCarTask-only (n_actions=2: throttle, steering) as of now.
+    """
+    if decoder == "population_vector":
+        return n_actions * neurons_per_var
+    return None
+
+
 def validate_task_files(task: str, executable: str, base_config: str) -> None:
     """
     Guard against silently running the wrong task's binary/config — e.g.
@@ -175,11 +192,18 @@ def validate_task_files(task: str, executable: str, base_config: str) -> None:
                   f"¿--base copiado de otra tarea?", file=sys.stderr)
             sys.exit(1)
 
-# ── Initial search space (14 hyperparameters) ─────────────────────────────────
+# ── Initial search space (10 hyperparameters) ─────────────────────────────────
 # Format: param → (kind, lo, hi)
 #   "float" – uniform in [lo, hi]
 #   "log"   – log-uniform in [lo, hi]
 #   "int"   – integer in {lo, ..., hi}
+#
+# SNN simulator microparameters (snn_window_ms/snn_tau_exc/snn_tau_inh/
+# snn_ttfs_threshold) are deliberately NOT included yet — screening this round
+# is scoped to only the 10 WANN algorithm/mutation/selection hyperparameters
+# below. They'll be added in a later round; see _SNN_SPACE further down for
+# the ranges already worked out (do not add "dt" or "snn_ttfs_tmax_ratio"
+# alongside snn_window_ms when that round comes — both are collinear with it).
 
 INITIAL_SPACE: dict[str, tuple] = {
     "alg_probMoo":           ("float", 0.05, 0.70),
@@ -192,15 +216,14 @@ INITIAL_SPACE: dict[str, tuple] = {
     "select_cullRatio":      ("float", 0.05, 0.50),
     "select_eliteRatio":     ("float", 0.05, 0.40),
     "select_tournSize":      ("int",   2,    16),
+}
 
-    # --- SNN simulator microparameters (SnnCarTask only; ttfs + first_spike) ---
-    # Do NOT add "dt" or "snn_ttfs_tmax_ratio" here — both are collinear with
-    # snn_window_ms (see Hyperparams.h comments) and are kept fixed instead.
-    # snn_window_ms is "int", not "float": with dt=1ms fixed, a fractional
-    # window makes TTFSEncoder's round-then-clamp (ttfsEncoder.cpp:29-30)
-    # produce an off-grid spike time near duration-dt that the simulation
-    # loop's integer-only clock can never match — the spike is silently
-    # dropped for the affected input band. Integers avoid this entirely.
+# Reserved for a later screening round (SnnCarTask only; ttfs + first_spike).
+# snn_window_ms is "int", not "float": with dt=1ms fixed, a fractional window
+# makes TTFSEncoder's round-then-clamp (ttfsEncoder.cpp:29-30) produce an
+# off-grid spike time that the simulation loop's integer-only clock can never
+# match — the spike is silently dropped for the affected input band.
+_SNN_SPACE: dict[str, tuple] = {
     "snn_window_ms":         ("int",   20,    100),
     "snn_tau_exc":           ("float", 2.0,   15.0),
     "snn_tau_inh":           ("float", 4.0,   30.0),
@@ -551,7 +574,8 @@ def cmd_full(
     if tag:
         rkey = f"{rkey}_{tag}"
 
-    # Fixed overrides: encoder/decoder (+ ann_nInput for population encoders)
+    # Fixed overrides: encoder/decoder (+ ann_nInput/ann_nOutput for population
+    # coding, on the input and output side respectively)
     fixed_overrides: dict = {}
     if encoder:
         fixed_overrides["snn_encoder"] = encoder
@@ -560,6 +584,9 @@ def cmd_full(
             fixed_overrides["ann_nInput"] = n_input
     if decoder:
         fixed_overrides["snn_decoder"] = decoder
+        n_output = decoder_nOutput(decoder)
+        if n_output is not None:
+            fixed_overrides["ann_nOutput"] = n_output
 
     out_dir = Path("screening_reduce") / rkey
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -754,12 +781,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--mode",   default="full",
                     choices=["full", "analyse"],
                     help="'full': run on cluster. 'analyse': report only (local).")
-    ap.add_argument("--rounds", type=int, default=6,
-                    help="Max reduction rounds (default: 6 — raised from 4 "
-                         "when the space grew from 10 to 14 dims)")
-    ap.add_argument("--n",      type=int, default=45,
-                    help="Trials per round (default: 45 — raised from 30 "
-                         "when the space grew from 10 to 14 dims)")
+    ap.add_argument("--rounds", type=int, default=4,
+                    help="Max reduction rounds (default: 4)")
+    ap.add_argument("--n",      type=int, default=30,
+                    help="Trials per round (default: 30)")
     ap.add_argument("--jobs",   type=int, default=8,
                     help="Parallel workers (default: 8)")
     ap.add_argument("--omp",    type=int, default=None,
