@@ -289,19 +289,23 @@ double SnnPendulumTask::runEpisode(Network& net, double sharedWeight, int episod
 // ConnGene.excitatory is correctly reflected as synapse polarity.
 // Thread-safe: all objects are function-local.
 // -------------------------------------------------------------------------
+double SnnPendulumTask::evaluateWeight(const Network& templateNet, int wi, int seed) const
+{
+    Network net = templateNet;
+    double total = 0.0;
+    for (int rep = 0; rep < nReps_; ++rep) {
+        int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
+        total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed);
+    }
+    return total / static_cast<double>(nReps_);
+}
+
 std::vector<double> SnnPendulumTask::evaluate(const Ind& ind, int seed)
 {
-    Network net = buildNetwork(ind);
-
+    Network templateNet = buildNetwork(ind);
     std::vector<double> rewards(N_WEIGHTS, 0.0);
-    for (int wi = 0; wi < N_WEIGHTS; ++wi) {
-        double total = 0.0;
-        for (int rep = 0; rep < nReps_; ++rep) {
-            int episodeSeed = (seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed);
-        }
-        rewards[wi] = total / static_cast<double>(nReps_);
-    }
+    for (int wi = 0; wi < N_WEIGHTS; ++wi)
+        rewards[wi] = evaluateWeight(templateNet, wi, seed);
     return rewards;
 }
 

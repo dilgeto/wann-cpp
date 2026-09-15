@@ -37,6 +37,20 @@ public:
     // This is the preferred entry point from main_snn.cpp.
     std::vector<double> evaluate(const Ind& ind, int seed = -1);
 
+    // Build the network topology for one individual. Independent of weight
+    // value (the shared scalar is applied at simulation time in
+    // Network::step(), not baked into synapses here), so callers can build
+    // this once per individual and reuse (copy) it across weight values
+    // instead of re-parsing the genome for each one.
+    Network buildNetwork(const Ind& ind) const;
+
+    // Evaluate a single (individual, weight-value) pair from a pre-built
+    // topology — the finer-grained unit evalPop() dispatches on so idle
+    // threads always have work near the end of a generation, instead of
+    // only per full individual. Copies templateNet internally so concurrent
+    // calls sharing the same template are safe.
+    double evaluateWeight(const Network& templateNet, int wi, int seed = -1) const;
+
     // ITask compatibility: builds without polarity info (all synapses excitatory).
     std::vector<double> getDistFitness(
             const std::vector<double>& wVec,
@@ -55,10 +69,6 @@ private:
     bool       resetBetweenSteps_;
 
     static NeuronType wannActToNeuronType(int actId);
-
-    // Build an SNN Network directly from the WANN genome.
-    // Uses ConnGene.excitatory to set each synapse's polarity.
-    Network buildNetwork(const Ind& ind) const;
 
     // Build without polarity (ITask fallback — all synapses excitatory).
     Network buildNetwork(const std::vector<double>& wVec,

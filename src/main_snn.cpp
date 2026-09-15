@@ -21,20 +21,38 @@
 
 namespace fs = std::filesystem;
 
-// Evaluate the population in parallel (OpenMP over individuals).
-// Each thread creates an independent Network + rl-tools environment, so this
-// is safely parallel without nested OpenMP from the SNN side.
+// Evaluate the population in parallel (OpenMP over individual x weight-value
+// pairs). Each thread works from a copy of its individual's pre-built
+// Network + an independent rl-tools environment, so this is safely parallel
+// without nested OpenMP from the SNN side. Flat dispatch over pairs (instead
+// of whole individuals) gives schedule(dynamic) finer-grained units, so idle
+// threads keep finding work later into the generation.
 static std::vector<std::vector<double>>
 evalPop(const std::vector<wann::Ind>& pop,
         wann::SnnPendulumTask&        task,
         int                           seed)
 {
-    const int n = static_cast<int>(pop.size());
-    std::vector<std::vector<double>> reward(n);
+    const int n  = static_cast<int>(pop.size());
+    const int nW = task.numWeightVals();
 
+    // Phase A: build each individual's network topology once. Independent
+    // of weight value (the shared scalar is applied at simulation time),
+    // so this avoids re-parsing the same genome nW times below.
+    std::vector<Network> templates(n);
     #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < n; ++i)
-        reward[i] = task.evaluate(pop[i], seed * 10000 + i);
+        templates[i] = task.buildNetwork(pop[i]);
+
+    // Phase B: evaluate every (individual, weight-value) pair from a cheap
+    // copy of its pre-built template.
+    std::vector<std::vector<double>> reward(n, std::vector<double>(nW, 0.0));
+    const int total = n * nW;
+    #pragma omp parallel for schedule(dynamic)
+    for (int idx = 0; idx < total; ++idx) {
+        const int i  = idx / nW;
+        const int wi = idx % nW;
+        reward[i][wi] = task.evaluateWeight(templates[i], wi, seed * 10000 + i);
+    }
     return reward;
 }
 

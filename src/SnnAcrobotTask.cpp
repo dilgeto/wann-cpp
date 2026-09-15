@@ -335,19 +335,23 @@ std::pair<double,double> SnnAcrobotTask::runEpisode(Network& net, double sharedW
 // -------------------------------------------------------------------------
 // evaluate – preferred entry point (full genome, with polarity)
 // -------------------------------------------------------------------------
+double SnnAcrobotTask::evaluateWeight(const Network& templateNet, int wi, int seed) const
+{
+    Network net = templateNet;
+    double total = 0.0;
+    for (int rep = 0; rep < nReps_; ++rep) {
+        long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
+        total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
+    }
+    return total / static_cast<double>(nReps_);
+}
+
 std::vector<double> SnnAcrobotTask::evaluate(const Ind& ind, int seed)
 {
-    Network net = buildNetwork(ind);
-
+    Network templateNet = buildNetwork(ind);
     std::vector<double> rewards(N_WEIGHTS, 0.0);
-    for (int wi = 0; wi < N_WEIGHTS; ++wi) {
-        double total = 0.0;
-        for (int rep = 0; rep < nReps_; ++rep) {
-            long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
-        }
-        rewards[wi] = total / static_cast<double>(nReps_);
-    }
+    for (int wi = 0; wi < N_WEIGHTS; ++wi)
+        rewards[wi] = evaluateWeight(templateNet, wi, seed);
     return rewards;
 }
 

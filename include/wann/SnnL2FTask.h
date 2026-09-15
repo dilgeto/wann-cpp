@@ -41,6 +41,20 @@ public:
 
     std::vector<double> evaluate(const Ind& ind, int seed = -1);
 
+    // Build the network topology for one individual. Independent of weight
+    // value (the shared scalar is applied at simulation time in
+    // Network::step(), not baked into synapses here), so callers can build
+    // this once per individual and reuse (copy) it across weight values
+    // instead of re-parsing the genome for each one.
+    Network buildNetwork(const Ind& ind) const;
+
+    // Evaluate a single (individual, weight-value) pair from a pre-built
+    // topology — the finer-grained unit evalPop() dispatches on so idle
+    // threads always have work near the end of a generation, instead of
+    // only per full individual. Copies templateNet internally so concurrent
+    // calls sharing the same template are safe.
+    double evaluateWeight(const Network& templateNet, int wi, int seed = -1) const;
+
     std::vector<double> getDistFitness(
             const std::vector<double>& wVec,
             const std::vector<int>&    aVec,
@@ -79,7 +93,6 @@ private:
 
     static NeuronType wannActToNeuronType(int actId);
 
-    Network buildNetwork(const Ind& ind) const;
     Network buildNetwork(const std::vector<double>& wVec,
                          const std::vector<int>&    aVec) const;
 
