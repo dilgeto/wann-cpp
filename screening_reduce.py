@@ -615,8 +615,25 @@ def cmd_full(
                 if line.strip():
                     last_entry = json.loads(line)
         if last_entry is not None:
-            space = {p: tuple(v) for p, v in last_entry["space"].items()}
+            restored = {p: tuple(v) for p, v in last_entry["space"].items()}
             print(f"Resuming: restored space from round {last_entry['round']}.")
+            # Reconcile against the *current* space (INITIAL_SPACE +
+            # space_override) instead of trusting the log blindly — if
+            # INITIAL_SPACE grew since this log was written (e.g. new SNN
+            # hyperparameters added), a naive `space = restored` would
+            # silently drop them with no warning.
+            added    = [p for p in space if p not in restored]
+            removed  = [p for p in restored if p not in space]
+            new_full = {p: space[p] for p in added}  # full-range default, captured before reassigning `space`
+            space    = {p: restored[p] for p in restored if p in space}
+            space.update(new_full)
+            if added:
+                print(f"  NOTE: {added} not in the restored log (new since "
+                      f"it was written) — kept at their INITIAL_SPACE range "
+                      f"instead of narrowed.")
+            if removed:
+                print(f"  NOTE: {removed} in the restored log but no longer "
+                      f"in INITIAL_SPACE — dropped.")
 
     print(f"\n{'='*66}")
     print(f"  Task: {task}   run key: {rkey}")

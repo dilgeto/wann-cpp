@@ -203,7 +203,12 @@ def run_phase2(
 ) -> pd.DataFrame:
     """
     Optuna TPE search with full training budget (no fidelity overrides).
-    No pruning — each trial runs to completion.
+    No cross-trial (Optuna-level) pruning — that would need _run_subprocess
+    to poll intermediate stats like screening_reduce.py's objective does,
+    instead of the blocking subprocess.run() used here. Each individual run
+    can still stop itself early via early_stop_patience (fixed_overrides),
+    which is self-referential (no new fitTop record for N gens) rather than
+    compared against other trials.
     """
     fixed_overrides = fixed_overrides or {}
     cfg_dir = out_dir / "p2_configs"
@@ -217,7 +222,8 @@ def run_phase2(
             multivariate=True,
             n_startup_trials=max(5, n_trials // 4),
         ),
-        # No pruner: full-budget runs are too expensive to cut short
+        # No cross-trial pruner — see run_phase2's docstring. Per-run early
+        # stopping (early_stop_patience) is set via fixed_overrides instead.
     )
 
     results: list[dict] = []
@@ -658,6 +664,13 @@ def parse_args() -> argparse.Namespace:
                          "reduced space, and Phase 2/3 write to their own "
                          "screening_full/{run_key}_{tag}/ output dir instead "
                          "of colliding with an existing run.")
+    ap.add_argument("--early-stop-patience", type=int, default=100,
+                    dest="early_stop_patience",
+                    help="Generations without a new fitTop record before a "
+                         "Phase 2/3 run stops itself early (0 = disabled, run "
+                         "the full maxGen). Default: 100. Car-only — "
+                         "early_stop_patience is only wired into main_car.cpp, "
+                         "a no-op for every other task.")
     return ap.parse_args()
 
 
@@ -681,6 +694,12 @@ def main() -> None:
         n_output = decoder_nOutput(args.decoder)
         if n_output is not None:
             fixed_overrides["ann_nOutput"] = n_output
+    if args.early_stop_patience > 0:
+        if args.task != "car":
+            print(f"WARNING: --early-stop-patience is only wired into "
+                  f"main_car.cpp — no-op for --task {args.task}.",
+                  file=sys.stderr)
+        fixed_overrides["early_stop_patience"] = args.early_stop_patience
 
     if args.mode == "analyse":
         cmd_analyse(rkey, args.top_analyse)
