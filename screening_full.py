@@ -86,7 +86,8 @@ from screening_reduce import (
 
 # ── Full fidelity (from each task's base JSON) ────────────────────────────────
 # Phase 2 does NOT override maxGen/popSize — it lets the base config determine
-# the training budget. We only pass the 10 hyperparameters as overrides.
+# the training budget. We only pass INITIAL_SPACE's hyperparameters (or the
+# reduced space from screening_reduce.py, if phase 1 was run) as overrides.
 # Phase 3 additionally sets save_mod=10 to keep intermediate snapshots.
 
 PHASE3_SAVE_MOD = 10   # save every 10 gens during validation runs
@@ -624,8 +625,9 @@ def parse_args() -> argparse.Namespace:
                     choices=["phase2", "phase3", "both", "analyse"],
                     help="Which phase(s) to run (default: both).")
     # Phase 2
-    ap.add_argument("--n",     type=int, default=20,
-                    help="Phase 2: Optuna trials (default: 20)")
+    ap.add_argument("--n",     type=int, default=28,
+                    help="Phase 2: Optuna trials (default: 28 — raised from "
+                         "20 for the 14-dim space including SNN microparameters)")
     # Phase 3
     ap.add_argument("--top",   type=int, default=3,
                     help="Phase 3: top-K configs to validate (default: 3)")

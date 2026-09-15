@@ -192,18 +192,16 @@ def validate_task_files(task: str, executable: str, base_config: str) -> None:
                   f"¿--base copiado de otra tarea?", file=sys.stderr)
             sys.exit(1)
 
-# ── Initial search space (10 hyperparameters) ─────────────────────────────────
+# ── Initial search space (14 hyperparameters) ─────────────────────────────────
 # Format: param → (kind, lo, hi)
 #   "float" – uniform in [lo, hi]
 #   "log"   – log-uniform in [lo, hi]
 #   "int"   – integer in {lo, ..., hi}
 #
-# SNN simulator microparameters (snn_window_ms/snn_tau_exc/snn_tau_inh/
-# snn_ttfs_threshold) are deliberately NOT included yet — screening this round
-# is scoped to only the 10 WANN algorithm/mutation/selection hyperparameters
-# below. They'll be added in a later round; see _SNN_SPACE further down for
-# the ranges already worked out (do not add "dt" or "snn_ttfs_tmax_ratio"
-# alongside snn_window_ms when that round comes — both are collinear with it).
+# To stop optimizing one of these, just comment out its line (plain dict
+# literal — a commented-out entry is simply absent from INITIAL_SPACE, so
+# suggest_from_space() never suggests it and Hyperparams keeps whatever the
+# base JSON sets for that field, fixed for every trial).
 
 INITIAL_SPACE: dict[str, tuple] = {
     "alg_probMoo":           ("float", 0.05, 0.70),
@@ -216,15 +214,16 @@ INITIAL_SPACE: dict[str, tuple] = {
     "select_cullRatio":      ("float", 0.05, 0.50),
     "select_eliteRatio":     ("float", 0.05, 0.40),
     "select_tournSize":      ("int",   2,    16),
-}
 
-# Reserved for a later screening round (SnnCarTask only; ttfs + first_spike).
-# snn_window_ms is "int", not "float": with dt=1ms fixed, a fractional window
-# makes TTFSEncoder's round-then-clamp (ttfsEncoder.cpp:29-30) produce an
-# off-grid spike time that the simulation loop's integer-only clock can never
-# match — the spike is silently dropped for the affected input band.
-_SNN_SPACE: dict[str, tuple] = {
-    "snn_window_ms":         ("int",   20,    100),
+    # --- SNN simulator microparameters (SnnCarTask only; ttfs + first_spike) ---
+    # Do NOT add "dt" or "snn_ttfs_tmax_ratio" here — both are collinear with
+    # snn_window_ms (see Hyperparams.h comments) and are kept fixed instead.
+    # snn_window_ms is "int", not "float": with dt=1ms fixed, a fractional
+    # window makes TTFSEncoder's round-then-clamp (ttfsEncoder.cpp:29-30)
+    # produce an off-grid spike time that the simulation loop's integer-only
+    # clock can never match — the spike is silently dropped for the affected
+    # input band. Integers avoid this entirely.
+    "snn_window_ms":         ("int",   20,    80),
     "snn_tau_exc":           ("float", 2.0,   15.0),
     "snn_tau_inh":           ("float", 4.0,   30.0),
     "snn_ttfs_threshold":    ("log",   1e-6,  0.30),
@@ -781,10 +780,12 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--mode",   default="full",
                     choices=["full", "analyse"],
                     help="'full': run on cluster. 'analyse': report only (local).")
-    ap.add_argument("--rounds", type=int, default=4,
-                    help="Max reduction rounds (default: 4)")
-    ap.add_argument("--n",      type=int, default=30,
-                    help="Trials per round (default: 30)")
+    ap.add_argument("--rounds", type=int, default=6,
+                    help="Max reduction rounds (default: 6 — raised from 4 "
+                         "for the 14-dim space including SNN microparameters)")
+    ap.add_argument("--n",      type=int, default=45,
+                    help="Trials per round (default: 45 — raised from 30 "
+                         "for the 14-dim space including SNN microparameters)")
     ap.add_argument("--jobs",   type=int, default=8,
                     help="Parallel workers (default: 8)")
     ap.add_argument("--omp",    type=int, default=None,
