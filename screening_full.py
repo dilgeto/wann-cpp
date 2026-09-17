@@ -81,6 +81,7 @@ from screening_reduce import (
     make_run_key,
     encoder_nInput,
     decoder_nOutput,
+    read_neurons_per_var,
     validate_task_files,
 )
 
@@ -682,16 +683,20 @@ def main() -> None:
     if args.tag:
         rkey = f"{rkey}_{args.tag}"
 
+    executable  = args.exe  or td["executable"]
+    base_config = args.base or td["base_config"]
+
     # Fixed overrides passed to every C++ run
+    npv = read_neurons_per_var(base_config)
     fixed_overrides: dict = {}
     if args.encoder:
         fixed_overrides["snn_encoder"] = args.encoder
-        n_input = encoder_nInput(args.encoder, TASK_DEFAULTS[args.task]["n_obs"])
+        n_input = encoder_nInput(args.encoder, TASK_DEFAULTS[args.task]["n_obs"], npv)
         if n_input is not None:
             fixed_overrides["ann_nInput"] = n_input
     if args.decoder:
         fixed_overrides["snn_decoder"] = args.decoder
-        n_output = decoder_nOutput(args.decoder)
+        n_output = decoder_nOutput(args.decoder, neurons_per_var=npv)
         if n_output is not None:
             fixed_overrides["ann_nOutput"] = n_output
     if args.early_stop_patience > 0:
@@ -705,9 +710,6 @@ def main() -> None:
         cmd_analyse(rkey, args.top_analyse)
         return
 
-
-    executable  = args.exe  or td["executable"]
-    base_config = args.base or td["base_config"]
     validate_task_files(args.task, executable, base_config)
     out_dir     = Path("screening_full") / rkey
     out_dir.mkdir(parents=True, exist_ok=True)

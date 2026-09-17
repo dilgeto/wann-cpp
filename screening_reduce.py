@@ -133,8 +133,30 @@ TASK_DEFAULTS: dict[str, dict] = {
 }
 
 
+# Fallback only for when a base config file is missing the key entirely —
+# must match Hyperparams.h's own default so this fallback is never the thing
+# actually deciding the value in practice.
+_DEFAULT_NEURONS_PER_VAR = 5
+
+
+def read_neurons_per_var(base_config: str) -> int:
+    """
+    Read snn_neurons_per_var from the actual base config JSON about to be
+    used, instead of trusting a hardcoded function-signature default that
+    can silently diverge from it (e.g. someone bumps snn_neurons_per_var to
+    8 in car_snn.json for population_vector, but encoder_nInput/decoder_nOutput
+    still compute ann_nInput/ann_nOutput as if it were still 5 — the C++ side
+    then throws on a mismatch it can detect, but only after wasting a launch).
+    """
+    try:
+        with open(base_config) as f:
+            return int(json.load(f).get("snn_neurons_per_var", _DEFAULT_NEURONS_PER_VAR))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return _DEFAULT_NEURONS_PER_VAR
+
+
 def encoder_nInput(encoder: str | None, n_obs: int,
-                   neurons_per_var: int = 5) -> int | None:
+                   neurons_per_var: int = _DEFAULT_NEURONS_PER_VAR) -> int | None:
     """
     Return the ann_nInput required for population-coding encoders, or None
     if the encoder uses one neuron per observation variable (no change needed).
@@ -142,6 +164,9 @@ def encoder_nInput(encoder: str | None, n_obs: int,
       small : 2 neurons per variable  →  n_obs * 2
       large : neurons_per_var per var →  n_obs * neurons_per_var
       others: 1 neuron per variable   →  no override needed
+
+    Pass neurons_per_var=read_neurons_per_var(base_config) — the default here
+    is only a fallback for callers that don't have a base_config handy.
     """
     if encoder == "small":
         return n_obs * 2
@@ -151,7 +176,7 @@ def encoder_nInput(encoder: str | None, n_obs: int,
 
 
 def decoder_nOutput(decoder: str | None, n_actions: int = 2,
-                    neurons_per_var: int = 5) -> int | None:
+                    neurons_per_var: int = _DEFAULT_NEURONS_PER_VAR) -> int | None:
     """
     Return the ann_nOutput required for population-coding decoders, or None
     if the decoder uses one neuron per action (no change needed).
@@ -159,7 +184,9 @@ def decoder_nOutput(decoder: str | None, n_actions: int = 2,
       population_vector : neurons_per_var per action → n_actions * neurons_per_var
       others             : 1 neuron per action        → no override needed
 
-    SnnCarTask-only (n_actions=2: throttle, steering) as of now.
+    SnnCarTask-only (n_actions=2: throttle, steering) as of now. Pass
+    neurons_per_var=read_neurons_per_var(base_config) — the default here is
+    only a fallback for callers that don't have a base_config handy.
     """
     if decoder == "population_vector":
         return n_actions * neurons_per_var
@@ -591,15 +618,16 @@ def cmd_full(
 
     # Fixed overrides: encoder/decoder (+ ann_nInput/ann_nOutput for population
     # coding, on the input and output side respectively)
+    npv = read_neurons_per_var(base_config)
     fixed_overrides: dict = {}
     if encoder:
         fixed_overrides["snn_encoder"] = encoder
-        n_input = encoder_nInput(encoder, TASK_DEFAULTS[task]["n_obs"])
+        n_input = encoder_nInput(encoder, TASK_DEFAULTS[task]["n_obs"], npv)
         if n_input is not None:
             fixed_overrides["ann_nInput"] = n_input
     if decoder:
         fixed_overrides["snn_decoder"] = decoder
-        n_output = decoder_nOutput(decoder)
+        n_output = decoder_nOutput(decoder, neurons_per_var=npv)
         if n_output is not None:
             fixed_overrides["ann_nOutput"] = n_output
 
