@@ -412,6 +412,7 @@ def _make_objective(
         cfg_path   = cfg_dir / f"{trial_key}.json"
         prefix     = f"reduce_{run_key}/{trial_key}"
         stats_file = Path("log") / f"reduce_{run_key}" / f"{trial_key}_stats.out"
+        err_path   = Path("log") / f"reduce_{run_key}" / f"{trial_key}_stderr.txt"
 
         cfg_path.write_text(json.dumps(merged, indent=2))
 
@@ -421,10 +422,12 @@ def _make_objective(
                "-o", prefix, "-s", str(seed + round_idx * 100000 + trial.number)]
 
         t0 = time.monotonic()
+        err_file = open(err_path, "w")
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL, env=env)
+                                    stderr=err_file, env=env)
         except Exception as exc:
+            err_file.close()
             raise optuna.exceptions.OptunaError(str(exc))
 
         last_step = 0
@@ -442,6 +445,7 @@ def _make_objective(
                     if trial.should_prune():
                         proc.terminate()
                         proc.wait()
+                        err_file.close()
                         raise optuna.TrialPruned()
             except (optuna.TrialPruned, optuna.exceptions.OptunaError):
                 raise
@@ -449,10 +453,22 @@ def _make_objective(
                 pass
 
         proc.wait()
+        err_file.close()
         elapsed = time.monotonic() - t0
 
         if proc.returncode != 0:
-            raise optuna.exceptions.OptunaError("non-zero exit")
+            err_text = err_path.read_text(errors="replace").strip()
+            snippet  = err_text[-2000:] if err_text else "(stderr vacío)"
+            raise optuna.exceptions.OptunaError(
+                f"non-zero exit ({proc.returncode}); see {err_path}\n{snippet}")
+
+        # Trial succeeded — drop the (presumably empty) stderr file to avoid
+        # cluttering log/ with thousands of zero-byte files across rounds.
+        try:
+            if err_path.stat().st_size == 0:
+                err_path.unlink()
+        except OSError:
+            pass
 
         peak = _read_peak(stats_file)
         if peak is None:
