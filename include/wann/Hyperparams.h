@@ -129,6 +129,26 @@ struct Hyperparams {
     // (no behavior change unless overridden).
     double l2f_termination_penalty = -100.0;
     double l2f_position_clip       = 0.0;
+
+    // --- L2F initial-state distribution (SnnL2FTask only) ---
+    // rl-tools' compiled-in init distribution for L2F (init_90_deg) samples,
+    // for 90% of episodes (1-guidance), a starting orientation up to 90°
+    // off level, up to ±1 m/s of linear velocity error per axis, and up to
+    // ±1 rad/s of angular velocity per axis, with rotors starting between
+    // off and idle (well below hover thrust). Combined with motor lag, a
+    // large fraction of episodes are already fighting an emergency
+    // attitude-recovery within the first ~100-200ms regardless of
+    // controller quality, before trajectory tracking is even relevant —
+    // replay traces across every encoder/decoder combination tried on this
+    // task crash in that same ~15-step window, independent of the
+    // controller. Exposing these lets training start from an easier
+    // distribution (curriculum) without touching rl-tools; defaults below
+    // reproduce init_90_deg exactly (no behavior change unless overridden).
+    double l2f_init_guidance             = 0.1;
+    double l2f_init_max_position         = 0.5;
+    double l2f_init_max_angle            = 1.5707963267948966; // 90 degrees
+    double l2f_init_max_linear_velocity  = 1.0;
+    double l2f_init_max_angular_velocity = 1.0;
 };
 
 namespace detail {
@@ -177,6 +197,11 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.snn_ttfs_threshold,        "snn_ttfs_threshold");
     get(p.l2f_termination_penalty,   "l2f_termination_penalty");
     get(p.l2f_position_clip,         "l2f_position_clip");
+    get(p.l2f_init_guidance,             "l2f_init_guidance");
+    get(p.l2f_init_max_position,         "l2f_init_max_position");
+    get(p.l2f_init_max_angle,            "l2f_init_max_angle");
+    get(p.l2f_init_max_linear_velocity,  "l2f_init_max_linear_velocity");
+    get(p.l2f_init_max_angular_velocity, "l2f_init_max_angular_velocity");
 }
 
 // Parse a string that is either a file path or an inline JSON object.

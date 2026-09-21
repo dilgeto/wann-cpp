@@ -92,6 +92,11 @@ private:
     bool       resetBetweenSteps_;
     double     terminationPenalty_;
     double     positionClip_;
+    double     initGuidance_;
+    double     initMaxPosition_;
+    double     initMaxAngle_;
+    double     initMaxLinearVelocity_;
+    double     initMaxAngularVelocity_;
 
     static NeuronType wannActToNeuronType(int actId);
 

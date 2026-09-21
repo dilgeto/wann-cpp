@@ -156,6 +156,11 @@ SnnL2FTask::SnnL2FTask(const Hyperparams& hyp)
     , resetBetweenSteps_(hyp.snn_reset_between_steps)
     , terminationPenalty_(hyp.l2f_termination_penalty)
     , positionClip_(hyp.l2f_position_clip)
+    , initGuidance_(hyp.l2f_init_guidance)
+    , initMaxPosition_(hyp.l2f_init_max_position)
+    , initMaxAngle_(hyp.l2f_init_max_angle)
+    , initMaxLinearVelocity_(hyp.l2f_init_max_linear_velocity)
+    , initMaxAngularVelocity_(hyp.l2f_init_max_angular_velocity)
 {}
 
 NeuronType SnnL2FTask::wannActToNeuronType(int actId) {
@@ -283,6 +288,14 @@ std::pair<double,double> SnnL2FTask::runEpisode(Network& net, double sharedWeigh
     rlt::sample_initial_parameters(device, env, params, rng);  // fills the Lissajous trajectory table
     params.mdp.reward.termination_penalty = terminationPenalty_;
     params.mdp.reward.position_clip       = positionClip_;
+    // Must be set before sample_initial_state() below, which reads these
+    // fields directly to draw the episode's starting position/orientation/
+    // velocities.
+    params.mdp.init.guidance             = initGuidance_;
+    params.mdp.init.max_position         = initMaxPosition_;
+    params.mdp.init.max_angle            = initMaxAngle_;
+    params.mdp.init.max_linear_velocity  = initMaxLinearVelocity_;
+    params.mdp.init.max_angular_velocity = initMaxAngularVelocity_;
 
     typename Env::Observation obs_type;
     ObsMatrix obs_mat;
@@ -484,6 +497,14 @@ void SnnL2FTask::exportTrajectory(const std::vector<double>& wVec,
     rlt::sample_initial_parameters(device, env, params, rng);
     params.mdp.reward.termination_penalty = terminationPenalty_;
     params.mdp.reward.position_clip       = positionClip_;
+    // Must be set before sample_initial_state() below, which reads these
+    // fields directly to draw the episode's starting position/orientation/
+    // velocities.
+    params.mdp.init.guidance             = initGuidance_;
+    params.mdp.init.max_position         = initMaxPosition_;
+    params.mdp.init.max_angle            = initMaxAngle_;
+    params.mdp.init.max_linear_velocity  = initMaxLinearVelocity_;
+    params.mdp.init.max_angular_velocity = initMaxAngularVelocity_;
 
     typename Env::Observation obs_type;
     ObsMatrix obs_mat;
