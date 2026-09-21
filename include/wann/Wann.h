@@ -70,7 +70,8 @@ private:
                                 const std::vector<NodeGene>& nodes);
     void   mutAddNode          (std::vector<ConnGene>& conns,
                                 std::vector<NodeGene>& nodes);
-    void   mutToggleExcitatory (std::vector<ConnGene>& conns);
+    void   mutToggleExcitatory (std::vector<ConnGene>& conns,
+                                const std::vector<NodeGene>& nodes);
 };
 
 } // namespace wann

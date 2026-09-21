@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace wann {
@@ -399,13 +400,44 @@ void Wann::mutAddNode(std::vector<ConnGene>& conns,
 // =========================================================================
 // mutToggleExcitatory – flip the excitatory/inhibitory polarity of one
 // randomly chosen enabled connection.
+//
+// An output node fed only by inhibitory (or zero) synapses can never spike,
+// regardless of the shared weight value in effect — inhibition alone cannot
+// drive a neuron above threshold. That is invisible to the fitness signal on
+// tasks with a large penalty-per-actuator (e.g. SnnL2FTask's quadrotor,
+// where one permanently silent rotor is enough to destabilize and crash
+// almost immediately) because most competing genomes fail for one reason or
+// another anyway, so selection can't reliably prune this state out. Guard
+// against it directly: never let this mutation remove the last enabled
+// excitatory connection feeding an output node.
 // =========================================================================
-void Wann::mutToggleExcitatory(std::vector<ConnGene>& conns) {
+void Wann::mutToggleExcitatory(std::vector<ConnGene>& conns,
+                                const std::vector<NodeGene>& nodes) {
     std::vector<int> active;
     for (int i = 0; i < static_cast<int>(conns.size()); ++i)
         if (conns[i].enabled) active.push_back(i);
     if (active.empty()) return;
-    int idx = active[randInt(0, static_cast<int>(active.size()) - 1)];
+
+    std::unordered_set<int> outputIds;
+    for (const auto& n : nodes)
+        if (n.type == 2) outputIds.insert(n.id);
+
+    std::unordered_map<int,int> excitatoryInCount;
+    for (int i : active)
+        if (conns[i].excitatory && outputIds.count(conns[i].dst))
+            ++excitatoryInCount[conns[i].dst];
+
+    std::vector<int> safe;
+    safe.reserve(active.size());
+    for (int i : active) {
+        bool wouldOrphanOutput = conns[i].excitatory
+            && outputIds.count(conns[i].dst)
+            && excitatoryInCount[conns[i].dst] <= 1;
+        if (!wouldOrphanOutput) safe.push_back(i);
+    }
+    if (safe.empty()) return;  // every candidate is a last-excitatory-input link
+
+    int idx = safe[randInt(0, static_cast<int>(safe.size()) - 1)];
     conns[idx].excitatory = !conns[idx].excitatory;
 }
 
@@ -470,7 +502,7 @@ void Wann::topoMutate(Ind& child) {
         }
 
         case 5:  // Toggle excitatory/inhibitory polarity of one connection
-            mutToggleExcitatory(conns);
+            mutToggleExcitatory(conns, nodes);
             break;
 
         default: break;
