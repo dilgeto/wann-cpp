@@ -9,6 +9,36 @@
 #include <unordered_map>
 #include <unordered_set>
 
+namespace {
+std::unordered_set<int> collectOutputIds(const std::vector<wann::NodeGene>& nodes) {
+    std::unordered_set<int> ids;
+    for (const auto& n : nodes)
+        if (n.type == 2) ids.insert(n.id);
+    return ids;
+}
+
+// Enabled excitatory/inhibitory incoming counts per output node id. A node
+// fed by a net-inhibitory or merely-tied mix of simultaneous synapses can
+// fail to ever cross firing threshold even with several excitatory
+// connections present on paper (all synapses share the same scalar weight
+// value, so what matters is the net sign of the sum, not just whether an
+// excitatory edge exists at all) — confirmed empirically on SnnL2FTask: two
+// permanently-silent output rotors had net exc-inh balances of -1 and +1,
+// while the two that fired reliably had +10 each.
+std::unordered_map<int, std::pair<int,int>> outputExcInhCounts(
+    const std::vector<wann::ConnGene>& conns,
+    const std::unordered_set<int>&     outputIds)
+{
+    std::unordered_map<int, std::pair<int,int>> counts;
+    for (const auto& c : conns) {
+        if (!c.enabled || !outputIds.count(c.dst)) continue;
+        auto& [exc, inh] = counts[c.dst];
+        (c.excitatory ? exc : inh)++;
+    }
+    return counts;
+}
+} // namespace
+
 namespace wann {
 
 // =========================================================================
@@ -401,15 +431,18 @@ void Wann::mutAddNode(std::vector<ConnGene>& conns,
 // mutToggleExcitatory – flip the excitatory/inhibitory polarity of one
 // randomly chosen enabled connection.
 //
-// An output node fed only by inhibitory (or zero) synapses can never spike,
-// regardless of the shared weight value in effect — inhibition alone cannot
-// drive a neuron above threshold. That is invisible to the fitness signal on
-// tasks with a large penalty-per-actuator (e.g. SnnL2FTask's quadrotor,
-// where one permanently silent rotor is enough to destabilize and crash
-// almost immediately) because most competing genomes fail for one reason or
-// another anyway, so selection can't reliably prune this state out. Guard
-// against it directly: never let this mutation remove the last enabled
-// excitatory connection feeding an output node.
+// An output node whose enabled incoming connections are not net-excitatory
+// (exc count > inh count) can fail to ever cross firing threshold, since all
+// synapses share the same scalar weight value and simply sum by sign — a
+// merely-nonzero excitatory count isn't enough if it's matched or
+// outweighed by simultaneous inhibitory input. That's invisible to the
+// fitness signal on tasks with a large penalty-per-actuator (e.g.
+// SnnL2FTask's quadrotor, where one permanently silent rotor is enough to
+// destabilize and crash almost immediately) because most competing genomes
+// fail for one reason or another anyway, so selection can't reliably prune
+// this state out. Guard against it directly: never let this mutation drop
+// an output node's excitatory connections to a non-majority (<=) versus its
+// inhibitory ones.
 // =========================================================================
 void Wann::mutToggleExcitatory(std::vector<ConnGene>& conns,
                                 const std::vector<NodeGene>& nodes) {
@@ -418,24 +451,19 @@ void Wann::mutToggleExcitatory(std::vector<ConnGene>& conns,
         if (conns[i].enabled) active.push_back(i);
     if (active.empty()) return;
 
-    std::unordered_set<int> outputIds;
-    for (const auto& n : nodes)
-        if (n.type == 2) outputIds.insert(n.id);
-
-    std::unordered_map<int,int> excitatoryInCount;
-    for (int i : active)
-        if (conns[i].excitatory && outputIds.count(conns[i].dst))
-            ++excitatoryInCount[conns[i].dst];
+    auto outputIds = collectOutputIds(nodes);
+    auto counts     = outputExcInhCounts(conns, outputIds);
 
     std::vector<int> safe;
     safe.reserve(active.size());
     for (int i : active) {
-        bool wouldOrphanOutput = conns[i].excitatory
-            && outputIds.count(conns[i].dst)
-            && excitatoryInCount[conns[i].dst] <= 1;
-        if (!wouldOrphanOutput) safe.push_back(i);
+        if (conns[i].excitatory && outputIds.count(conns[i].dst)) {
+            const auto& [exc, inh] = counts[conns[i].dst];
+            if (exc - 1 <= inh) continue;  // would break the excitatory majority
+        }
+        safe.push_back(i);
     }
-    if (safe.empty()) return;  // every candidate is a last-excitatory-input link
+    if (safe.empty()) return;  // every candidate would break some output's majority
 
     int idx = safe[randInt(0, static_cast<int>(safe.size()) - 1)];
     conns[idx].excitatory = !conns[idx].excitatory;
@@ -481,8 +509,23 @@ void Wann::topoMutate(Ind& child) {
             std::vector<int> disabled;
             for (int i = 0; i < static_cast<int>(conns.size()); ++i)
                 if (!conns[i].enabled) disabled.push_back(i);
-            if (!disabled.empty())
-                conns[disabled[randInt(0, static_cast<int>(disabled.size()) - 1)]].enabled = true;
+
+            // Same failure mode as mutToggleExcitatory, different path to it:
+            // enabling a dormant inhibitory connection into an output can tie
+            // or flip its excitatory majority just as toggling one can.
+            auto outputIds = collectOutputIds(nodes);
+            auto counts     = outputExcInhCounts(conns, outputIds);
+            std::vector<int> safe;
+            safe.reserve(disabled.size());
+            for (int i : disabled) {
+                if (!conns[i].excitatory && outputIds.count(conns[i].dst)) {
+                    const auto& [exc, inh] = counts[conns[i].dst];
+                    if (exc <= inh + 1) continue;  // would tie/flip the majority
+                }
+                safe.push_back(i);
+            }
+            if (!safe.empty())
+                conns[safe[randInt(0, static_cast<int>(safe.size()) - 1)]].enabled = true;
             break;
         }
 
