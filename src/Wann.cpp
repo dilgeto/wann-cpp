@@ -21,6 +21,7 @@ Wann::Wann(const Hyperparams& hyp) : p(hyp) {}
 // =========================================================================
 
 std::vector<Ind>& Wann::ask() {
+    lastTieCount_ = 0;
     if (pop.empty()) {
         initPop();
     } else {
@@ -158,16 +159,33 @@ std::vector<Ind> Wann::recombine(const Species& sp) {
     // Collect pointers in rank order (members already have .rank set).
     // rank itself is a strict permutation (nsga_sort flattens fronts via
     // crowding distance, so no two individuals ever share a rank) — the
-    // "tie" lexicographic parsimony pressure cares about is an exact
-    // meanFit tie, which crowding distance breaks arbitrarily w.r.t. size.
-    // Only ever overrides rank on that exact tie; any genuine fitness
-    // difference is untouched, so this can't lose real selection pressure.
+    // "tie" lexicographic parsimony pressure cares about is a meanFit tie
+    // within lexicographic_parsimony_epsilon, which crowding distance breaks
+    // arbitrarily w.r.t. size. Only ever overrides rank on that tie; any
+    // fitness difference beyond epsilon is untouched, so this can't lose
+    // real selection pressure.
     std::vector<Ind*> members;
     members.reserve(sp.memberIdx.size());
     for (int idx : sp.memberIdx) members.push_back(&pop[idx]);
+
+    // Diagnostic: count how many adjacent-fitness pairs (sorted by meanFit)
+    // actually fall within epsilon this generation — i.e. how many tie-break
+    // opportunities the pressure above had, independent of std::sort's
+    // internal comparison pattern. Read via Wann::lastTieCount().
+    if (p.lexicographic_parsimony) {
+        std::vector<double> fits;
+        fits.reserve(members.size());
+        for (const Ind* m : members) fits.push_back(m->fitness);
+        std::sort(fits.begin(), fits.end());
+        for (size_t i = 1; i < fits.size(); ++i)
+            if (fits[i] - fits[i - 1] <= p.lexicographic_parsimony_epsilon)
+                ++lastTieCount_;
+    }
+
     std::sort(members.begin(), members.end(),
               [this](const Ind* a, const Ind* b) {
-                  if (p.lexicographic_parsimony && a->fitness == b->fitness)
+                  if (p.lexicographic_parsimony &&
+                      std::abs(a->fitness - b->fitness) <= p.lexicographic_parsimony_epsilon)
                       return a->nConn < b->nConn;
                   return a->rank < b->rank;
               });

@@ -31,6 +31,14 @@ public:
     const std::vector<Ind>& population() const { return pop; }
     int generation() const { return gen; }
 
+    // Number of adjacent-fitness pairs (population sorted by meanFit) within
+    // lexicographic_parsimony_epsilon of each other, counted during the most
+    // recent ask() call's selection step — i.e. how many tie-break
+    // opportunities lexicographic_parsimony actually had last generation.
+    // Always 0 when lexicographic_parsimony is disabled, and at gen 0 (no
+    // selection has run yet). Diagnostic only, not used by the algorithm.
+    int lastTieCount() const { return lastTieCount_; }
+
     // Current population (public for DataGatherer access).
     std::vector<Ind> pop;
 
@@ -38,6 +46,7 @@ private:
     Hyperparams p;
     std::vector<InnovRecord> innov;
     int gen = 0;
+    int lastTieCount_ = 0;
 
     // Minimal species container (WANN uses a single species).
     struct Species {

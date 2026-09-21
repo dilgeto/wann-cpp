@@ -32,13 +32,23 @@ struct Hyperparams {
     int    select_tournSize   = 8;
 
     // Lexicographic parsimony pressure (Luke & Panait, GECCO 2002): when two
-    // individuals have exactly equal meanFit, break the tie in favor of the
-    // smaller one (fewer active connections) instead of leaving it to
-    // crowding-distance's diversity-driven (and here, essentially arbitrary
-    // w.r.t. size) ordering. Never overrides a genuine fitness difference —
-    // only ever fires on an exact meanFit tie. false = current behavior
-    // (unchanged, no parsimony tie-break).
+    // individuals have equal (within lexicographic_parsimony_epsilon) meanFit,
+    // break the tie in favor of the smaller one (fewer active connections)
+    // instead of leaving it to crowding-distance's diversity-driven (and
+    // here, essentially arbitrary w.r.t. size) ordering. Never overrides a
+    // genuine fitness difference — only ever fires on a tied comparison.
+    // false = current behavior (unchanged, no parsimony tie-break).
     bool   lexicographic_parsimony = false;
+
+    // Absolute |fitness_a - fitness_b| tolerance for the tie-break above.
+    // 0.0 (default) = exact equality only — the original strict paper
+    // formulation. In a continuous-reward task, exact ties are common early
+    // (many non-functional genomes share the same floor reward) but become
+    // vanishingly rare once the population is mostly functional — so with
+    // epsilon=0 the tie-break is effectively inert past the first ~100
+    // generations. Widen this (e.g. a few reward units) to keep it active
+    // later, at the cost of it no longer being a strict tie.
+    double lexicographic_parsimony_epsilon = 0.0;
 
     // --- I/O ---
     int    save_mod           = 8;
@@ -124,6 +134,7 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.select_eliteRatio,      "select_eliteRatio");
     get(p.select_tournSize,       "select_tournSize");
     get(p.lexicographic_parsimony, "lexicographic_parsimony");
+    get(p.lexicographic_parsimony_epsilon, "lexicographic_parsimony_epsilon");
     get(p.save_mod,               "save_mod");
     get(p.bestReps,               "bestReps");
     get(p.early_stop_patience,    "early_stop_patience");
