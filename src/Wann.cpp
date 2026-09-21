@@ -156,11 +156,21 @@ void Wann::evolvePop() {
 // =========================================================================
 std::vector<Ind> Wann::recombine(const Species& sp) {
     // Collect pointers in rank order (members already have .rank set).
+    // rank itself is a strict permutation (nsga_sort flattens fronts via
+    // crowding distance, so no two individuals ever share a rank) — the
+    // "tie" lexicographic parsimony pressure cares about is an exact
+    // meanFit tie, which crowding distance breaks arbitrarily w.r.t. size.
+    // Only ever overrides rank on that exact tie; any genuine fitness
+    // difference is untouched, so this can't lose real selection pressure.
     std::vector<Ind*> members;
     members.reserve(sp.memberIdx.size());
     for (int idx : sp.memberIdx) members.push_back(&pop[idx]);
     std::sort(members.begin(), members.end(),
-              [](const Ind* a, const Ind* b){ return a->rank < b->rank; });
+              [this](const Ind* a, const Ind* b) {
+                  if (p.lexicographic_parsimony && a->fitness == b->fitness)
+                      return a->nConn < b->nConn;
+                  return a->rank < b->rank;
+              });
 
     int nOffspring = sp.nOffspring;
 

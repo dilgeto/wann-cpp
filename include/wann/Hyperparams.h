@@ -31,6 +31,15 @@ struct Hyperparams {
     double select_eliteRatio  = 0.2;
     int    select_tournSize   = 8;
 
+    // Lexicographic parsimony pressure (Luke & Panait, GECCO 2002): when two
+    // individuals have exactly equal meanFit, break the tie in favor of the
+    // smaller one (fewer active connections) instead of leaving it to
+    // crowding-distance's diversity-driven (and here, essentially arbitrary
+    // w.r.t. size) ordering. Never overrides a genuine fitness difference —
+    // only ever fires on an exact meanFit tie. false = current behavior
+    // (unchanged, no parsimony tie-break).
+    bool   lexicographic_parsimony = false;
+
     // --- I/O ---
     int    save_mod           = 8;
     int    bestReps           = 20;
@@ -114,6 +123,7 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.select_cullRatio,       "select_cullRatio");
     get(p.select_eliteRatio,      "select_eliteRatio");
     get(p.select_tournSize,       "select_tournSize");
+    get(p.lexicographic_parsimony, "lexicographic_parsimony");
     get(p.save_mod,               "save_mod");
     get(p.bestReps,               "bestReps");
     get(p.early_stop_patience,    "early_stop_patience");
