@@ -108,6 +108,22 @@ std::vector<double> decodeContinuousActions(
 {
     std::vector<double> action(multi_spikes.size(), 0.0);
     for (size_t o = 0; o < multi_spikes.size(); ++o) {
+        // A rotor with zero output spikes this step must NOT fall through to
+        // the decoders' generic "empty" convention below: FIRST_SPIKE and the
+        // default rate-style decode both collapse an empty spike train to
+        // in-range 0.0 and then rescale it (*2-1) to the minimum action -1.0
+        // (full negative == rotor cut to zero thrust). That convention is
+        // harmless for tasks where "neutral" and "off" are close (e.g. car
+        // throttle/steering), but for a quadrotor that needs ~0.73 relative
+        // throttle just to hover (see hovering_throttle_relative in
+        // rl-tools' crazyflie dynamics), commanding -1 on a merely-quiet
+        // output is a hard cut to free-fall, not a neutral/no-op action.
+        // Treat "no spike" as "no new command" (0.0, i.e. mid-range 0.5
+        // relative throttle) instead.
+        if (multi_spikes[o].empty()) {
+            action[o] = 0.0;
+            continue;
+        }
         double a;
         switch (decoder) {
             case wann::SnnDecoder::FIRST_SPIKE:
@@ -138,6 +154,8 @@ SnnL2FTask::SnnL2FTask(const Hyperparams& hyp)
     , encoder_(parseEncoder(hyp.snn_encoder))
     , decoder_(parseDecoder(hyp.snn_decoder))
     , resetBetweenSteps_(hyp.snn_reset_between_steps)
+    , terminationPenalty_(hyp.l2f_termination_penalty)
+    , positionClip_(hyp.l2f_position_clip)
 {}
 
 NeuronType SnnL2FTask::wannActToNeuronType(int actId) {
@@ -263,6 +281,8 @@ std::pair<double,double> SnnL2FTask::runEpisode(Network& net, double sharedWeigh
     rlt::init(device, rng, static_cast<typename DEVICE::index_t>(episodeSeed));
     rlt::initial_parameters(device, env, params);
     rlt::sample_initial_parameters(device, env, params, rng);  // fills the Lissajous trajectory table
+    params.mdp.reward.termination_penalty = terminationPenalty_;
+    params.mdp.reward.position_clip       = positionClip_;
 
     typename Env::Observation obs_type;
     ObsMatrix obs_mat;
@@ -450,6 +470,8 @@ void SnnL2FTask::exportTrajectory(const std::vector<double>& wVec,
     rlt::init(device, rng, static_cast<typename DEVICE::index_t>(episodeSeed));
     rlt::initial_parameters(device, env, params);
     rlt::sample_initial_parameters(device, env, params, rng);
+    params.mdp.reward.termination_penalty = terminationPenalty_;
+    params.mdp.reward.position_clip       = positionClip_;
 
     typename Env::Observation obs_type;
     ObsMatrix obs_mat;

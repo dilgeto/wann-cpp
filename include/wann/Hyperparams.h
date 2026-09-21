@@ -107,6 +107,18 @@ struct Hyperparams {
     // snn_window_ms — t_max = (window-dt)*tmax_ratio is a product, so the two
     // are collinear for that formula; tmax_ratio stays fixed at 1.0.
     double snn_ttfs_threshold  = 1e-9;
+
+    // --- L2F reward tuning (SnnL2FTask only) ---
+    // rl-tools' L2F reward (DEFAULT_PARAMETERS_FACTORY::reward_function in
+    // rl-tools/.../l2f/parameters/default.h) already bakes in a fixed
+    // termination penalty (-100, applied on the step that crosses the
+    // position/velocity/angular-velocity termination thresholds) and an
+    // unclipped position-tracking cost (position_clip=0) at compile time.
+    // Exposing them here lets them be swept per JSON without touching
+    // rl-tools; the defaults below reproduce the compiled-in values exactly
+    // (no behavior change unless overridden).
+    double l2f_termination_penalty = -100.0;
+    double l2f_position_clip       = 0.0;
 };
 
 namespace detail {
@@ -152,6 +164,8 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.snn_tau_exc,               "snn_tau_exc");
     get(p.snn_tau_inh,               "snn_tau_inh");
     get(p.snn_ttfs_threshold,        "snn_ttfs_threshold");
+    get(p.l2f_termination_penalty,   "l2f_termination_penalty");
+    get(p.l2f_position_clip,         "l2f_position_clip");
 }
 
 // Parse a string that is either a file path or an inline JSON object.

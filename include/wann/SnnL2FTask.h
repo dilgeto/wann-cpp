@@ -90,6 +90,8 @@ private:
     SnnEncoder encoder_;
     SnnDecoder decoder_;
     bool       resetBetweenSteps_;
+    double     terminationPenalty_;
+    double     positionClip_;
 
     static NeuronType wannActToNeuronType(int actId);
 
