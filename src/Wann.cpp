@@ -451,17 +451,20 @@ void Wann::mutToggleExcitatory(std::vector<ConnGene>& conns,
         if (conns[i].enabled) active.push_back(i);
     if (active.empty()) return;
 
-    auto outputIds = collectOutputIds(nodes);
-    auto counts     = outputExcInhCounts(conns, outputIds);
-
     std::vector<int> safe;
-    safe.reserve(active.size());
-    for (int i : active) {
-        if (conns[i].excitatory && outputIds.count(conns[i].dst)) {
-            const auto& [exc, inh] = counts[conns[i].dst];
-            if (exc - 1 <= inh) continue;  // would break the excitatory majority
+    if (p.require_output_excitatory_majority) {
+        auto outputIds = collectOutputIds(nodes);
+        auto counts     = outputExcInhCounts(conns, outputIds);
+        safe.reserve(active.size());
+        for (int i : active) {
+            if (conns[i].excitatory && outputIds.count(conns[i].dst)) {
+                const auto& [exc, inh] = counts[conns[i].dst];
+                if (exc - 1 <= inh) continue;  // would break the excitatory majority
+            }
+            safe.push_back(i);
         }
-        safe.push_back(i);
+    } else {
+        safe = active;
     }
     if (safe.empty()) return;  // every candidate would break some output's majority
 
@@ -510,19 +513,24 @@ void Wann::topoMutate(Ind& child) {
             for (int i = 0; i < static_cast<int>(conns.size()); ++i)
                 if (!conns[i].enabled) disabled.push_back(i);
 
-            // Same failure mode as mutToggleExcitatory, different path to it:
-            // enabling a dormant inhibitory connection into an output can tie
-            // or flip its excitatory majority just as toggling one can.
-            auto outputIds = collectOutputIds(nodes);
-            auto counts     = outputExcInhCounts(conns, outputIds);
             std::vector<int> safe;
-            safe.reserve(disabled.size());
-            for (int i : disabled) {
-                if (!conns[i].excitatory && outputIds.count(conns[i].dst)) {
-                    const auto& [exc, inh] = counts[conns[i].dst];
-                    if (exc <= inh + 1) continue;  // would tie/flip the majority
+            if (p.require_output_excitatory_majority) {
+                // Same failure mode as mutToggleExcitatory, different path to
+                // it: enabling a dormant inhibitory connection into an output
+                // can tie or flip its excitatory majority just as toggling
+                // one can.
+                auto outputIds = collectOutputIds(nodes);
+                auto counts     = outputExcInhCounts(conns, outputIds);
+                safe.reserve(disabled.size());
+                for (int i : disabled) {
+                    if (!conns[i].excitatory && outputIds.count(conns[i].dst)) {
+                        const auto& [exc, inh] = counts[conns[i].dst];
+                        if (exc <= inh + 1) continue;  // would tie/flip the majority
+                    }
+                    safe.push_back(i);
                 }
-                safe.push_back(i);
+            } else {
+                safe = disabled;
             }
             if (!safe.empty())
                 conns[safe[randInt(0, static_cast<int>(safe.size()) - 1)]].enabled = true;

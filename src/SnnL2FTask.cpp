@@ -302,7 +302,19 @@ std::pair<double,double> SnnL2FTask::runEpisode(Network& net, double sharedWeigh
         (decoder_ == SnnDecoder::SPIKE_COUNT) ? RLDecoder::DecodingType::SPIKE_COUNT :
                                                 RLDecoder::DecodingType::RATE;
     RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
-    const double max_spikes = static_cast<double>(window_steps) / 2.0;
+    // window_steps (not window_steps/2, as SnnCarTask/SnnAcrobotTask assume
+    // for their own decoders) — replay evidence on this task showed rotors
+    // pinned at exactly the clamped +1.0 boundary every single step
+    // regardless of the (still-changing) observation, meaning the RATE
+    // decode's count/max_spikes*2-1 was hitting its ceiling and clipping
+    // away real, still-varying spike counts above it. A neuron can in
+    // principle spike on every simulated tick (one spike per DT=1 tick), so
+    // window_steps is the actual achievable ceiling; assuming only 50% duty
+    // was an unfounded ceiling for L2F's more strongly-driven outputs (see
+    // the excitatory-majority mutation guard in Wann.cpp) and was destroying
+    // gradient in the network's real operating range before the shared
+    // weight sweep ever got a chance to find a better-calibrated topology.
+    const double max_spikes = static_cast<double>(window_steps);
 
     double total_reward = 0.0;
 
@@ -491,7 +503,19 @@ void SnnL2FTask::exportTrajectory(const std::vector<double>& wVec,
         (decoder_ == SnnDecoder::SPIKE_COUNT) ? RLDecoder::DecodingType::SPIKE_COUNT :
                                                 RLDecoder::DecodingType::RATE;
     RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
-    const double max_spikes = static_cast<double>(window_steps) / 2.0;
+    // window_steps (not window_steps/2, as SnnCarTask/SnnAcrobotTask assume
+    // for their own decoders) — replay evidence on this task showed rotors
+    // pinned at exactly the clamped +1.0 boundary every single step
+    // regardless of the (still-changing) observation, meaning the RATE
+    // decode's count/max_spikes*2-1 was hitting its ceiling and clipping
+    // away real, still-varying spike counts above it. A neuron can in
+    // principle spike on every simulated tick (one spike per DT=1 tick), so
+    // window_steps is the actual achievable ceiling; assuming only 50% duty
+    // was an unfounded ceiling for L2F's more strongly-driven outputs (see
+    // the excitatory-majority mutation guard in Wann.cpp) and was destroying
+    // gradient in the network's real operating range before the shared
+    // weight sweep ever got a chance to find a better-calibrated topology.
+    const double max_spikes = static_cast<double>(window_steps);
 
     for (TI step = 0; step < Env::EPISODE_STEP_LIMIT; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);

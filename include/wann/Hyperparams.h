@@ -50,6 +50,16 @@ struct Hyperparams {
     // later, at the cost of it no longer being a strict tie.
     double lexicographic_parsimony_epsilon = 0.0;
 
+    // When true (default): mutToggleExcitatory and topoMutate's "enable a
+    // disabled connection" step both refuse a move that would leave an
+    // output node's enabled incoming connections without a strict
+    // excitatory majority (exc > inh) — such a node can never cross firing
+    // threshold since every synapse shares the same scalar weight and sums
+    // by sign alone. Set false to restore the pre-fix behavior (both
+    // mutations pick uniformly among all active/disabled connections,
+    // ignoring output balance) for A/B comparison against older runs.
+    bool require_output_excitatory_majority = true;
+
     // --- I/O ---
     int    save_mod           = 8;
     int    bestReps           = 20;
@@ -147,6 +157,7 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.select_tournSize,       "select_tournSize");
     get(p.lexicographic_parsimony, "lexicographic_parsimony");
     get(p.lexicographic_parsimony_epsilon, "lexicographic_parsimony_epsilon");
+    get(p.require_output_excitatory_majority, "require_output_excitatory_majority");
     get(p.save_mod,               "save_mod");
     get(p.bestReps,               "bestReps");
     get(p.early_stop_patience,    "early_stop_patience");
