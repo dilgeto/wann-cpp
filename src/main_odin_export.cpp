@@ -13,6 +13,14 @@
 //   ./wann_car_odin_export -f log/full_p3_car_ttfs_first_spike_40ms/rank00_seed00_best.out \
 //                           -d p/car_snn.json -o odin_config.json
 //   ./wann_car_odin_export -f red.out -w 3 -o odin_config.json   (fuerza wi=3)
+//   ./wann_car_odin_export -f red.out -o odin_config.json --thr 3
+//       (sobreescribe el thr IZH de TODAS las neuronas a 3, en vez de los
+//       valores de izhParamsFor() en OdinExport.cpp. thr es un campo de 3
+//       bits en el hardware real (0-7) — NO es la misma escala que el
+//       umbral v>=30 del modelo Izhikevich clasico que usa snn-simulator
+//       (eso es mV en la ODE continua; esto es una cuenta interna del
+//       acumulador digital de ODIN, sin unidades comparables). Ver
+//       ODIN_DEPLOYMENT.md.
 
 #include "../include/wann/Hyperparams.h"
 #include "../include/wann/Ind.h"
@@ -45,6 +53,7 @@ int main(int argc, char* argv[]) {
     std::string outFile    = "odin_config.json";
     std::string runKey;
     int         wiArg      = -1;  // -1 = read from .wi next to netFile
+    int         thrOverride = -1; // -1 = usar los valores de izhParamsFor()
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -53,11 +62,16 @@ int main(int argc, char* argv[]) {
         else if (arg == "-o" && i+1 < argc) { outFile    = argv[++i]; }
         else if (arg == "-w" && i+1 < argc) { wiArg      = std::atoi(argv[++i]); }
         else if (arg == "-k" && i+1 < argc) { runKey     = argv[++i]; }
+        else if (arg == "--thr" && i+1 < argc) { thrOverride = std::atoi(argv[++i]); }
         else {
             std::cerr << "Uso: wann_car_odin_export [-f red.out] [-d config.json]"
-                         " [-w weight_index] [-k run_key] [-o salida.json]\n";
+                         " [-w weight_index] [-k run_key] [-o salida.json] [--thr 0-7]\n";
             return 1;
         }
+    }
+    if (thrOverride != -1 && (thrOverride < 0 || thrOverride > 7)) {
+        std::cerr << "--thr debe estar en [0,7] (campo de 3 bits en hardware)\n";
+        return 1;
     }
 
     wann::Hyperparams hyp;
@@ -107,6 +121,11 @@ int main(int argc, char* argv[]) {
         auto cfg = wann::buildOdinConfig(wVec, aVec, hyp.ann_nInput, hyp.ann_nOutput,
                                           sharedWeight, chosenWi, magnitude3bit,
                                           "car", runKey);
+        if (thrOverride != -1) {
+            for (auto& n : cfg.neurons) n.izh.thr = thrOverride;
+            std::cout << "thr sobreescrito a " << thrOverride
+                      << " en las " << cfg.neurons.size() << " neuronas\n";
+        }
         wann::writeOdinConfig(outFile, cfg);
         std::cout << "Config ODIN escrita en " << outFile
                   << " (" << cfg.nNeurons << " neuronas / " << wann::ODIN_MAX_NEURONS

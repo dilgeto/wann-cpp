@@ -34,6 +34,10 @@ void OdinNetwork::fastReset() {
     std::fill(lastOutputSpikes_.begin(), lastOutputSpikes_.end(), false);
     // ODIN has no exposed "reset membrane state" register in this driver yet
     // (see OdinDriver) — behaviourally this only resets host-side timing.
+    // aerBusReset() IS a real hardware operation though: clears any AER
+    // handshake left mid-transaction by the previous episode before this one
+    // starts sending new events into it.
+    driver_.aerBusReset();
 }
 
 void OdinNetwork::applyInputSpikes(const std::vector<std::vector<double>>& encoded_spikes,
@@ -47,7 +51,17 @@ void OdinNetwork::applyInputSpikes(const std::vector<std::vector<double>>& encod
             // in the user's working Iris pipeline (odin.py's run_sample) —
             // input stimulation bypasses the synaptic crossbar entirely via
             // a virtual event, it isn't a real synapse.
-            for (int addr : inputAddrs_[ch]) driver_.sendVirtual(addr, /*weight=*/7);
+            for (int addr : inputAddrs_[ch]) {
+                int rc = driver_.sendVirtual(addr, /*weight=*/7);
+                if (rc != 0) {
+                    throw std::runtime_error(
+                        "OdinNetwork::applyInputSpikes: aer_in handshake failed "
+                        "(rc=" + std::to_string(rc) + ") sending to addr " +
+                        std::to_string(addr) + " — AER bus likely desynced, "
+                        "stopping instead of continuing into a possibly worse "
+                        "hardware state.");
+                }
+            }
         }
     }
 }

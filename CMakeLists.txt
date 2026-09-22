@@ -259,6 +259,22 @@ target_link_libraries(wann_l2f_eval PRIVATE
     rl_tools_iface)
 
 # ---------------------------------------------------------------------------
+# Executable: wann_l2f_replay – corre la mejor red y exporta trayectoria CSV
+# ---------------------------------------------------------------------------
+add_executable(wann_l2f_replay
+    src/main_l2f_replay.cpp
+    src/SnnL2FTask.cpp)
+
+target_include_directories(wann_l2f_replay PRIVATE include)
+
+target_link_libraries(wann_l2f_replay PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface)
+
+# ---------------------------------------------------------------------------
 # Executable: wann_car_eval – evalúa N episodios con la mejor red Car
 # ---------------------------------------------------------------------------
 add_executable(wann_car_eval

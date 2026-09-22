@@ -138,6 +138,13 @@ OdinDriver::OdinDriver()
 }
 
 OdinDriver::~OdinDriver() {
+    // Leave the chip gated (GATE_ACTIVITY=1) on exit — otherwise the next
+    // process to run init() finds it in whatever state this run left it
+    // (still "active"), which is exactly the kind of ambiguity that made a
+    // real hang harder to diagnose. Swallow any exception: a destructor
+    // must not throw, and if the SPI bus is already wedged there's nothing
+    // more to do here anyway.
+    try { stop(); } catch (...) {}
     if (memFd_ >= 0) close(memFd_);
 }
 
