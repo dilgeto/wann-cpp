@@ -7,6 +7,7 @@
 #include <rl_tools/rl/environments/car/operations_generic.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 
@@ -48,6 +49,13 @@ SnnCarOdinTask::SnnCarOdinTask(const Hyperparams& hyp, const OdinNetworkConfig& 
     }
 }
 
+namespace {
+using Clock = std::chrono::steady_clock;
+double usSince(Clock::time_point t0) {
+    return std::chrono::duration<double, std::micro>(Clock::now() - t0).count();
+}
+}
+
 double SnnCarOdinTask::runEpisode(long long episodeSeed) {
     network_.fastReset();
     DEVICE device;
@@ -74,7 +82,10 @@ double SnnCarOdinTask::runEpisode(long long episodeSeed) {
     double total_reward = 0.0;
 
     for (int step = 0; step < episodeSteps_; ++step) {
+        ++timings_.nEnvSteps;
+        auto t0 = Clock::now();
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
+        timings_.envUs += usSince(t0);
 
         std::vector<double> norm(n_channels, 0.0);
         norm[0] = 1.0;
@@ -89,33 +100,47 @@ double SnnCarOdinTask::runEpisode(long long episodeSeed) {
         if (nInput_ >= 9) norm[9] = rlt::get(obs_mat, 0, 8);
 
         std::vector<std::vector<double>> spike_trains(n_channels);
+        t0 = Clock::now();
         for (int ch = 0; ch < n_channels; ++ch) {
             double v = std::clamp(norm[ch], 0.0, 1.0);
             spike_trains[ch] = enc.encode(v, simWindowMs_, DT);
         }
+        timings_.encodeUs += usSince(t0);
 
         std::vector<double> out_spikes0, out_spikes1;
         for (int t = 0; t < window_steps; ++t) {
+            ++timings_.nTicks;
+            t0 = Clock::now();
             network_.applyInputSpikes(spike_trains, network_.getCurrentTime());
+            timings_.aerSendUs += usSince(t0);
+
+            t0 = Clock::now();
             network_.step(0.0);  // shared weight already baked into the loaded config
+            timings_.aerDrainUs += usSince(t0);
+
             const auto& out = network_.getOutputSpikes();
             if (out.size() > 0 && out[0]) out_spikes0.push_back(static_cast<double>(t));
             if (out.size() > 1 && out[1]) out_spikes1.push_back(static_cast<double>(t));
         }
 
+        t0 = Clock::now();
         double throttle = rl_decoder.decodeContinuousAction(out_spikes0) * 2.0 - 1.0;
         double steering = rl_decoder.decodeContinuousAction(out_spikes1) * 2.0 - 1.0;
+        timings_.decodeUs += usSince(t0);
         throttle = std::clamp(throttle, -1.0, 1.0);
         steering = std::clamp(steering, -1.0, 1.0);
 
         rlt::set(action_mat, 0, 0, throttle);
         rlt::set(action_mat, 0, 1, steering);
 
+        t0 = Clock::now();
         rlt::step(device, env, params, state, action_mat, next_state, rng);
         total_reward += rlt::reward(device, env, params, state, action_mat, next_state, rng);
         state = next_state;
+        bool done = rlt::terminated(device, env, params, state, rng);
+        timings_.envUs += usSince(t0);
 
-        if (rlt::terminated(device, env, params, state, rng)) break;
+        if (done) break;
     }
 
     return total_reward;
