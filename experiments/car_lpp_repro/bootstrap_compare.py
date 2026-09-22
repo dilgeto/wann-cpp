@@ -44,7 +44,7 @@ ANN_MODEL    = "../racing-car-ppo/models/model_seed10.h5"
 
 
 def eval_snn(train_seed: int, n: int, seed0: int, omp: int, timeout: int | None) -> np.ndarray:
-    prefix = f"repro_car_best_lpp_s{train_seed}"
+    prefix = f"repro_car_best_lpp_eps1_s{train_seed}"
     model_path = Path("log") / f"{prefix}_best.out"
     wi_path    = Path("log") / f"{prefix}_best.wi"
     if not model_path.exists() or not wi_path.exists():
@@ -88,14 +88,14 @@ def eval_ann(n: int, seed0: int, timeout: int | None) -> np.ndarray:
 def main() -> None:
     ap = build_arg_parser(__doc__, None)
     ap.add_argument("--seed", type=int, default=100, choices=[0, 100, 200],
-                    help="Cuál de los 3 reruns de run.sh (repro_car_best_lpp_s<seed>), default: 100")
+                    help="Cuál de los 3 reruns de run.sh (repro_car_best_lpp_eps1_s<seed>), default: 100")
     args = ap.parse_args()
     if args.out_dir is None:
         args.out_dir = f"bootstrap_results/car_lpp_repro_s{args.seed}"
 
     omp = args.omp or (os.cpu_count() or 4)
 
-    print(f"Evaluando SNN (repro_car_best_lpp_s{args.seed}): {args.n} episodios...")
+    print(f"Evaluando SNN (repro_car_best_lpp_eps1_s{args.seed}): {args.n} episodios...")
     rewards_snn = eval_snn(args.seed, args.n, args.seed0, omp, args.timeout)
 
     print(f"Evaluando ANN (PPO nativo, {ANN_MODEL}): {args.n} episodios...")

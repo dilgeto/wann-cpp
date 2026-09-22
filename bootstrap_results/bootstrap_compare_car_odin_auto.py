@@ -40,46 +40,55 @@ ODIN_EXPORT_BIN = "./build/wann_car_odin_export"
 ODIN_EVAL_BIN   = "./build/wann_car_odin_eval"
 
 
+def run_odin_episodes(model_path: Path, weight_index: int, base_config: str,
+                      window_ms: float, n: int, seed0: int,
+                      timeout: int | None) -> np.ndarray:
+    """Exporta un modelo car (.out) ya entrenado a config ODIN y corre n
+    episodios reales en hardware (un proceso por corrida, --csv una sola vez
+    con -n n) — el bloque compartido por el modo --run-key (revalidación +
+    ganador automático, esta función) y bootstrap_compare_car_odin_manual.py
+    (un .out específico a mano, sin revalidación)."""
+    for b in (ODIN_EXPORT_BIN, ODIN_EVAL_BIN):
+        if not Path(b).exists():
+            print(f"ERROR: {b} no existe. Compilar con "
+                  f"-DWANN_ODIN_HW=ON primero.", file=sys.stderr)
+            sys.exit(1)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cfg_json = Path(tmpdir) / "odin_config.json"
+        export_cmd = [ODIN_EXPORT_BIN, "-f", str(model_path), "-d", base_config,
+                     "-w", str(weight_index), "-o", str(cfg_json)]
+        proc = subprocess.run(export_cmd, capture_output=True, text=True, timeout=timeout)
+        if proc.returncode != 0:
+            print(proc.stderr, file=sys.stderr)
+            raise RuntimeError("Falló wann_car_odin_export (¿nodo con signo "
+                               "mixto sin split, o red > 256 neuronas?)")
+
+        eval_cmd = [ODIN_EVAL_BIN, "-c", str(cfg_json), "-d", base_config,
+                   "-n", str(n), "-s", str(seed0), "-m", str(window_ms), "--csv"]
+        proc = subprocess.run(eval_cmd, capture_output=True, text=True, timeout=timeout)
+        if proc.returncode != 0:
+            print(proc.stderr, file=sys.stderr)
+            raise RuntimeError("Falló wann_car_odin_eval sobre hardware real "
+                               "(¿corriste como root? ¿odin_bootstrap.py ya cargó "
+                               "el overlay? ¿OdinRegisters.h tiene las direcciones "
+                               "reales?)")
+        df = pd.read_csv(pd.io.common.StringIO(proc.stdout))
+        return df["reward"].to_numpy(dtype=float)
+
+
 def make_eval_odin(window_ms: float):
     def eval_odin(task: str, winner: pd.Series, n: int, seed0: int, omp: int,
                  timeout: int | None) -> np.ndarray:
-        """Exporta el modelo ganador a config ODIN y corre n episodios reales
-        en hardware — un proceso por corrida (--csv una sola vez con -n n),
-        igual de eficiente que el paso equivalente en software ya que el
-        cuello de botella real es el hardware, no el overhead de proceso."""
+        """Evalúa el modelo GANADOR de la revalidación (run_key/rank/seed_idx
+        elegidos automáticamente) en hardware — ver run_odin_episodes()."""
         assert task == "car", "bootstrap_compare_car_odin_auto.py es solo para car"
-        for b in (ODIN_EXPORT_BIN, ODIN_EVAL_BIN):
-            if not Path(b).exists():
-                print(f"ERROR: {b} no existe. Compilar con "
-                      f"-DWANN_ODIN_HW=ON primero.", file=sys.stderr)
-                sys.exit(1)
-
         td = TASKS[task]
         run_key, rank, seed_idx = winner["run_key"], int(winner["rank"]), int(winner["seed_idx"])
         weight_index = int(winner["weight_index"])
         model_path = Path("log") / f"full_p3_{run_key}" / f"rank{rank:02d}_seed{seed_idx:02d}_best.out"
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cfg_json = Path(tmpdir) / "odin_config.json"
-            export_cmd = [ODIN_EXPORT_BIN, "-f", str(model_path), "-d", td["base_config"],
-                         "-w", str(weight_index), "-k", run_key, "-o", str(cfg_json)]
-            proc = subprocess.run(export_cmd, capture_output=True, text=True, timeout=timeout)
-            if proc.returncode != 0:
-                print(proc.stderr, file=sys.stderr)
-                raise RuntimeError("Falló wann_car_odin_export (¿nodo con signo "
-                                   "mixto sin split, o red > 256 neuronas?)")
-
-            eval_cmd = [ODIN_EVAL_BIN, "-c", str(cfg_json), "-d", td["base_config"],
-                       "-n", str(n), "-s", str(seed0), "-m", str(window_ms), "--csv"]
-            proc = subprocess.run(eval_cmd, capture_output=True, text=True, timeout=timeout)
-            if proc.returncode != 0:
-                print(proc.stderr, file=sys.stderr)
-                raise RuntimeError("Falló wann_car_odin_eval sobre hardware real "
-                                   "(¿corriste como root? ¿odin_bootstrap.py ya cargó "
-                                   "el overlay? ¿OdinRegisters.h tiene las direcciones "
-                                   "reales?)")
-            df = pd.read_csv(pd.io.common.StringIO(proc.stdout))
-            return df["reward"].to_numpy(dtype=float)
+        return run_odin_episodes(model_path, weight_index, td["base_config"],
+                                 window_ms, n, seed0, timeout)
     return eval_odin
 
 
