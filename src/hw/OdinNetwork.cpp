@@ -9,6 +9,12 @@ OdinNetwork::OdinNetwork(const wann::OdinNetworkConfig& cfg, OdinDriver& driver)
     : driver_(driver)
 {
     driver_.loadConfig(cfg);
+    // loadConfig() deliberately leaves the chip gated (GATE_ACTIVITY=1) so
+    // programming neurons/synapses is safe — nothing else in this path
+    // called start() before this fix, so the chip sat stopped for every
+    // hardware run so far: every sendVirtual() would time out waiting for an
+    // ACK that a gated chip never sends (see the aer_in handshake failures).
+    driver_.start();
     // Only walk the non-twin roles, in address order — that reproduces the
     // exact channel/output ordering SnnCarOdinTask expects (0=bias,
     // 1..nInput, then outputs at fixed indices). For each, also grab its
