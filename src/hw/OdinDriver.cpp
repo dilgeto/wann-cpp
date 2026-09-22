@@ -188,9 +188,9 @@ void OdinDriver::spiSend40(std::uint32_t addr20, std::uint32_t data20) {
 void OdinDriver::init(bool verbose) {
     auto t0 = Clock::now();
 
-    writeMasked(aerIn_, GPIO_DATA, 0xFFFFFFFFu, 0xFFFFFFFFu);
-    writeMasked(aerIn_, GPIO2_DATA, 0xFFFFFFFFu, 0xFFFFFFFFu);
-    writeMasked(aerOutAck_, GPIO_DATA, 0xFFFFFFFFu, 0xFFFFFFFFu);
+    writeMasked(aerIn_, GPIO_DATA, 0, 0xFFFFFFFFu);
+    writeMasked(aerIn_, GPIO2_DATA, 0, 0xFFFFFFFFu);
+    writeMasked(aerOutAck_, GPIO_DATA, 0, 0xFFFFFFFFu);
     if (verbose) std::cout << "  [1/5] GPIOs limpiados\n";
 
     spiSend40(addrGlobal(0), 1);  // GATE_ACTIVITY=1 (stop)
