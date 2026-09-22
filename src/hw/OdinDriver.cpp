@@ -91,13 +91,36 @@ std::vector<std::uint8_t> QuadSpiMaster::xfer(const std::vector<std::uint8_t>& t
             throw std::runtime_error("QuadSpiMaster: SPI TX timeout");
     }
 
+    // TX_EMPTY only means the TX FIFO handed its bytes to the shift
+    // register — the last byte can still be physically shifting out over
+    // SCK/MOSI for up to one more byte-time. Deasserting SS0 before that
+    // finishes truncates the final byte on the wire, corrupting whatever
+    // 40-bit addr/data packet this transfer carried (this silently broke
+    // loadConfig()'s last SPI write — the start() that clears
+    // GATE_ACTIVITY — so the chip stayed gated and every AER_IN event timed
+    // out waiting for an ACK a gated chip never sends). C++ hits this race
+    // far more reliably than the Python port ever did: nothing here waits
+    // on interpreter overhead between the TX_EMPTY read and the SS
+    // deassert. Instead of guessing a settle delay, wait for proof the
+    // transfer actually finished: full-duplex SPI only clocks a byte into
+    // RX as its matching TX byte finishes shifting out, so collecting all
+    // tx.size() RX bytes before cutting the transaction is a
+    // hardware-verified completion signal, not a timing assumption.
+    std::vector<std::uint8_t> rx;
+    deadline = Clock::now() + std::chrono::milliseconds(100);
+    while (rx.size() < tx.size()) {
+        if (mmio_.read(QSPI_SPISR) & SPISR_RX_EMPTY) {
+            if (Clock::now() > deadline)
+                throw std::runtime_error("QuadSpiMaster: SPI RX timeout");
+            continue;
+        }
+        rx.push_back(static_cast<std::uint8_t>(mmio_.read(QSPI_SPIDRR) & 0xFF));
+    }
+
     cfg = SPICR_MASTER | SPICR_MANUAL_SS | SPICR_SPE | SPICR_TRANS_INHIBIT;
     mmio_.write(QSPI_SPICR, cfg);
     mmio_.write(QSPI_SPISSR, 0xFFFFFFFFu);
 
-    std::vector<std::uint8_t> rx;
-    while (!(mmio_.read(QSPI_SPISR) & SPISR_RX_EMPTY))
-        rx.push_back(static_cast<std::uint8_t>(mmio_.read(QSPI_SPIDRR) & 0xFF));
     return rx;
 }
 
