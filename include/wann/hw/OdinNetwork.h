@@ -47,6 +47,12 @@ private:
     std::vector<std::vector<int>> outputAddrs_;
     double            currentTime_ = 0.0;
     std::vector<bool> lastOutputSpikes_;
+
+    // Marks every fired address found in `fired` as true in
+    // lastOutputSpikes_ (OR-ed in, never cleared here) — shared by the
+    // interleaved drains in applyInputSpikes() and step()'s own drain so a
+    // spike isn't lost just because of which of the two drained it.
+    void recordFired(const std::vector<int>& fired);
 };
 
 } // namespace wann::hw

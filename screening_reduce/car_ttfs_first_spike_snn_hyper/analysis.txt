@@ -1,0 +1,71 @@
+==================================================================
+  Reduction analysis — run: car_ttfs_first_spike_snn_hyper
+==================================================================
+
+Total trials: 58   successful: 58   rounds: 4
+Peak range: [125.0000, 1460.0000]
+
+── Space evolution (eliminated bins per round) ──
+  Round 0:
+    alg_probMoo                          bins [4] → [0.05, 0.57]
+    snn_tau_exc                          bins [0] → [4.6, 15]
+    snn_ttfs_threshold                   bins [1] → [1e-06, 0.3]
+  Round 1:
+    alg_probMoo                          bins [0] → [0.154, 0.57]
+    prob_toggleExcitatory                bins [0] → [0.076, 0.3]
+    select_cullRatio                     bins [0] → [0.14, 0.5]
+    snn_window_ms                        bins [1] → [20, 80]
+    snn_ttfs_threshold                   bins [1] → [1e-06, 0.3]
+  Round 2:
+    snn_window_ms                        bins [0, 1] → [44, 80]
+    snn_tau_exc                          bins [4] → [4.6, 12.92]
+    snn_ttfs_threshold                   bins [1] → [1e-06, 0.3]
+  Round 3:
+    alg_probMoo                          bins [4] → [0.154, 0.4868]
+    prob_initEnable                      bins [3] → [0.2, 0.8]
+    snn_window_ms                        bins [0] → [52, 80]
+    snn_ttfs_threshold                   bins [0] → [1.246e-05, 0.3]
+
+── Top 5 configs by peak_fitness ──
+ round  trial  peak_fitness  alg_probMoo  prob_addConn  prob_addNode  prob_enable  prob_mutAct  prob_toggleExcitatory  prob_initEnable  select_cullRatio  select_eliteRatio  select_tournSize  snn_window_ms  snn_tau_exc  snn_tau_inh  snn_ttfs_threshold
+     0     27     1460.0000       0.2991        0.4381        0.1770       0.0153       0.4145                 0.1372           0.3810            0.4770             0.1806                 3             76       5.6249      22.8529              0.0626
+     1     18     1460.0000       0.1967        0.3803        0.2235       0.0528       0.1958                 0.2650           0.4493            0.3318             0.1864                 6             66      11.7121       5.8679              0.0947
+     0      1     1440.0000       0.4384        0.3144        0.2860       0.0128       0.4664                 0.1139           0.3467            0.3027             0.2312                 5             75       5.2041      23.2463              0.0003
+     1      5     1440.0000       0.2815        0.2472        0.2993       0.0135       0.1458                 0.1408           0.7945            0.2270             0.1916                10             56       7.8463      12.6238              0.0276
+     0      2     1410.0000       0.4052        0.2084        0.1434       0.2105       0.2123                 0.1925           0.5141            0.4380             0.1769                 4             64      12.7126      23.4972              0.0002
+
+── Spearman ρ  (|ρ| descending) ──
+  Parameter                                  ρ     p-val  sig
+  snn_window_ms                         +0.382    0.0031  **
+  select_cullRatio                      +0.239    0.0703    
+  select_tournSize                      -0.227    0.0867    
+  snn_ttfs_threshold                    +0.226    0.0881    
+  select_eliteRatio                     -0.171    0.2000    
+  snn_tau_inh                           +0.150    0.2597    
+  snn_tau_exc                           -0.122    0.3635    
+  prob_enable                           -0.110    0.4130    
+  prob_toggleExcitatory                 -0.084    0.5326    
+  prob_addNode                          +0.072    0.5906    
+  prob_addConn                          +0.057    0.6712    
+  prob_mutAct                           -0.052    0.6983    
+  prob_initEnable                       -0.018    0.8961    
+  alg_probMoo                           +0.010    0.9388    
+
+── Random-Forest importance  (Gini + permutation) ──
+  Parameter                               Gini       Perm     ±std
+  snn_window_ms                         0.2181    +0.4603   0.0662
+  select_tournSize                      0.1046    +0.1685   0.0255
+  select_cullRatio                      0.0894    +0.0961   0.0170
+  snn_ttfs_threshold                    0.0763    +0.0857   0.0157
+  prob_initEnable                       0.0680    +0.0587   0.0118
+  snn_tau_inh                           0.0608    +0.0524   0.0064
+  select_eliteRatio                     0.0580    +0.0476   0.0059
+  prob_enable                           0.0556    +0.0491   0.0066
+  alg_probMoo                           0.0524    +0.0474   0.0064
+  prob_addConn                          0.0511    +0.0501   0.0074
+  prob_mutAct                           0.0488    +0.0333   0.0066
+  prob_addNode                          0.0433    +0.0406   0.0068
+  snn_tau_exc                           0.0395    +0.0303   0.0032
+  prob_toggleExcitatory                 0.0341    +0.0253   0.0029
+
+==================================================================

@@ -65,6 +65,29 @@ lógico del protocolo AER), ningún código a nivel de aplicación puede
 prevenirlo — eso depende de cómo esté armado el diseño de Vivado (si tiene
 un monitor de timeout AXI o no). Por eso, hasta confirmar que el fix
 alcanza, seguí el protocolo de reintento conservador de abajo en vez de
+
+### Causa raíz encontrada (mismo día): el chip nunca se arrancaba
+
+Con el fix de arriba puesto, el primer intento posterior falló limpio (sin
+colgar el sistema — la excepción hizo su trabajo) con
+`aer_in handshake failed (rc=-2)`. La causa: `OdinDriver::loadConfig()` deja
+el chip parado a propósito (`GATE_ACTIVITY=1`, necesario para programar
+neuronas/sinapsis con seguridad) y el comentario decía "el que llama debe
+hacer `start()`" — pero **nada en el código real llamaba a `start()`**.
+`OdinNetwork` nunca arrancaba el chip después de cargarle la config. Todas
+las corridas de hardware hasta ahora (incluidas las que "terminaron" sin
+tirar error, antes de agregar la revisión del código de retorno) corrieron
+contra un chip parado: cada `sendVirtual` esperaba en silencio el timeout
+completo de 100ms sin que nada respondiera del otro lado — lo cual también
+explica buena parte de la demora que se venía observando, más allá del
+timeout fijo de `drainSpikes`.
+
+**Corregido**: `OdinNetwork` ahora llama `driver_.start()` justo después de
+`loadConfig()`. No hay garantía de que esto sea la única causa del cuelgue
+con `-n 4` (pudo haber contribuido: mantener `REQ` reintentando contra un
+chip parado durante más tiempo/episodios es plausible que empeore las cosas
+a nivel de bus), así que seguí igual el protocolo de reintento escalonado de
+abajo en vez de asumir que ya está resuelto del todo.
 volver directo a `-n 4`.
 
 **Protocolo de reintento después de un power cycle:**

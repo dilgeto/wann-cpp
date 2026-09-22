@@ -35,6 +35,13 @@ OdinNetwork::OdinNetwork(const wann::OdinNetworkConfig& cfg, OdinDriver& driver)
     lastOutputSpikes_.assign(outputAddrs_.size(), false);
 }
 
+namespace {
+// Matches odin.py's run_sample() default drain_between_us — the window
+// given to AER_OUT after each stimulated input, before moving on to the
+// next one.
+constexpr int kDrainBetweenUs = 3000;
+}
+
 void OdinNetwork::fastReset() {
     currentTime_ = 0.0;
     std::fill(lastOutputSpikes_.begin(), lastOutputSpikes_.end(), false);
@@ -46,9 +53,27 @@ void OdinNetwork::fastReset() {
     driver_.aerBusReset();
 }
 
+void OdinNetwork::recordFired(const std::vector<int>& fired) {
+    for (int addr : fired) {
+        for (std::size_t k = 0; k < outputAddrs_.size(); ++k) {
+            const auto& addrs = outputAddrs_[k];
+            if (std::find(addrs.begin(), addrs.end(), addr) != addrs.end()) {
+                lastOutputSpikes_[k] = true;
+                break;
+            }
+        }
+    }
+}
+
 void OdinNetwork::applyInputSpikes(const std::vector<std::vector<double>>& encoded_spikes,
                                     double currentTime)
 {
+    // Cleared once per tick, here (the first thing SnnCarOdinTask::runEpisode
+    // calls each tick) rather than in step() — step() now only accumulates,
+    // since spikes fired during input injection (see below) must survive
+    // into step()'s own drain instead of being wiped by it.
+    std::fill(lastOutputSpikes_.begin(), lastOutputSpikes_.end(), false);
+
     const int t = static_cast<int>(currentTime);
     for (std::size_t ch = 0; ch < encoded_spikes.size() && ch < inputAddrs_.size(); ++ch) {
         if (t >= 0 && t < static_cast<int>(encoded_spikes[ch].size()) &&
@@ -68,6 +93,13 @@ void OdinNetwork::applyInputSpikes(const std::vector<std::vector<double>>& encod
                         "hardware state.");
                 }
             }
+            // Drain AER_OUT right after this input's virtual event(s), same
+            // as odin.py's run_sample() — without this, a spike triggered by
+            // this input sits unread in AER_OUT and backpressures the chip's
+            // AER_IN handshake for the next input (exactly the "works for
+            // the first input, times out on the second" failure mode odin.py's
+            // docstring already warns about).
+            recordFired(driver_.drainSpikes(kDrainBetweenUs));
         }
     }
 }
@@ -84,18 +116,10 @@ void OdinNetwork::step(double /*sharedWeight*/) {
     // ODIN is event-driven with no exposed clock, so "one software timestep"
     // has no exact hardware equivalent (see plan's timing-fidelity note).
     constexpr int STEP_TIMEOUT_US = 1000;  // placeholder, needs empirical tuning
-    auto fired = driver_.drainSpikes(STEP_TIMEOUT_US);
-
-    std::fill(lastOutputSpikes_.begin(), lastOutputSpikes_.end(), false);
-    for (int addr : fired) {
-        for (std::size_t k = 0; k < outputAddrs_.size(); ++k) {
-            const auto& addrs = outputAddrs_[k];
-            if (std::find(addrs.begin(), addrs.end(), addr) != addrs.end()) {
-                lastOutputSpikes_[k] = true;
-                break;
-            }
-        }
-    }
+    // Accumulates onto whatever applyInputSpikes() already recorded this
+    // tick via its own interleaved drains — does NOT clear lastOutputSpikes_
+    // (that happens once per tick, at the top of applyInputSpikes()).
+    recordFired(driver_.drainSpikes(STEP_TIMEOUT_US));
     currentTime_ += 1.0;
 }
 

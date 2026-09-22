@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>WANN+SNN — Replay 3D L2F</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #12141a; overflow: hidden;
+               font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #e8e8e8; }
+  #scene { position: absolute; inset: 0; }
+
+  .panel { position: absolute; background: rgba(20, 22, 28, 0.82); border: 1px solid #333;
+           border-radius: 8px; padding: 10px 12px; font-size: 12px; backdrop-filter: blur(2px); }
+
+  #hud { top: 12px; left: 12px; min-width: 190px; line-height: 1.5; }
+  #hud .row { display: flex; justify-content: space-between; gap: 14px; }
+  #hud .val { font-weight: 600; }
+
+  #side { top: 12px; right: 12px; width: 220px; }
+  #side h4 { margin: 0 0 4px; font-size: 11px; font-weight: 600; color: #9ab; text-transform: uppercase; letter-spacing: .04em; }
+  #side canvas { display: block; width: 100%; height: 60px; margin-bottom: 10px; background: #0b0c10; border-radius: 4px; }
+  .rotor-row { display: flex; gap: 6px; align-items: flex-end; height: 46px; margin-bottom: 4px; }
+  .rotor-bar-wrap { flex: 1; height: 100%; display: flex; flex-direction: column-reverse; align-items: center; background: #0b0c10; border-radius: 3px; overflow: hidden; }
+  .rotor-bar { width: 100%; background: #4a90d9; transition: none; }
+  .rotor-labels { display: flex; gap: 6px; }
+  .rotor-labels span { flex: 1; text-align: center; font-size: 10px; color: #889; }
+
+  #controls { bottom: 12px; left: 12px; right: 12px; display: flex; align-items: center;
+              gap: 10px; flex-wrap: wrap; }
+  #controls label { font-size: 11px; color: #9ab; }
+  #controls select, #controls button, #controls input[type=file] {
+    background: #232733; color: #e8e8e8; border: 1px solid #3a3f4d; border-radius: 5px;
+    padding: 5px 8px; font-size: 12px; cursor: pointer; }
+  #controls button:hover, #controls select:hover { background: #2c313f; }
+  #scrubber { flex: 1; min-width: 160px; accent-color: #4a90d9; }
+  #frameLabel { font-variant-numeric: tabular-nums; min-width: 90px; text-align: right; }
+
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+           text-align: center; color: #778; font-size: 14px; padding: 20px; }
+  #empty code { background: #232733; padding: 2px 5px; border-radius: 4px; }
+
+  #errorBanner { top: 12px; left: 50%; transform: translateX(-50%); max-width: 70vw;
+                 background: rgba(90, 20, 20, 0.92); border-color: #a33; color: #fdd;
+                 font-family: monospace; white-space: pre-wrap; display: none; }
+</style>
+</head>
+<body>
+
+<div id="scene"></div>
+
+<div id="empty">
+  Cargá uno o más CSV exportados por <code>wann_l2f_replay</code><br>
+  (o un directorio <code>gen_*.csv</code> completo) con el botón "Cargar CSV" de abajo.
+</div>
+
+<div id="errorBanner" class="panel"></div>
+
+<div id="hud" class="panel" style="display:none">
+  <div class="row"><span>Generación</span><span class="val" id="hGen">—</span></div>
+  <div class="row"><span>Paso</span><span class="val" id="hStep">0 / 0</span></div>
+  <div class="row"><span>‖err‖</span><span class="val" id="hErr">0.000 m</span></div>
+  <div class="row"><span>Reward acum.</span><span class="val" id="hRew">0.0</span></div>
+  <div class="row"><span>‖ω‖</span><span class="val" id="hOmega">0.000 rad/s</span></div>
+  <div style="margin-top:6px; font-size:10px; color:#778;">
+    El dron se dibuja relativo al objetivo (Lissajous fijo en el origen)<br>
+    Modelo de dron: <a href="https://github.com/arplaboratory/learning-to-fly" style="color:#89a;">learning-to-fly</a> (MIT)
+  </div>
+</div>
+
+<div id="side" class="panel" style="display:none">
+  <h4>Reward acumulado</h4>
+  <canvas id="cvRew"></canvas>
+  <h4>Velocidad angular ‖ω‖</h4>
+  <canvas id="cvOmega"></canvas>
+  <h4>Rotores</h4>
+  <div class="rotor-row">
+    <div class="rotor-bar-wrap"><div class="rotor-bar" id="rb0" style="height:0%"></div></div>
+    <div class="rotor-bar-wrap"><div class="rotor-bar" id="rb1" style="height:0%"></div></div>
+    <div class="rotor-bar-wrap"><div class="rotor-bar" id="rb2" style="height:0%"></div></div>
+    <div class="rotor-bar-wrap"><div class="rotor-bar" id="rb3" style="height:0%"></div></div>
+  </div>
+  <div class="rotor-labels"><span>r0</span><span>r1</span><span>r2</span><span>r3</span></div>
+</div>
+
+<div id="controls" class="panel">
+  <label for="fileInput">Cargar CSV:</label>
+  <input id="fileInput" type="file" accept=".csv" multiple>
+  <label>Generación:</label>
+  <select id="genSelect"></select>
+  <button id="playBtn">▶ Play</button>
+  <label>Velocidad:</label>
+  <select id="speedSelect">
+    <option value="0.25">0.25×</option>
+    <option value="0.5">0.5×</option>
+    <option value="1" selected>1×</option>
+    <option value="2">2×</option>
+    <option value="4">4×</option>
+    <option value="8">8×</option>
+  </select>
+  <input id="scrubber" type="range" min="0" max="0" value="0" step="1">
+  <span id="frameLabel">0 / 0</span>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./lib/l2f_ui/lib/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import { Simulator } from "./lib/l2f_ui/simulator.js";
+import { Drone } from "./lib/l2f_ui/drone.js";
+import { default_model } from "./lib/l2f_ui/default_model.js";
+
+window.__l2fModuleLoaded = true; // ver script de diagnóstico al final del <body>
+
+window.addEventListener("error", (e) => showError(e.message));
+window.addEventListener("unhandledrejection", (e) => showError(e.reason?.message || String(e.reason)));
+
+// ── CSV: step,pos_err_x,pos_err_y,pos_err_z,qw,qx,qy,qz,
+//         vel_err_x,vel_err_y,vel_err_z,wx,wy,wz,
+//         rotor0,rotor1,rotor2,rotor3,reward
+const EXPECTED_COLS = 19; // step,pos_err_xyz,qwxyz,vel_err_xyz,wxyz,rotor0-3,reward
+
+function parseCSV(text, filename) {
+  const lines = text.trim().split("\n");
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const row = lines[i].split(",").map(Number);
+    if (row.length !== EXPECTED_COLS || row.some(Number.isNaN)) {
+      throw new Error(
+        `${filename}: fila ${i} tiene ${row.length} columnas (se esperaban ${EXPECTED_COLS}) ` +
+        `o algún valor no numérico. ¿Es un CSV de wann_l2f_replay? ` +
+        `(¿No será un replay de otra tarea, p.ej. Car?)`
+      );
+    }
+    rows.push(row);
+  }
+  if (rows.length === 0) throw new Error(`${filename}: no tiene filas de datos.`);
+  return rows;
+}
+
+// Cuaternión (qw,qx,qy,qz) -> matriz de rotación 3x3, formato que espera
+// Drone.setState() (learning-to-fly/src/ui/static/math.js: Matrix4FromRotMat).
+function quatToRotMatrix(qw, qx, qy, qz) {
+  return [
+    [1 - 2*(qy*qy + qz*qz), 2*(qx*qy - qz*qw),     2*(qx*qz + qy*qw)],
+    [2*(qx*qy + qz*qw),     1 - 2*(qx*qx + qz*qz), 2*(qy*qz - qx*qw)],
+    [2*(qx*qz - qy*qw),     2*(qy*qz + qx*qw),     1 - 2*(qx*qx + qy*qy)],
+  ];
+}
+
+// ── Estado global ────────────────────────────────────────────────────────
+let trajs = [];         // [{ gen, label, rows, posErr, angVel, rotors, cumRew }]
+let curTi = -1;
+let frame = 0;
+let playing = false;
+let speed = 1.0;
+const FPS = 30;
+const TRAIL_LEN = 80;
+
+function buildTraj(gen, label, rows) {
+  const n = rows.length;
+  const posErr = rows.map(r => [r[1], r[2], r[3]]);
+  const quat   = rows.map(r => [r[4], r[5], r[6], r[7]]);
+  const angVel = rows.map(r => Math.hypot(r[11], r[12], r[13]));
+  const rotors = rows.map(r => [r[14], r[15], r[16], r[17]]);
+  let acc = 0;
+  const cumRew = rows.map(r => (acc += r[18]));
+  return { gen, label, rows, posErr, quat, angVel, rotors, cumRew, n };
+}
+
+// ── Three.js setup (Simulator/Drone vendorizados de learning-to-fly) ──────
+const container = document.getElementById("scene");
+const simulator = new Simulator(container, {});   // trae su propio render loop + OrbitControls
+
+// Encuadre inicial acorde a la escala de la tarea (Lissajous de ~0.5-1.0m),
+// en vez de la cámara por defecto (pensada para su propio ruedo de entrenamiento).
+simulator.camera.position.set(1.1, 0.8, 1.1);
+simulator.controls.target.set(0, 0, 0);
+simulator.controls.update();
+
+// Objetivo (trayectoria Lissajous) fijo en el origen.
+const targetMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.02, 16, 16),
+  new THREE.MeshBasicMaterial({ color: 0x4ade80 })
+);
+simulator.add(targetMarker);
+
+// Dron real (mismo mesh que learning-to-fly): brazos + jaulas de rotor
+// coloreadas por sentido de giro. Sin coordinateSystem del IMU: a la escala
+// de default_model queda desproporcionado frente al propio cuerpo del dron.
+const drone = new Drone(default_model, [0, 0, 0], null, false, true);
+simulator.add(drone.get());
+
+// Estela: trayectoria completa (tenue) + cola reciente (brillante).
+const ghostMat = new THREE.LineBasicMaterial({ color: 0x4a90d9, transparent: true, opacity: 0.18 });
+const trailMat = new THREE.LineBasicMaterial({ color: 0x6cb2ff });
+let ghostLine = new THREE.Line(new THREE.BufferGeometry(), ghostMat);
+let trailLine = new THREE.Line(new THREE.BufferGeometry(), trailMat);
+simulator.add(ghostLine);
+simulator.add(trailLine);
+
+window.addEventListener("resize", () => {
+  simulator.camera.aspect = window.innerWidth / window.innerHeight;
+  simulator.camera.updateProjectionMatrix();
+  simulator.renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ── Carga de archivos ────────────────────────────────────────────────────
+const genSelect  = document.getElementById("genSelect");
+const fileInput  = document.getElementById("fileInput");
+const emptyMsg   = document.getElementById("empty");
+const hud        = document.getElementById("hud");
+const side       = document.getElementById("side");
+const errorBanner = document.getElementById("errorBanner");
+
+function showError(msg) {
+  console.error(msg);
+  errorBanner.textContent = "⚠ " + msg;
+  errorBanner.style.display = "block";
+}
+
+fileInput.addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files);
+  if (!files.length) return;
+
+  errorBanner.style.display = "none";
+  let newTrajs;
+  try {
+    const loaded = await Promise.all(files.map(f => f.text().then(text => ({ f, text }))));
+    newTrajs = loaded.map(({ f, text }) => {
+      const m = f.name.match(/gen_(\d+)/);
+      const gen = m ? parseInt(m[1], 10) : 0;
+      const label = m ? `Gen ${String(gen).padStart(4, "0")}` : f.name;
+      return buildTraj(gen, label, parseCSV(text, f.name));
+    }).sort((a, b) => a.gen - b.gen);
+  } catch (err) {
+    showError(err.message || String(err));
+    return;
+  }
+  trajs = newTrajs;
+
+  genSelect.innerHTML = "";
+  trajs.forEach((t, i) => {
+    const opt = document.createElement("option");
+    opt.value = i;
+    opt.textContent = t.label;
+    genSelect.appendChild(opt);
+  });
+
+  emptyMsg.style.display = "none";
+  hud.style.display = "block";
+  side.style.display = "block";
+
+  selectTraj(trajs.length - 1); // arranca en la última (mejor/última generación)
+});
+
+genSelect.addEventListener("change", () => selectTraj(parseInt(genSelect.value, 10)));
+
+function selectTraj(ti) {
+  curTi = ti;
+  genSelect.value = ti;
+  frame = 0;
+  const t = trajs[ti];
+  document.getElementById("scrubber").max = t.n - 1;
+  document.getElementById("scrubber").value = 0;
+
+  const pts = t.posErr.map(p => new THREE.Vector3(...p));
+  ghostLine.geometry.dispose();
+  ghostLine.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+
+  render();
+}
+
+// ── Reproducción ─────────────────────────────────────────────────────────
+const playBtn  = document.getElementById("playBtn");
+const speedSel = document.getElementById("speedSelect");
+const scrubber = document.getElementById("scrubber");
+const frameLabel = document.getElementById("frameLabel");
+
+playBtn.addEventListener("click", () => {
+  playing = !playing;
+  playBtn.textContent = playing ? "⏸ Pause" : "▶ Play";
+});
+speedSel.addEventListener("change", () => { speed = parseFloat(speedSel.value); });
+scrubber.addEventListener("input", () => { frame = parseInt(scrubber.value, 10); render(); });
+window.addEventListener("keydown", (e) => {
+  if (e.code === "Space") { e.preventDefault(); playBtn.click(); }
+  else if (e.code === "ArrowRight" && curTi < trajs.length - 1) selectTraj(curTi + 1);
+  else if (e.code === "ArrowLeft" && curTi > 0) selectTraj(curTi - 1);
+});
+
+const cvRew = document.getElementById("cvRew");
+const cvOmega = document.getElementById("cvOmega");
+function sizeCanvas(cv) { cv.width = cv.clientWidth * devicePixelRatio; cv.height = cv.clientHeight * devicePixelRatio; }
+
+function drawSparkline(cv, values, upTo, color) {
+  sizeCanvas(cv);
+  const ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  if (values.length < 2) return;
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const span = (hi - lo) || 1;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2 * devicePixelRatio;
+  ctx.beginPath();
+  for (let i = 0; i <= upTo; i++) {
+    const x = (i / (values.length - 1)) * W;
+    const y = H - ((values[i] - lo) / span) * (H * 0.85) - H * 0.08;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  const xd = (upTo / (values.length - 1)) * W;
+  const yd = H - ((values[upTo] - lo) / span) * (H * 0.85) - H * 0.08;
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(xd, yd, 3 * devicePixelRatio, 0, 7); ctx.fill();
+}
+
+function render() {
+  if (curTi < 0) return;
+  const t = trajs[curTi];
+  const i = Math.min(frame, t.n - 1);
+
+  drone.setState({
+    pose: {
+      position: t.posErr[i],
+      orientation: quatToRotMatrix(...t.quat[i]),
+    },
+    // power=0 exacto degenera la flecha de fuerza (vector dirección nulo) en drone.js.
+    rotor_states: t.rotors[i].map(v => ({ power: v === 0 ? 1e-6 : v })),
+  });
+
+  const lo = Math.max(0, i - TRAIL_LEN);
+  const trailPts = t.posErr.slice(lo, i + 1).map(p => new THREE.Vector3(...p));
+  trailLine.geometry.dispose();
+  trailLine.geometry = new THREE.BufferGeometry().setFromPoints(trailPts);
+
+  document.getElementById("hGen").textContent = t.label;
+  document.getElementById("hStep").textContent = `${t.rows[i][0]} / ${t.n - 1}`;
+  document.getElementById("hErr").textContent =
+    Math.hypot(...t.posErr[i]).toFixed(3) + " m";
+  document.getElementById("hRew").textContent = t.cumRew[i].toFixed(1);
+  document.getElementById("hOmega").textContent = t.angVel[i].toFixed(3) + " rad/s";
+
+  for (let r = 0; r < 4; r++) {
+    const v = t.rotors[i][r];
+    const bar = document.getElementById("rb" + r);
+    const pct = Math.max(0, Math.min(100, (v + 1) * 50));
+    bar.style.height = pct + "%";
+    bar.style.background = v >= 0 ? "#4a90d9" : "#d9724a";
+  }
+
+  drawSparkline(cvRew, t.cumRew, i, "#f5a623");
+  drawSparkline(cvOmega, t.angVel, i, "#b06cff");
+
+  scrubber.value = i;
+  frameLabel.textContent = `${i} / ${t.n - 1}`;
+}
+
+// ── Loop de reproducción ─────────────────────────────────────────────────
+// (el renderizado en sí y el OrbitControls.update() ya corren dentro de
+// Simulator's propio requestAnimationFrame; acá solo avanzamos los datos)
+let lastTick = performance.now();
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (playing && curTi >= 0) {
+    const dt = (now - lastTick) / 1000;
+    const stepEvery = 1 / (FPS * speed);
+    if (dt >= stepEvery) {
+      lastTick = now;
+      const t = trajs[curTi];
+      frame = frame + 1 >= t.n ? 0 : frame + 1;
+      render();
+    }
+  } else {
+    lastTick = now;
+  }
+}
+requestAnimationFrame(tick);
+</script>
+
+<script>
+// Script clásico (no type="module"): corre siempre, incluso si el navegador
+// bloqueó los imports de arriba. Sirve para detectar ese bloqueo y avisar,
+// ya que en ese caso el script de módulo nunca llega a ejecutar nada.
+setTimeout(() => {
+  if (!window.__l2fModuleLoaded) {
+    document.getElementById("empty").innerHTML =
+      '⚠ La página no pudo cargar los módulos de JavaScript (three.js, etc).<br><br>' +
+      'Los navegadores basados en Chromium (Chrome, Edge, Brave) bloquean los ' +
+      '<code>import</code> de ES modules cuando el HTML se abre directo como ' +
+      'archivo local (<code>file://</code>). Firefox sí lo permite.<br><br>' +
+      'Solución: serví esta carpeta con un servidor local, por ejemplo:<br>' +
+      '<code>cd wann-cpp && python3 -m http.server 8000</code><br>' +
+      'y abrí <code>http://localhost:8000/replay_l2f_3d.html</code>';
+    document.getElementById("empty").style.display = "flex";
+  }
+}, 1500);
+</script>
+</body>
+</html>

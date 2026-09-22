@@ -1,0 +1,74 @@
+==================================================================
+  Full-budget analysis — run: car_ttfs_first_spike_snn_hyper
+==================================================================
+
+Phase 2: 40/40 successful trials   peak range [578.0000, 1400.0000]
+
+── Top 5 configs (Phase 2) ──
+ trial  peak_fitness  alg_probMoo  prob_addConn  prob_addNode  prob_enable  prob_mutAct  prob_toggleExcitatory  prob_initEnable  select_cullRatio  select_eliteRatio  select_tournSize  snn_window_ms  snn_tau_exc  snn_tau_inh  snn_ttfs_threshold
+    34     1400.0000       0.3413        0.2028        0.2847       0.0131       0.2586                 0.2233           0.7092            0.3509             0.1066                13             52       7.9074      28.7783              0.0000
+    18     1370.0000       0.1701        0.1394        0.3012       0.0410       0.3543                 0.2467           0.3413            0.4332             0.0797                 7             55       5.0530      19.9446              0.0002
+    20     1370.0000       0.2494        0.2970        0.1330       0.0632       0.4967                 0.2409           0.2513            0.3491             0.0892                 4             57       5.2700      15.5853              0.0001
+    10     1360.0000       0.3008        0.1176        0.2498       0.0231       0.5169                 0.2927           0.4600            0.3687             0.1516                11             61       6.1024      16.7554              0.0000
+    31     1360.0000       0.3846        0.1756        0.2756       0.0054       0.3512                 0.2299           0.5488            0.3301             0.1349                11             54       6.5906      23.3910              0.0000
+
+── Spearman ρ  (Phase 2, |ρ| descending) ──
+  Parameter                                  ρ     p-val  sig
+  prob_enable                           -0.233    0.1481    
+  snn_window_ms                         -0.201    0.2139    
+  snn_tau_inh                           +0.162    0.3179    
+  snn_ttfs_threshold                    -0.139    0.3933    
+  select_tournSize                      +0.110    0.4980    
+  prob_addNode                          -0.089    0.5862    
+  select_eliteRatio                     -0.085    0.6014    
+  prob_addConn                          -0.062    0.7059    
+  snn_tau_exc                           +0.044    0.7871    
+  alg_probMoo                           +0.041    0.8013    
+  prob_initEnable                       -0.028    0.8629    
+  select_cullRatio                      -0.020    0.9033    
+  prob_mutAct                           -0.008    0.9624    
+  prob_toggleExcitatory                 -0.005    0.9780    
+
+── Random-Forest importance  (Phase 2) ──
+  Parameter                               Gini       Perm     ±std
+  prob_addConn                          0.2247    +0.3025   0.0552
+  snn_tau_exc                           0.1229    +0.1339   0.0328
+  snn_window_ms                         0.1083    +0.1517   0.0303
+  select_eliteRatio                     0.0793    +0.0623   0.0163
+  alg_probMoo                           0.0749    +0.0658   0.0122
+  prob_enable                           0.0662    +0.0591   0.0096
+  snn_tau_inh                           0.0639    +0.0440   0.0162
+  snn_ttfs_threshold                    0.0502    +0.0336   0.0047
+  prob_addNode                          0.0471    +0.0444   0.0093
+  prob_initEnable                       0.0419    +0.0464   0.0123
+  select_cullRatio                      0.0378    +0.0365   0.0086
+  prob_toggleExcitatory                 0.0336    +0.0209   0.0063
+  select_tournSize                      0.0274    +0.0191   0.0048
+  prob_mutAct                           0.0218    +0.0172   0.0062
+
+── Phase 3 Validation ──
+  Rank        Mean     ±Std       Min       Max  n_ok
+  1      1449.0909  56.2947 1320.0000 1540.0000    11
+  2      1431.8182  75.4743 1230.0000 1520.0000    11
+  0      1322.5455 212.0926  850.0000 1480.0000    11
+
+── Best validated config (rank 1) ──
+  mean=1449.0909  std=56.2947  min=1320.0000  max=1540.0000
+  orig_mean                             1149.7273
+  orig_std                              176.9204
+  alg_probMoo                           0.1701
+  prob_addConn                          0.1394
+  prob_addNode                          0.3012
+  prob_enable                           0.0410
+  prob_mutAct                           0.3543
+  prob_toggleExcitatory                 0.2467
+  prob_initEnable                       0.3413
+  select_cullRatio                      0.4332
+  select_eliteRatio                     0.0797
+  select_tournSize                      7.0000
+  snn_window_ms                         55.0000
+  snn_tau_exc                           5.0530
+  snn_tau_inh                           19.9446
+  snn_ttfs_threshold                    0.0002
+
+==================================================================
