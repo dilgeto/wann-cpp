@@ -43,6 +43,17 @@
 #include <string>
 
 int main(int argc, char* argv[]) {
+    // std::cout is fully buffered once piped/redirected (e.g. `| tee log`) —
+    // if the process hangs or freezes the whole board mid-run, everything
+    // printed so far can be sitting in that buffer and never reach the
+    // pipe/file. Force a flush after every write so the log always reflects
+    // exactly how far execution got, no matter how it ends. (Don't rely on
+    // `stdbuf` for this from the outside: under sudo the dynamic linker
+    // ignores LD_PRELOAD for privileged processes, so `stdbuf` silently has
+    // no effect there.)
+    std::cout.setf(std::ios::unitbuf);
+    std::cerr.setf(std::ios::unitbuf);
+
     std::string cfgFile    = "odin_config.json";
     std::string configFile = "p/car_snn.json";
     int         nEpisodes  = 10;
