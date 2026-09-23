@@ -122,7 +122,13 @@ int main(int argc, char* argv[]) {
                                           sharedWeight, chosenWi, magnitude3bit,
                                           "car", runKey);
         if (thrOverride != -1) {
-            for (auto& n : cfg.neurons) n.izh.thr = thrOverride;
+            for (auto& n : cfg.neurons) {
+                n.izh.thr = thrOverride;
+                // reson_en needs rfr < thr (ODIN's verified param rules,
+                // otherwise the neuron fires on its own); the catalog's
+                // resonators use rfr=0.
+                if (n.izh.resonEn && n.izh.rfr >= n.izh.thr) n.izh.rfr = 0;
+            }
             std::cout << "thr sobreescrito a " << thrOverride
                       << " en las " << cfg.neurons.size() << " neuronas\n";
         }
