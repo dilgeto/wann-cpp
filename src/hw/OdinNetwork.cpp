@@ -63,6 +63,7 @@ void OdinNetwork::fastReset() {
 
 void OdinNetwork::recordFired(const std::vector<int>& fired) {
     for (int addr : fired) {
+        if (addr >= 0 && addr < 256) ++addrSpikes_[addr];
         for (std::size_t k = 0; k < outputAddrs_.size(); ++k) {
             const auto& addrs = outputAddrs_[k];
             if (std::find(addrs.begin(), addrs.end(), addr) != addrs.end()) {

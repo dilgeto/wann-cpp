@@ -60,6 +60,7 @@ public:
         long long nTicks = 0;    // inner window ticks (nEnvSteps * window_steps)
     };
     const Timings& timings() const { return timings_; }
+    const hw::OdinNetwork& network() const { return network_; }
 
 private:
     int    nInput_;

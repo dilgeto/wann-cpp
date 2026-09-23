@@ -2,6 +2,7 @@
 #include "../OdinExport.h"
 #include "OdinDriver.h"
 
+#include <array>
 #include <vector>
 
 namespace wann::hw {
@@ -37,6 +38,12 @@ public:
     std::vector<bool> getOutputSpikes() const;
     double getCurrentTime() const { return currentTime_; }
 
+    // Diagnostics: how many AER_OUT events were seen per physical address
+    // (any address, not just outputs) and which addresses count as outputs,
+    // to tell "outputs never fire" from "outputs fire but aren't decoded".
+    const std::array<long long, 256>& addrSpikeCounts() const { return addrSpikes_; }
+    const std::vector<std::vector<int>>& outputAddrs() const { return outputAddrs_; }
+
 private:
     OdinDriver& driver_;
     // channel/output index -> physical ODIN address(es). A logical
@@ -47,6 +54,7 @@ private:
     std::vector<std::vector<int>> outputAddrs_;
     double            currentTime_ = 0.0;
     std::vector<bool> lastOutputSpikes_;
+    std::array<long long, 256> addrSpikes_{};
 
     // Marks every fired address found in `fired` as true in
     // lastOutputSpikes_ (OR-ed in, never cleared here) — shared by the

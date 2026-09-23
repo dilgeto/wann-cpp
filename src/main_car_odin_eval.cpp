@@ -137,6 +137,19 @@ int main(int argc, char* argv[]) {
                 << (t.nTicks > 0 ? (t.aerSendUs + t.aerDrainUs) / t.nTicks : 0.0) << " us\n\n";
         }
 
+        if (profile) {
+            const auto& counts = task.network().addrSpikeCounts();
+            log << "--- Spikes vistos en AER_OUT por direccion ---\n";
+            bool any = false;
+            for (int a = 0; a < 256; ++a)
+                if (counts[a] > 0) { log << "  addr " << a << ": " << counts[a] << '\n'; any = true; }
+            if (!any) log << "  (ninguno: ninguna neurona disparo)\n";
+            log << "Direcciones de salida esperadas:";
+            for (const auto& g : task.network().outputAddrs())
+                for (int a : g) log << ' ' << a;
+            log << "\n\n";
+        }
+
         if (csvMode) {
             std::cout << "episode,reward\n" << std::fixed << std::setprecision(6);
             for (int i = 0; i < nEpisodes; ++i) std::cout << i << ',' << rewards[i] << '\n';
