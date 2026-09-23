@@ -37,6 +37,7 @@ SnnCarOdinTask::SnnCarOdinTask(const Hyperparams& hyp, const OdinNetworkConfig& 
                                 hw::OdinDriver& driver, double simWindowMs)
     : nInput_(hyp.ann_nInput)
     , episodeSteps_(1000)
+    , resetBetweenSteps_(hyp.snn_reset_between_steps)
     , simWindowMs_(simWindowMs)
     , network_(cfg, driver)
 {
@@ -83,6 +84,11 @@ double SnnCarOdinTask::runEpisode(long long episodeSeed) {
 
     for (int step = 0; step < episodeSteps_; ++step) {
         ++timings_.nEnvSteps;
+        // Same as SnnCarTask: each env step starts a fresh window at t=0.
+        // Without this the window clock keeps growing past the spike
+        // trains' length and no input is ever sent after the first step.
+        if (resetBetweenSteps_) network_.resetWindow();
+
         auto t0 = Clock::now();
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
         timings_.envUs += usSince(t0);

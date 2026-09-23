@@ -61,6 +61,11 @@ void OdinNetwork::fastReset() {
     driver_.aerBusReset();
 }
 
+void OdinNetwork::resetWindow() {
+    currentTime_ = 0.0;
+    std::fill(lastOutputSpikes_.begin(), lastOutputSpikes_.end(), false);
+}
+
 void OdinNetwork::recordFired(const std::vector<int>& fired) {
     for (int addr : fired) {
         if (addr >= 0 && addr < 256) ++addrSpikes_[addr];

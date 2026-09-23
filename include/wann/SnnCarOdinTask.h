@@ -65,6 +65,7 @@ public:
 private:
     int    nInput_;
     int    episodeSteps_;
+    bool   resetBetweenSteps_;
     double simWindowMs_;
     hw::OdinNetwork network_;
     Timings timings_;

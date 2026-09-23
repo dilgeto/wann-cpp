@@ -20,6 +20,14 @@ public:
 
     void fastReset();
 
+    // Rewinds only the host-side window clock (and this tick's recorded
+    // output spikes) — what SnnCarTask's per-env-step net.fastReset() does
+    // for the software network when snn_reset_between_steps is set. Unlike
+    // fastReset() it doesn't touch the AER bus (that costs a 50 ms drain).
+    // Neuron membrane state on the chip is NOT reset (no such register is
+    // exposed by this driver).
+    void resetWindow();
+
     // encoded_spikes[channel][t] > 0 means a spike at relative time t for
     // that input channel — same shape TTFSEncoder/etc. already produce in
     // SnnCarTask.cpp. Only the spikes at `currentTime` are sent this call.
