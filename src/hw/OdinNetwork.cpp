@@ -106,14 +106,15 @@ void OdinNetwork::applyInputSpikes(const std::vector<std::vector<double>>& encod
                         "stopping instead of continuing into a possibly worse "
                         "hardware state.");
                 }
+                // Drain AER_OUT after EVERY event (including each Dale's-law
+                // twin of the same input), same as odin.py's run_sample():
+                // a spike triggered by this event sits unread in AER_OUT
+                // and backpressures the chip's AER_IN handshake for the next
+                // one. Now that an input spike really propagates through the
+                // crossbar (0x07 event), downstream neurons fire and this
+                // is no longer hypothetical.
+                recordFired(driver_.drainSpikes(kDrainBetweenUs));
             }
-            // Drain AER_OUT right after this input's virtual event(s), same
-            // as odin.py's run_sample() — without this, a spike triggered by
-            // this input sits unread in AER_OUT and backpressures the chip's
-            // AER_IN handshake for the next input (exactly the "works for
-            // the first input, times out on the second" failure mode odin.py's
-            // docstring already warns about).
-            recordFired(driver_.drainSpikes(kDrainBetweenUs));
         }
     }
 }
