@@ -402,6 +402,10 @@ int OdinDriver::sendVirtual(int neuronId, int weight, int leakBit, int inhibBit,
     return aerSendRaw(aer17(0, neuronId, lo), timeoutUs);
 }
 
+int OdinDriver::sendNeuronSpike(int neuronId, int timeoutUs) {
+    return aerSendRaw(aer17(0, neuronId, 0x07), timeoutUs);
+}
+
 int OdinDriver::sendTrefAll(int timeoutUs) {
     return aerSendRaw(aer17(0, 0, 0x7F), timeoutUs);
 }

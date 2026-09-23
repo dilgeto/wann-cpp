@@ -91,6 +91,15 @@ public:
     int sendVirtual(int neuronId, int weight = 7, int leakBit = 0, int inhibBit = 0,
                     int timeoutUs = 100'000);
 
+    // Makes the chip treat `neuronId` as if it had just fired: its outgoing
+    // synapses are stimulated (sign from SPI_SYN_SIGN[neuronId]), without
+    // going through the neuron's own membrane/threshold (AER event
+    // {0, pre, 0x07}). This is what an encoded input spike must do —
+    // snn-simulator's Network::applyInputSpikes forces the input neuron to
+    // fire (conductance 100) — unlike sendVirtual(), which only nudges the
+    // neuron's own membrane by ~1 pulse and rarely reaches threshold.
+    int sendNeuronSpike(int neuronId, int timeoutUs = 100'000);
+
     // Drains AER_OUT for up to `timeoutUs` of wall-clock time, returning the
     // address of every neuron that fired during that window (in order).
     std::vector<int> drainSpikes(int timeoutUs);

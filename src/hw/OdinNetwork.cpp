@@ -92,12 +92,12 @@ void OdinNetwork::applyInputSpikes(const std::vector<std::vector<double>>& encod
     for (std::size_t ch = 0; ch < encoded_spikes.size() && ch < inputAddrs_.size(); ++ch) {
         if (t >= 0 && t < static_cast<int>(encoded_spikes[ch].size()) &&
             encoded_spikes[ch][static_cast<std::size_t>(t)] > 0.0) {
-            // Weight 7 (max drive) matches the convention already validated
-            // in the user's working Iris pipeline (odin.py's run_sample) —
-            // input stimulation bypasses the synaptic crossbar entirely via
-            // a virtual event, it isn't a real synapse.
+            // An input spike must make the input node itself "fire" so its
+            // outgoing synapses deliver (snn-simulator forces the input
+            // neuron to spike) — sendVirtual() only nudges the neuron's own
+            // membrane and almost never reaches threshold.
             for (int addr : inputAddrs_[ch]) {
-                int rc = driver_.sendVirtual(addr, /*weight=*/7);
+                int rc = driver_.sendNeuronSpike(addr);
                 if (rc != 0) {
                     throw std::runtime_error(
                         "OdinNetwork::applyInputSpikes: aer_in handshake failed "
