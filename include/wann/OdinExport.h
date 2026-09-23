@@ -21,7 +21,11 @@ namespace wann {
 // empirically on hardware, not as verified-correct values.
 struct IzhParams {
     int leakStr = 10, leakEn = 1;      // 7-bit, 1-bit
-    int fiSel = 3;                     // 3-bit accumulator depth
+    // 3-bit accumulator depth: one membrane pulse = 8 << fiSel weight units
+    // (~1.14 w=7 events at 0, ~9.1 at 3). All 20 verified catalog behaviours
+    // use 0; at 3 a thr=4 neuron needs ~36 w=7 events to fire, so it almost
+    // never does. Raise only for neurons with many simultaneous inputs.
+    int fiSel = 0;
     int thr = 4, rfr = 2;              // 3-bit, 3-bit
     int spkRef = 0, isiRef = 0;        // 3-bit, 3-bit — burst spike count / inter-spike interval
     int dapdel = 0, stimThr = 0;       // 3-bit, 3-bit
