@@ -62,6 +62,7 @@ int main(int argc, char* argv[]) {
     bool        windowMsSet = false;
     bool        csvMode    = false;
     bool        profile    = false;
+    int         maxSteps   = 0;   // 0 = default (1000 pasos por episodio)
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -73,10 +74,11 @@ int main(int argc, char* argv[]) {
             windowMs = std::atof(argv[++i]); windowMsSet = true;
         } else if (arg == "--csv") { csvMode = true;
         } else if (arg == "--profile") { profile = true;
+        } else if (arg == "--steps" && i+1 < argc) { maxSteps = std::atoi(argv[++i]);
         } else {
             std::cerr << "Uso: wann_car_odin_eval [-c odin_config.json] "
                          "[-d config.json] [-n episodios] [-s seed] [-m window_ms] "
-                         "[--csv] [--profile]\n";
+                         "[--csv] [--profile] [--steps N]\n";
             return 1;
         }
     }
@@ -105,6 +107,7 @@ int main(int argc, char* argv[]) {
 
         wann::hw::OdinDriver driver;
         wann::SnnCarOdinTask task(hyp, cfg, driver, windowMs);
+        if (maxSteps > 0) task.setEpisodeSteps(maxSteps);
 
         log << "Evaluando " << nEpisodes << " episodios en hardware "
                "(seed base=" << seed << ")...\n\n";
