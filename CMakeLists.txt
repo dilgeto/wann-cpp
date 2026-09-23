@@ -68,7 +68,8 @@ target_link_libraries(wann_train PRIVATE wann_lib)
 # Build the simulator first:  cd ../snn-simulator && ./build.sh
 # ---------------------------------------------------------------------------
 set(SNN_DIR   ${CMAKE_CURRENT_SOURCE_DIR}/../snn-simulator)
-set(SNN_BUILD ${SNN_DIR}/build_cmake)
+set(SNN_BUILD_DIR "build_cmake" CACHE STRING "snn-simulator build subdir to link against")
+set(SNN_BUILD ${SNN_DIR}/${SNN_BUILD_DIR})
 
 add_library(snn_core_imp STATIC IMPORTED GLOBAL)
 set_target_properties(snn_core_imp PROPERTIES
