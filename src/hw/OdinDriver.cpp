@@ -402,6 +402,18 @@ int OdinDriver::sendVirtual(int neuronId, int weight, int leakBit, int inhibBit,
     return aerSendRaw(aer17(0, neuronId, lo), timeoutUs);
 }
 
+int OdinDriver::sendTrefAll(int timeoutUs) {
+    return aerSendRaw(aer17(0, 0, 0x7F), timeoutUs);
+}
+
+void OdinDriver::setBurstTimeref(int value) {
+    spiSend40(addrGlobal(18), static_cast<std::uint32_t>(value) & 0x7FFu);
+}
+
+void OdinDriver::setAerSrcCtrl(bool enabled) {
+    spiSend40(addrGlobal(19), enabled ? 1u : 0u);
+}
+
 // ------------------------------------------------------------------
 // AER OUT drain
 // ------------------------------------------------------------------

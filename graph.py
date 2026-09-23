@@ -142,18 +142,44 @@ if pareto_files:
     snapshots = [pareto_files[i] for i in indices]
     colors    = plt.cm.viridis(np.linspace(0.1, 0.9, n_snap))
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    def pareto_front(x, y, min_x=False):
+        """Puntos no dominados maximizando y (y x, o minimizando x si min_x).
+        Devuelve (x, y) del frente ordenado por x."""
+        pts = np.column_stack([-x if min_x else x, y])
+        order = np.lexsort((-pts[:, 1], -pts[:, 0]))   # x desc, y desc
+        front, best_y = [], -np.inf
+        for i in order:
+            if pts[i, 1] > best_y:
+                front.append(i)
+                best_y = pts[i, 1]
+        front = np.array(front)
+        fx, fy = x[front], y[front]
+        s = np.argsort(fx)
+        return fx[s], fy[s]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    panels = [
+        (axes[0], 2, "nConn",                        True,  "Fitness medio vs nConn (min nConn)"),
+        (axes[1], 1, "Peak fitness (mejor peso)",    False, "Fitness medio vs peak (max ambos)"),
+    ]
     for col, fpath in zip(colors, snapshots):
         gen_num = int(re.search(r"(\d+)\.out$", fpath).group(1))
         d = np.loadtxt(fpath, delimiter=",")
         if d.ndim == 1: d = d.reshape(1, -1)
-        ax.scatter(d[:, 2], d[:, 0], color=col, alpha=0.4, s=12, label=f"Gen {gen_num}")
+        for ax, xcol, _, min_x, _ in panels:
+            ax.scatter(d[:, xcol], d[:, 0], color=col, alpha=0.15, s=10)
+            fx, fy = pareto_front(d[:, xcol], d[:, 0], min_x=min_x)
+            ax.plot(fx, fy, "-o", color=col, markersize=4, linewidth=1.5,
+                    drawstyle="steps-post" if min_x else "steps-pre",
+                    label=f"Gen {gen_num}")
 
-    ax.set_xlabel("nConn", fontsize=AXIS_LABEL_FONTSIZE)
-    ax.set_ylabel("Fitness medio", fontsize=AXIS_LABEL_FONTSIZE)
-    ax.set_title(f"{TASK} — Evolución del frente de Pareto")
-    ax.legend(fontsize=13)
-    ax.grid(True, alpha=0.3)
+    for ax, _, xlabel, _, title in panels:
+        ax.set_xlabel(xlabel, fontsize=AXIS_LABEL_FONTSIZE)
+        ax.set_ylabel("Fitness medio", fontsize=AXIS_LABEL_FONTSIZE)
+        ax.set_title(title)
+        ax.legend(fontsize=13)
+        ax.grid(True, alpha=0.3)
+    fig.suptitle(f"{TASK} — Evolución del frente de Pareto")
     plt.tight_layout()
     if args.save:
         out = PREFIX + "_pareto_evolution.png"

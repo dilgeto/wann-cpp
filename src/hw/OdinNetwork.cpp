@@ -9,6 +9,14 @@ OdinNetwork::OdinNetwork(const wann::OdinNetworkConfig& cfg, OdinDriver& driver)
     : driver_(driver)
 {
     driver_.loadConfig(cfg);
+    // init() (called inside loadConfig()) zeroes every global register,
+    // including BURST_TIMEREF/AER_SRC_CTRL — set them unconditionally
+    // rather than only when this genome happens to use a bursting
+    // NeuronType (CHATTERING/INTRINSICALLY_BURSTING), since a mixed genome
+    // could combine those with non-bursting types and this has no downside
+    // for the ones that don't burst.
+    driver_.setBurstTimeref(1023);
+    driver_.setAerSrcCtrl(true);
     // loadConfig() deliberately leaves the chip gated (GATE_ACTIVITY=1) so
     // programming neurons/synapses is safe — nothing else in this path
     // called start() before this fix, so the chip sat stopped for every
@@ -116,6 +124,19 @@ void OdinNetwork::step(double /*sharedWeight*/) {
     // ODIN is event-driven with no exposed clock, so "one software timestep"
     // has no exact hardware equivalent (see plan's timing-fidelity note).
     constexpr int STEP_TIMEOUT_US = 1000;  // placeholder, needs empirical tuning
+
+    // A hardware "step" is applyInputSpikes() (already done for this tick)
+    // plus one tref — without this, IZH neurons never advance: refractory
+    // periods never expire (a neuron fires once and then stays silent
+    // forever) and latency/rebound behaviours never reach the delay they
+    // need to fire at all. See OdinDriver::sendTrefAll's doc comment.
+    int rc = driver_.sendTrefAll();
+    if (rc != 0) {
+        throw std::runtime_error(
+            "OdinNetwork::step: tref handshake failed (rc=" + std::to_string(rc) +
+            ") — AER bus likely desynced.");
+    }
+
     // Accumulates onto whatever applyInputSpikes() already recorded this
     // tick via its own interleaved drains — does NOT clear lastOutputSpikes_
     // (that happens once per tick, at the top of applyInputSpikes()).

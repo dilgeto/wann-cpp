@@ -84,8 +84,12 @@ IzhParams izhParamsFor(NeuronType nt) {
         case NeuronType::LOW_THRESHOLD_SPIKING:
             // Low threshold + rebound (LTS neurons classically rebound after
             // inhibitory release) -> needs neg_en for the hyperpolarized state.
+            // stimThr must be >= 1 whenever reboundEn is set (confirmed
+            // against ODIN's verified param table, tb_odin_izh.sv) — left at
+            // its 0 default here, this is an invalid hardware configuration
+            // that fires erratically instead of actually rebounding.
             p.thr = 2; p.rfr = 1; p.leakStr = 8; p.leakEn = 1;
-            p.reboundEn = true; p.negEn = true;
+            p.reboundEn = true; p.negEn = true; p.stimThr = 1;
             return p;
         case NeuronType::INTRINSICALLY_BURSTING:
             // Slower/longer bursts than chattering.

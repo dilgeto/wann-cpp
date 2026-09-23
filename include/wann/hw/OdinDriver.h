@@ -99,6 +99,32 @@ public:
     // previous run was interrupted) — cheap, safe to call defensively.
     void aerBusReset();
 
+    // Broadcasts one "tref" (time reference) AER event to every neuron —
+    // this is the IZH model's own clock tick, not a diagnostic. Without
+    // periodic trefs an IZH neuron's refractory/burst/latency counters never
+    // advance: it fires once and then stays stuck in refractory forever, or
+    // never reaches the delay a latency/rebound behaviour needs to fire at
+    // all (confirmed against ODIN's verified param docs — see
+    // OdinExport.h's IzhParams). LIF neurons don't need this to fire on
+    // threshold crossing, only for their leak.
+    int sendTrefAll(int timeoutUs = 100'000);
+
+    // Global register 18 (SPI_BURST_TIMEREF). Must be != 0 (1023 is ODIN's
+    // own recommended value) for any IZH neuron using spk_ref != 0
+    // (CHATTERING/INTRINSICALLY_BURSTING in OdinExport's izhParamsFor) —
+    // without it those neurons "quedan enganchadas" (get stuck) instead of
+    // bursting. init() zeroes this along with every other global register,
+    // so call this again after loadConfig().
+    void setBurstTimeref(int value = 1023);
+
+    // Global register 19 (SPI_AER_SRC_CTRL_nNEUR). Needed alongside
+    // setBurstTimeref() for burst behaviours to actually work, not just for
+    // visibility — enabling it also makes AER_OUT report every scheduler
+    // event, not just neuron spikes, but drainSpikes()/OdinNetwork only look
+    // for known output addresses, so the extra events are harmlessly
+    // ignored. Also zeroed by init(); call again after loadConfig().
+    void setAerSrcCtrl(bool enabled);
+
 private:
     int memFd_ = -1;
     MmioWindow aerIn_;
