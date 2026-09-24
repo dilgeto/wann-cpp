@@ -66,6 +66,8 @@ def build_cmd(args, snap: Path, prefix: Path, dry: bool) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--snap-glob", required=True, help="patrón de directorios *_snap")
+    ap.add_argument("--runs", default="", help="solo estas corridas, separadas por coma (p. ej. seed08,seed12); "
+                    "el nombre es el del directorio sin el sufijo _snap")
     ap.add_argument("--gens", default="25,100,250,last", help="generaciones a analizar ('last' = la última)")
     ap.add_argument("--base", default="p/car_snn.json", help="-d del binario")
     ap.add_argument("--override", default="", help="-p del binario (el JSON del entrenamiento)")
@@ -80,6 +82,14 @@ def main() -> int:
     args = ap.parse_args()
 
     dirs = sorted(Path(p) for p in glob.glob(args.snap_glob) if Path(p).is_dir())
+    if args.runs:
+        wanted_runs = {r.strip() for r in args.runs.split(",") if r.strip()}
+        names = {d.name[:-5] if d.name.endswith("_snap") else d.name: d for d in dirs}
+        missing = sorted(wanted_runs - set(names))
+        if missing:
+            print(f"--runs: no encuentro {missing} entre {sorted(names)[:5]}...", file=sys.stderr)
+            return 1
+        dirs = [names[r] for r in sorted(wanted_runs)]
     if not dirs:
         print(f"Sin directorios para {args.snap_glob!r}", file=sys.stderr)
         return 1

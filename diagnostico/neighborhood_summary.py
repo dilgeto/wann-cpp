@@ -101,6 +101,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dir", required=True, help="carpeta con los *_parents.csv")
     ap.add_argument("--runs-csv", default="", help="*_runs.csv de lineage_analysis.py (columna final_level)")
+    ap.add_argument("--split-at", type=float, default=None,
+                    help="en vez de terciles, separa las corridas en 'alto' (final_level >= valor) y "
+                         "'bajo' (< valor); requiere --runs-csv")
     ap.add_argument("--out", default="diag_results/neighborhood")
     args = ap.parse_args()
 
@@ -110,11 +113,17 @@ def main() -> int:
         return 1
 
     df["group"] = "todas"
+    if args.split_at is not None and not args.runs_csv:
+        print("--split-at requiere --runs-csv", file=sys.stderr)
+        return 1
     if args.runs_csv:
         runs = pd.read_csv(args.runs_csv)[["run", "final_level"]]
         df = df.merge(runs, on="run", how="left")
         n_runs = df["run"].nunique()
-        if n_runs >= 6 and df["final_level"].notna().any():
+        if args.split_at is not None:
+            df["group"] = np.where(df["final_level"] >= args.split_at, "alto", "bajo")
+            df.loc[df["final_level"].isna(), "group"] = "sin_nivel"
+        elif n_runs >= 6 and df["final_level"].notna().any():
             lvl = df.drop_duplicates("run").set_index("run")["final_level"]
             terc = pd.qcut(lvl, 3, labels=["bajo", "medio", "alto"], duplicates="drop")
             df["group"] = df["run"].map(terc).astype(str)
