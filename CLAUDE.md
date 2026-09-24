@@ -67,7 +67,8 @@ Per task `<X>` in `{acrobot, car, mountain_car, disc_mc, l2f}` (plus a generic
 - `wann_car_neighborhood` — evaluation-only neighbourhood analysis: enumerates every
   single-mutation neighbour (N1) of an individual, evaluates them with the parent's
   seeds and reports better/neutral/worse per operator (optional sampled N2 and a greedy
-  climb). Input is a `snapshot_interval` population snapshot or a legacy `*_best.out`
+  climb). Improving neighbours are re-evaluated with fresh seeds (`--confirm`) before being
+  called improvements, to avoid the winner's curse of a single noisy screen. Input is a `snapshot_interval` population snapshot or a legacy `*_best.out`
   (genome reconstructed, approximate). See `BINARIOS.md` §4b. `Neighborhood.cpp`
   re-implements `Wann`'s private mutation operators to enumerate them — keep the two in
   sync if either changes.
@@ -228,6 +229,10 @@ and Pareto snapshots consumed by `graph.py`/`graph_network.py`. Mirrors a Python
   at startup (see the `_REPO_ROOT = Path(__file__).resolve().parent.parent`
   block near the top of each), so they behave identically whether invoked from
   the repo root, from inside `bootstrap_results/`, or by absolute path.
+- `diagnostico/` — Python diagnostics for stagnation / seed dependence, built on the
+  `snapshot_interval` outputs and `wann_car_neighborhood` (lineage + coalescence, early
+  prediction, batch launcher, neighbourhood summary). `run_neighborhood.py` only prints
+  a plan unless given `--run`. See `BINARIOS.md` §4c.
 - `graficos/`, `plots/` — generated figures, organized by task.
 - `lib/` — vendored front-end JS assets (`vis-9.1.2`, `tom-select`) unrelated to the
   C++/Python pipeline — not part of the WANN codebase proper.

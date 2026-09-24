@@ -21,7 +21,7 @@
 //       [-p overrides.json] [-o prefix] [--who elite|top:K|idx:N,N|all]
 //       [--seed S] [--max-per-op N] [--noise-seeds R] [--eps E]
 //       [--n2-mids M] [--n2-per-mid S] [--n2-if-stuck]
-//       [--climb K] [--rng-seed S] [--dry-run]
+//       [--confirm K] [--confirm-seeds V] [--climb K] [--rng-seed S] [--dry-run]
 //
 //   -d/-p deben ser los MISMOS que en el entrenamiento (operadores, actRange,
 //   parámetros SNN); si no, la vecindad y las recompensas describen otra cosa.
@@ -43,9 +43,18 @@
 //                 Distingue mejoras alcanzables por un intermedio neutro de las
 //                 que exigen cruzar un valle.
 //   --n2-if-stuck sólo corre N2 si ningún vecino de N1 mejora.
-//   --climb K     ascenso voraz: hasta K veces, pasa al mejor vecino que supere
-//                 eps y repite. Cada paso re-evalúa con una semilla nueva, para
-//                 no arrastrar la maldición del ganador entre pasos.
+//   --confirm K   confirmación en dos etapas (default 20; 0 = apagada). El cribado
+//                 de N1 usa una sola semilla por vecino; al elegir los mejores de
+//                 ~1000 evaluaciones ruidosas se sobreestima su ventaja (maldición
+//                 del ganador). Los K vecinos con mayor d que superen eps se
+//                 re-evalúan, junto al padre, con --confirm-seeds semillas nuevas
+//                 (default 5, pareadas por semilla); se confirman si la ventaja
+//                 media supera 2 errores estándar. Con confirmación activa,
+//                 --climb y --n2-if-stuck usan solo vecinos confirmados. Si hay más
+//                 de K candidatos, P(mejora confirmada) es una cota inferior.
+//   --climb K     ascenso voraz: hasta K veces, pasa al mejor vecino (confirmado,
+//                 si --confirm > 0) que supere eps y repite. Cada paso re-evalúa
+//                 con una semilla nueva.
 //   --dry-run     sólo enumera y cuenta vecinos por operador; no simula.
 //
 // Salidas (prefix por defecto: log/neighbors_<archivo>):
@@ -53,6 +62,7 @@
 //                           nieto N2), con recompensa por peso compartido.
 //   <prefix>_parents.csv    resumen por padre y paso.
 //   <prefix>_ops.csv        desglose por operador.
+//   <prefix>_confirm.csv    candidatos re-evaluados: d del cribado vs d validado (± ee).
 //
 // Recompensas: SnnCarTask::evaluateWeight(), la misma función que usa el
 // entrenamiento; fitness = media sobre los N_WEIGHTS pesos compartidos.
@@ -84,6 +94,7 @@ namespace {
 
 constexpr int NOISE_SEED_STRIDE = 7919;    // separa bloques de episodios (cada uno usa < 10000 seeds)
 constexpr int CLIMB_SEED_STRIDE = 104729;
+constexpr int VALID_SEED_STRIDE = 1000003; // semillas de confirmación, lejos de las de cribado/ruido/ascenso
 
 struct Options {
     std::string input;
@@ -101,6 +112,8 @@ struct Options {
     int         n2PerMid   = 50;
     bool        n2IfStuck  = false;
     int         climb      = 0;
+    int         confirm    = 20;   // candidatos a re-evaluar (0 = sin confirmación)
+    int         confirmSeeds = 5;
     uint32_t    rngSeed    = 1;
     bool        dryRun     = false;
 };
@@ -195,9 +208,10 @@ struct OpAgg {
 class Analyzer {
 public:
     Analyzer(const Options& o, const Hyperparams& h, const SnnCarTask& t,
-             std::ofstream& nbCsv, std::ofstream& parCsv, std::ofstream& opsCsv)
+             std::ofstream& nbCsv, std::ofstream& parCsv, std::ofstream& opsCsv,
+             std::ofstream& confCsv)
         : opt(o), hyp(h), task(t), nbOut(nbCsv), parOut(parCsv), opsOut(opsCsv),
-          nW(t.numWeightVals()) {}
+          confOut(confCsv), nW(t.numWeightVals()) {}
 
     void run(const Parent& p);
 
@@ -208,6 +222,7 @@ private:
     std::ofstream&     nbOut;
     std::ofstream&     parOut;
     std::ofstream&     opsOut;
+    std::ofstream&     confOut;
     int                nW;
 
     void writeRow(const std::string& label, int idx, int step, int order,
@@ -223,7 +238,8 @@ private:
         double bestD = 0.0;
         double parentMean = 0.0;
         double pBetter = 0.0;
-        bool   stuck = true;
+        bool   stuck = true;             // sin mejora en el cribado
+        bool   effStuck = true;          // sin mejora confirmada (= stuck si no hay confirmación)
     };
 
     StepOut step(const Parent& p, const Ind& cur, int stepNo, int stepSeed,
@@ -318,6 +334,7 @@ Analyzer::StepOut Analyzer::step(const Parent& p, const Ind& cur, int stepNo, in
 
     OpAgg agg[N_MUT_OPS];
     int invalid = 0;
+    std::vector<std::pair<double,int>> cands;   // (d del cribado, índice de vecino) con d > eps
     for (size_t i = 0; i < nbs.size(); ++i) {
         const auto& nb = nbs[i];
         auto& a = agg[static_cast<int>(nb.op)];
@@ -338,6 +355,7 @@ Analyzer::StepOut Analyzer::step(const Parent& p, const Ind& cur, int stepNo, in
             a.pBetter += nb.prob * weight[i];
             out.pBetter += nb.prob * weight[i];
             out.stuck = false;
+            cands.push_back({d, static_cast<int>(i)});
             if (out.bestIdx < 0 || d > out.bestD) {
                 out.bestIdx = static_cast<int>(i);
                 out.bestD   = d;
@@ -377,11 +395,91 @@ Analyzer::StepOut Analyzer::step(const Parent& p, const Ind& cur, int stepNo, in
     if (invalid) std::cout << ", " << invalid << " con ciclo (express falla)";
     std::cout << '\n';
 
+    // --- confirmación ---
+    // El cribado evalúa cada vecino con UNA semilla. Al quedarse con los mejores de
+    // ~1000 vecinos ruidosos se sobreestima su ventaja (maldición del ganador), y con
+    // eps = 2*sd todavía pasan algunos por azar. Aquí los mejores candidatos se
+    // re-evalúan, junto al padre, con V semillas nuevas (pareadas dentro de cada
+    // semilla) y se confirman si su ventaja media supera 2 errores estándar.
+    struct Conf { int idx; double screenD, valD, se; bool ok; };
+    std::vector<Conf> conf;
+    int nConfirmed = 0;
+    double pConfirmed = 0.0;
+    out.effStuck = out.stuck;
+    if (!opt.dryRun && opt.confirm > 0) {
+        out.bestIdx = -1;   // a partir de aquí "mejor" significa mejor confirmado
+        out.effStuck = true;
+        if (!cands.empty()) {
+            std::sort(cands.begin(), cands.end(),
+                      [](const auto& x, const auto& y) { return x.first > y.first; });
+            const int k = std::min<int>(opt.confirm, static_cast<int>(cands.size()));
+            const int V = opt.confirmSeeds;
+            std::vector<const Ind*> cptrs;
+            for (int j = 0; j < k; ++j) cptrs.push_back(&nbs[cands[j].second].ind);
+
+            std::vector<std::vector<double>> dv(k, std::vector<double>(V));
+            for (int v = 0; v < V; ++v) {
+                const int vs = stepSeed + (v + 1) * VALID_SEED_STRIDE;
+                const double pv = meanOf(evalInds({&cur}, task, vs)[0]);
+                auto r = evalInds(cptrs, task, vs);
+                for (int j = 0; j < k; ++j) dv[j][v] = meanOf(r[j]) - pv;
+            }
+            std::cout << "  confirmación: " << k << " de " << cands.size() << " candidatos (mayor d del cribado), "
+                      << V << " semillas nuevas (~"
+                      << static_cast<size_t>(k + 1) * V * static_cast<size_t>(nW) * static_cast<size_t>(hyp.alg_nReps)
+                      << " episodios)\n";
+            std::cout << "    #  operador            d_cribado   d_validado (± ee)   confirmado\n";
+            double sumScreen = 0.0, sumVal = 0.0;
+            for (int j = 0; j < k; ++j) {
+                const double mu = meanOf(dv[j]);
+                double ss = 0.0;
+                for (double x : dv[j]) ss += (x - mu) * (x - mu);
+                const double se = std::sqrt(ss / (V - 1)) / std::sqrt(static_cast<double>(V));
+                Conf c{cands[j].second, cands[j].first, mu, se, mu - 2.0 * se > 0.0};
+                conf.push_back(c);
+                sumScreen += c.screenD; sumVal += c.valD;
+                const auto& nb = nbs[c.idx];
+                if (c.ok) {
+                    ++nConfirmed;
+                    pConfirmed += nb.prob * weight[c.idx];
+                    if (out.bestIdx < 0 || c.valD > out.bestD) {
+                        out.bestIdx = c.idx;
+                        out.bestD   = c.valD;
+                        out.bestInd = nb.ind;
+                        out.bestOp  = mutDesc(nb);
+                    }
+                }
+                if (j < 10)
+                    std::cout << "  " << std::setw(3) << j + 1 << "  " << std::left << std::setw(18) << mutDesc(nb)
+                              << std::right << std::setw(10) << c.screenD << std::setw(12) << c.valD
+                              << " ± " << std::left << std::setw(7) << c.se << std::right
+                              << (c.ok ? "   sí" : "   no") << '\n';
+                confOut << p.label << ',' << p.idx << ',' << stepNo << ',' << j + 1 << ',' << c.idx << ','
+                        << mutDesc(nb) << ',' << nb.a << ',' << nb.b << ',' << nb.c << ','
+                        << nb.prob << ',' << weight[c.idx] << ',' << c.screenD << ',' << c.valD << ','
+                        << c.se << ',' << V << ',' << (c.ok ? 1 : 0) << '\n';
+            }
+            if (k > 10) std::cout << "    ... (" << k - 10 << " más en " << opt.outPrefix << "_confirm.csv)\n";
+            std::cout << "    d medio: cribado " << sumScreen / k << "  ->  validado " << sumVal / k
+                      << "   (la diferencia es la sobreestimación por selección)\n";
+            out.effStuck = (nConfirmed == 0);
+        }
+    }
+
     if (!opt.dryRun) {
+        const bool confirming = opt.confirm > 0;
         if (out.stuck)
             std::cout << "  => ningún vecino de N1 mejora (eps=" << eps << "): óptimo local estricto en N1\n";
+        else if (confirming && nConfirmed == 0)
+            std::cout << "  => " << tb << " vecinos superan eps en el cribado, pero ninguno de los " << conf.size()
+                      << " re-evaluados se confirma: las mejoras aparentes no se sostienen con semillas nuevas\n";
+        else if (confirming)
+            std::cout << "  => " << nConfirmed << " de " << conf.size() << " re-evaluados se confirman ("
+                      << tb << " superaban eps en el cribado); mejor: " << out.bestOp << " (d_validado=+" << out.bestD
+                      << ");  P(mejora confirmada por mutación)" << (static_cast<int>(cands.size()) > opt.confirm ? " >= " : " = ")
+                      << std::setprecision(5) << pConfirmed << std::setprecision(3) << '\n';
         else
-            std::cout << "  => " << tb << " vecinos mejoran; mejor: " << out.bestOp << " (d_mean=+" << out.bestD
+            std::cout << "  => " << tb << " vecinos mejoran (sin confirmar); mejor: " << out.bestOp << " (d_mean=+" << out.bestD
                       << ");  P(mejora por mutación)=" << std::setprecision(5) << out.pBetter
                       << "  ~ 1 de cada " << std::setprecision(0) << 1.0 / out.pBetter << " mutaciones\n"
                       << std::setprecision(3);
@@ -391,10 +489,11 @@ Analyzer::StepOut Analyzer::step(const Parent& p, const Ind& cur, int stepNo, in
            << cur.nConns() << ',' << countHidden(cur) << ',' << noiseSd << ',' << eps << ','
            << (std::isnan(stored) ? -1.0 : stored) << ',' << tn << ',' << tb << ',' << tne << ',' << ts << ',' << tw << ','
            << invalid << ',' << (out.stuck ? 1 : 0) << ',' << out.pBetter << ','
-           << (out.pBetter > 0 ? std::to_string(1.0 / out.pBetter) : std::string("inf")) << '\n';
+           << (out.pBetter > 0 ? std::to_string(1.0 / out.pBetter) : std::string("inf")) << ','
+           << cands.size() << ',' << conf.size() << ',' << nConfirmed << ',' << pConfirmed << '\n';
 
     // --- vecindad N2 muestreada ---
-    const bool wantN2 = opt.n2Mids > 0 && firstStep && !opt.dryRun && (!opt.n2IfStuck || out.stuck);
+    const bool wantN2 = opt.n2Mids > 0 && firstStep && !opt.dryRun && (!opt.n2IfStuck || out.effStuck);
     if (wantN2 && !nbs.empty()) {
         // Intermedios: Efraimidis-Spirakis, proporcional a la probabilidad de aparecer.
         std::vector<std::pair<double,int>> keys;
@@ -463,7 +562,8 @@ void Analyzer::run(const Parent& p) {
         if (opt.dryRun) break;
         if (s == opt.climb) break;
         if (so.bestIdx < 0) {
-            std::cout << "  ascenso: se detiene en el paso " << s << " (sin vecino que supere eps)\n";
+            std::cout << "  ascenso: se detiene en el paso " << s
+                      << (opt.confirm > 0 ? " (sin vecino confirmado)\n" : " (sin vecino que supere eps)\n");
             break;
         }
         std::cout << "  ascenso: paso " << s << " -> " << so.bestOp << " (d_mean=+" << so.bestD << ")\n";
@@ -485,7 +585,7 @@ void usage() {
         "       [-p overrides.json] [-o prefix] [--who elite|top:K|idx:N,N|all]\n"
         "       [--seed S] [--max-per-op N] [--noise-seeds R] [--eps E]\n"
         "       [--n2-mids M] [--n2-per-mid S] [--n2-if-stuck]\n"
-        "       [--climb K] [--rng-seed S] [--dry-run]\n";
+        "       [--confirm K] [--confirm-seeds V] [--climb K] [--rng-seed S] [--dry-run]\n";
 }
 
 } // namespace
@@ -512,6 +612,8 @@ int main(int argc, char* argv[]) {
             else if (arg == "--n2-per-mid")   opt.n2PerMid    = std::stoi(next());
             else if (arg == "--n2-if-stuck")  opt.n2IfStuck   = true;
             else if (arg == "--climb")        opt.climb       = std::stoi(next());
+            else if (arg == "--confirm")      opt.confirm     = std::stoi(next());
+            else if (arg == "--confirm-seeds") opt.confirmSeeds = std::stoi(next());
             else if (arg == "--rng-seed")     opt.rngSeed     = static_cast<uint32_t>(std::stoul(next()));
             else if (arg == "--dry-run")      opt.dryRun      = true;
             else { usage(); return 1; }
@@ -521,6 +623,10 @@ int main(int argc, char* argv[]) {
         }
     }
     if (opt.input.empty()) { usage(); return 1; }
+    if (opt.confirm > 0 && opt.confirmSeeds < 2) {
+        std::cerr << "--confirm-seeds debe ser >= 2 (hace falta una varianza)\n";
+        return 1;
+    }
 
     Hyperparams hyp;
     try {
@@ -594,24 +700,28 @@ int main(int argc, char* argv[]) {
     std::ofstream nbCsv(opt.outPrefix + "_neighbors.csv");
     std::ofstream parCsv(opt.outPrefix + "_parents.csv");
     std::ofstream opsCsv(opt.outPrefix + "_ops.csv");
-    if (!nbCsv || !parCsv || !opsCsv) {
+    std::ofstream confCsv(opt.outPrefix + "_confirm.csv");
+    if (!nbCsv || !parCsv || !opsCsv || !confCsv) {
         std::cerr << "No se pudo escribir " << opt.outPrefix << "_*.csv\n";
         return 1;
     }
     nbCsv << std::setprecision(10);
     parCsv << std::setprecision(10);
     opsCsv << std::setprecision(10);
+    confCsv << std::setprecision(10);
     nbCsv << "label,idx,step,order,mid,mid_op,mid_d_mean,op,a,b,c,prob,weight,expr_ok,"
              "n_conn,n_hidden,fit_mean,fit_max,d_mean,d_max";
     for (int w = 0; w < nW; ++w) nbCsv << ",r" << w;
     nbCsv << '\n';
     parCsv << "label,idx,step,seed,fit_mean,fit_max,n_conn,n_hidden,noise_sd,eps,stored_maxdiff,"
-              "n_neighbors,n_better,n_neutral,n_identical,n_worse,n_invalid,stuck,p_better,exp_mutations_to_improve\n";
+              "n_neighbors,n_better,n_neutral,n_identical,n_worse,n_invalid,stuck,p_better,exp_mutations_to_improve,"
+              "n_candidates,n_confirm_tested,n_confirmed,p_confirmed\n";
+    confCsv << "label,idx,step,rank,neighbor,op,a,b,c,prob,weight,screen_d,val_d,val_se,val_seeds,confirmed\n";
     opsCsv << "label,idx,step,op,n,n_better,n_neutral,n_identical,n_worse,n_invalid,best_d_mean,p_op,p_better\n";
 
-    Analyzer analyzer(opt, hyp, task, nbCsv, parCsv, opsCsv);
+    Analyzer analyzer(opt, hyp, task, nbCsv, parCsv, opsCsv, confCsv);
     for (const auto& p : parents) analyzer.run(p);
 
-    std::cout << "\nEscrito: " << opt.outPrefix << "_{neighbors,parents,ops}.csv\n";
+    std::cout << "\nEscrito: " << opt.outPrefix << "_{neighbors,parents,ops,confirm}.csv\n";
     return 0;
 }

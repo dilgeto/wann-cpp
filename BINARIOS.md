@@ -176,8 +176,8 @@ encuentra".
 ```bash
 ./build/wann_car_neighborhood -i <snapshot.json | red_best.out> [-d config.json] [-p overrides]
     [-o prefijo] [--who elite|top:K|idx:N,N|all] [--seed S] [--max-per-op N]
-    [--noise-seeds R] [--eps E] [--n2-mids M] [--n2-per-mid S] [--n2-if-stuck]
-    [--climb K] [--rng-seed S] [--dry-run]
+    [--noise-seeds R] [--eps E] [--confirm K] [--confirm-seeds V]
+    [--n2-mids M] [--n2-per-mid S] [--n2-if-stuck] [--climb K] [--rng-seed S] [--dry-run]
 ```
 
 `-d`/`-p` deben ser **los mismos que en el entrenamiento** (probabilidades de
@@ -191,6 +191,8 @@ operadores, `ann_actRange`, parámetros SNN).
 | `--max-per-op` | Submuestrea N vecinos por operador (`0` = todos). `weight` en el CSV reescala las probabilidades | `0` |
 | `--noise-seeds` | Re-evalúa el padre con R semillas para medir el ruido; sin `--eps`, `eps = 2·sd` | `4` |
 | `--eps` | Umbral fijo: `|d_mean| <= E` es neutro | `2·sd` del ruido |
+| `--confirm` | Confirmación en dos etapas: el cribado de N1 usa **una** semilla por vecino, y elegir los mejores de ~1000 evaluaciones ruidosas sobreestima su ventaja (maldición del ganador). Re-evalúa los K vecinos con mayor `d` que superen `eps`, junto al padre, con semillas nuevas; se confirman si la ventaja media supera 2 errores estándar. `0` = apagada. Con ella activa, `--climb` y `--n2-if-stuck` usan solo vecinos confirmados. Si hay más de K candidatos, `P(mejora confirmada)` es cota inferior | `20` |
+| `--confirm-seeds` | Semillas nuevas por candidato (≥ 2, hace falta una varianza). Costo extra ≈ `(K+1) × V × 6 × alg_nReps` episodios | `5` |
 | `--n2-mids`, `--n2-per-mid` | Muestrea N2: M intermedios (ponderados por su probabilidad de aparecer) y S vecinos de cada uno. Separa mejoras alcanzables por un intermedio neutro de las que exigen cruzar un valle | `0`, `50` |
 | `--n2-if-stuck` | Solo corre N2 si N1 no tiene ningún vecino que mejore | off |
 | `--climb` | Ascenso voraz: hasta K pasos al mejor vecino que supere `eps`, con semilla nueva en cada paso | `0` |
@@ -198,7 +200,8 @@ operadores, `ann_actRange`, parámetros SNN).
 
 Salidas (`-o`, default `log/neighbors_<archivo>`): `_neighbors.csv` (una fila por
 individuo evaluado, con la recompensa por peso), `_parents.csv` (resumen por
-padre/paso) y `_ops.csv` (desglose por operador). Costo ≈ `nº vecinos × 6 pesos ×
+padre/paso), `_ops.csv` (desglose por operador) y `_confirm.csv` (candidatos
+re-evaluados: `d` del cribado vs `d` validado ± error estándar). Costo ≈ `nº vecinos × 6 pesos ×
 alg_nReps` episodios por padre; el binario lo imprime antes de simular.
 `OMP_NUM_THREADS` aplica igual que en el entrenamiento.
 
@@ -207,6 +210,44 @@ alg_nReps` episodios por padre; el binario lo imprime antes de simular.
 ./build/wann_car_neighborhood -i log/mi_corrida_snap/gen_00400.json \
     -d p/car_snn.json -p mi_override.json --n2-mids 20 --n2-if-stuck
 ```
+
+---
+
+## 4c. Diagnóstico de estancamiento y dependencia de la semilla — `diagnostico/`
+
+Scripts de Python (solo numpy/pandas; matplotlib opcional) que trabajan sobre lo que
+escribe `wann_car` con `snapshot_interval > 0` y sobre las salidas de
+`wann_car_neighborhood`. Ninguno entrena. Todos anclan el cwd a la raíz del repo y
+escriben por defecto en `diag_results/`.
+
+```bash
+# 1) tras el entrenamiento (log/diag_rank00/seed*_lineage.csv y seed*_snap/)
+python diagnostico/lineage_analysis.py --glob 'log/diag_rank00/seed*_lineage.csv' --out diag_results/lineage
+python diagnostico/early_prediction.py --glob 'log/diag_rank00/seed*_lineage.csv' --out diag_results/prediction
+
+# 2) vecindad sobre los snapshots: primero costear (no simula), luego lanzar
+python diagnostico/run_neighborhood.py --snap-glob 'log/diag_rank00/seed*_snap' \
+    --override diag/rank00.json --gens 25,100,250,last --estimate
+python diagnostico/run_neighborhood.py --snap-glob 'log/diag_rank00/seed*_snap' \
+    --override diag/rank00.json --gens 25,100,250,last --run --jobs 3 --omp 60 \
+    --extra "--n2-mids 20 --n2-if-stuck"
+
+# 3) resumen, agrupando semillas en terciles de nivel final
+python diagnostico/neighborhood_summary.py --dir log/diag_neighborhood \
+    --runs-csv diag_results/lineage_runs.csv
+```
+
+| Script | Qué responde |
+|--------|--------------|
+| `lineage_analysis.py` | Cuándo se "decide" una corrida: nº de ancestros de la gen 0 vivos por generación, cuándo queda uno solo, ancestro común más reciente de la población final, percentil del ancestro del élite final, largo del estancamiento y tasa de hijos que superan al élite por operador (fase temprana vs tardía). Salidas `_runs/_curves/_ops.csv` |
+| `early_prediction.py` | Cuánto predice lo medido en la generación g (fitness del élite, récord, top 5 %, nº de conexiones) el nivel final, entre corridas: Spearman con IC 95 % bootstrap. Salidas `_prediction.csv/.png` |
+| `run_neighborhood.py` | Elige el snapshot más cercano a cada generación pedida y lanza `wann_car_neighborhood`. **Por defecto solo imprime el plan**; `--estimate` cuenta episodios sin simular; `--run` ejecuta. Salta lo ya hecho (`--force` rehace) |
+| `neighborhood_summary.py` | Clasifica cada padre (óptimo local en N1 / mejoras no confirmadas / mejoras confirmadas) y, con N2, si la salida pasa por un intermedio neutro o por un valle. Agrupa por terciles con `--runs-csv` |
+
+Notas: el fitness de cada generación se evalúa con otra semilla y los élites se
+re-evalúan, así que el récord acumulado incluye evaluaciones con suerte; por eso el
+"nivel final" es la media del élite en las últimas 20 generaciones. Con menos de ~8
+corridas los intervalos de correlación son muy anchos (los scripts avisan).
 
 ---
 
