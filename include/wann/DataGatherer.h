@@ -1,6 +1,7 @@
 #pragma once
 #include "Hyperparams.h"
 #include "Ind.h"
+#include "Wann.h"
 #include <string>
 #include <vector>
 
@@ -16,6 +17,10 @@ public:
 
     // Append one generation of statistics.
     void gatherData(const std::vector<Ind>& pop);
+
+    // Append one generation of operator counters (Wann::lastMutStats()).
+    // Written to <prefix>_mutstats.csv by save().
+    void gatherMutStats(const MutStats& m) { mutStats_.push_back(m); }
 
     // Format a one-line summary for console output.
     std::string display() const;
@@ -58,6 +63,8 @@ private:
     std::vector<double> fitTopOrig_; // original (unshaped) fitness of running best
     std::vector<double> nodeMed_;    // median node count
     std::vector<double> connMed_;    // median connection count
+
+    std::vector<MutStats> mutStats_;  // one entry per gatherMutStats call
 
     // Best individual tracking.
     std::vector<Ind> elite_;    // best per generation

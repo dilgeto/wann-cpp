@@ -1,0 +1,2 @@
+trial,peak_fitness,alg_probMoo,prob_addConn,prob_addNode,prob_enable,prob_mutAct,prob_toggleExcitatory,prob_initEnable,select_cullRatio,select_eliteRatio,select_tournSize
+8,353.0,0.6999171499152809,0.3724759906076358,0.0574619843443908,0.0265836710100867,0.3916950564480697,0.2856337028998329,0.7674216734413998,0.4807676655504863,0.1482369513783624,11

@@ -81,6 +81,7 @@ double SnnCarOdinTask::runEpisode(long long episodeSeed) {
     RLDecoder rl_decoder(RLDecoder::DecodingType::FIRST_SPIKE, simWindowMs_);
 
     double total_reward = 0.0;
+    EpisodeInfo info;
 
     for (int step = 0; step < episodeSteps_; ++step) {
         ++timings_.nEnvSteps;
@@ -129,6 +130,10 @@ double SnnCarOdinTask::runEpisode(long long episodeSeed) {
             if (out.size() > 1 && out[1]) out_spikes1.push_back(static_cast<double>(t));
         }
 
+        ++info.steps;
+        if (!out_spikes0.empty()) ++info.out0Steps;
+        if (!out_spikes1.empty()) ++info.out1Steps;
+
         t0 = Clock::now();
         double throttle = rl_decoder.decodeContinuousAction(out_spikes0) * 2.0 - 1.0;
         double steering = rl_decoder.decodeContinuousAction(out_spikes1) * 2.0 - 1.0;
@@ -149,6 +154,7 @@ double SnnCarOdinTask::runEpisode(long long episodeSeed) {
         if (done) break;
     }
 
+    episodeInfo_.push_back(info);
     return total_reward;
 }
 

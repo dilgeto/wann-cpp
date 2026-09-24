@@ -113,18 +113,6 @@ int main(int argc, char* argv[]) {
     wann::Wann         alg(hyp);
     wann::DataGatherer data(outPrefix, hyp);
 
-    // Diagnostic for lexicographic_parsimony: how many fitness ties (within
-    // lexicographic_parsimony_epsilon) actually occurred each generation,
-    // i.e. how often the tie-break pressure had anything to act on. Only
-    // written when the feature is enabled, to keep normal runs' log/ clean.
-    std::ofstream lppFile;
-    if (hyp.lexicographic_parsimony) {
-        std::string lppPath = "log/" + outPrefix + "_lpp_ties.csv";
-        lppFile.open(lppPath);
-        if (lppFile) lppFile << "gen,tieCount,popSize\n";
-        else std::cerr << "Warning: cannot open " << lppPath << '\n';
-    }
-
     using Clock = std::chrono::steady_clock;
     auto t_start = Clock::now();
 
@@ -137,7 +125,6 @@ int main(int argc, char* argv[]) {
 
     for (int gen = 0; gen < hyp.maxGen; ++gen) {
         auto& pop    = alg.ask();
-        if (lppFile) lppFile << gen << ',' << alg.lastTieCount() << ',' << pop.size() << '\n';
         auto  reward = evalPop(pop, task, static_cast<int>(seed) + gen);
         alg.tell(reward);
 
@@ -153,6 +140,7 @@ int main(int argc, char* argv[]) {
 
         data.setBestWi(bestWi);
         data.gatherData(pop);
+        data.gatherMutStats(alg.lastMutStats());
         std::cout << gen << "\t - \t" << data.display() << '\n';
 
         bool earlyStop = false;

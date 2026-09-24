@@ -147,6 +147,11 @@ int main(int argc, char* argv[]) {
             for (int a = 0; a < 256; ++a)
                 if (counts[a] > 0) { log << "  addr " << a << ": " << counts[a] << '\n'; any = true; }
             if (!any) log << "  (ninguno: ninguna neurona disparo)\n";
+            log << "--- Por episodio (pasos / pasos con spike en salida 0 / en salida 1) ---\n";
+            const auto& ei = task.episodeInfo();
+            for (std::size_t e = 0; e < ei.size(); ++e)
+                log << "  ep " << e << ": " << ei[e].steps << " / " << ei[e].out0Steps
+                    << " / " << ei[e].out1Steps << '\n';
             log << "Direcciones de salida esperadas:";
             for (const auto& g : task.network().outputAddrs())
                 for (int a : g) log << ' ' << a;

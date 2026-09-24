@@ -34,6 +34,8 @@ parser.add_argument("--nOutput", type=int, default=1,
                     help="Número de salidas del WANN")
 parser.add_argument("--save",    action="store_true",
                     help="Guardar figuras como PNG en lugar de mostrarlas")
+parser.add_argument("--n-snap", type=int, default=5, dest="n_snap",
+                    help="Cantidad de snapshots (generaciones) a dibujar en la evolución del frente de Pareto")
 parser.add_argument("--title",   default=None,
                     help="Prefijo a mostrar en los títulos de los gráficos (por defecto, se deriva de --prefix)")
 args = parser.parse_args()
@@ -137,7 +139,7 @@ pareto_files = sorted(glob.glob(os.path.join(pareto_dir, "*.out"))) \
                if os.path.isdir(pareto_dir) else []
 
 if pareto_files:
-    n_snap    = min(5, len(pareto_files))
+    n_snap    = max(1, min(args.n_snap, len(pareto_files)))
     indices   = np.round(np.linspace(0, len(pareto_files) - 1, n_snap)).astype(int)
     snapshots = [pareto_files[i] for i in indices]
     colors    = plt.cm.viridis(np.linspace(0.1, 0.9, n_snap))
@@ -177,12 +179,63 @@ if pareto_files:
         ax.set_xlabel(xlabel, fontsize=AXIS_LABEL_FONTSIZE)
         ax.set_ylabel("Fitness medio", fontsize=AXIS_LABEL_FONTSIZE)
         ax.set_title(title)
-        ax.legend(fontsize=13)
+        ax.legend(fontsize=13 if n_snap <= 6 else 9)
         ax.grid(True, alpha=0.3)
     fig.suptitle(f"{TASK} — Evolución del frente de Pareto")
     plt.tight_layout()
     if args.save:
         out = PREFIX + "_pareto_evolution.png"
+        plt.savefig(out, dpi=150); print(f"Guardado: {out}")
+    else:
+        plt.show()
+
+    # ── Frente acumulado: todos los individuos de todos los snapshots guardados ──
+    all_d = []
+    for fpath in pareto_files:
+        d = np.loadtxt(fpath, delimiter=",")
+        if d.ndim == 1: d = d.reshape(1, -1)
+        g = int(re.search(r"(\d+)\.out$", fpath).group(1))
+        all_d.append(np.column_stack([d, np.full(len(d), g)]))
+    all_d = np.vstack(all_d)                       # fit, fitMax, nConn, nNodes, gen
+
+    def front_idx(x, y, min_x):
+        """Índices (en x, y) de los puntos no dominados; maximiza y."""
+        px = -x if min_x else x
+        order = np.lexsort((-y, -px))              # px desc, y desc
+        idx, best_y = [], -np.inf
+        for i in order:
+            if y[i] > best_y:
+                idx.append(i); best_y = y[i]
+        idx = np.array(idx)
+        return idx[np.argsort(x[idx])]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle(f"{TASK} — Frente de Pareto acumulado "
+                 f"({len(pareto_files)} snapshots, {len(all_d)} individuos)")
+    gmin, gmax = all_d[:, 4].min(), all_d[:, 4].max()
+    for ax, xcol, xlabel, min_x, title in [
+            (axes[0], 2, "nConn",                     True,  "Fitness medio vs nConn (min nConn)"),
+            (axes[1], 1, "Peak fitness (mejor peso)", False, "Fitness medio vs peak (max ambos)")]:
+        x, y, g = all_d[:, xcol], all_d[:, 0], all_d[:, 4]
+        ax.scatter(x, y, c=g, cmap="viridis", vmin=gmin, vmax=gmax,
+                   s=6, alpha=0.12, rasterized=True)
+        fi = front_idx(x, y, min_x)
+        ax.plot(x[fi], y[fi], "-", color="k", linewidth=1.2,
+                drawstyle="steps-post" if min_x else "steps-pre", zorder=3)
+        sc = ax.scatter(x[fi], y[fi], c=g[fi], cmap="viridis", vmin=gmin, vmax=gmax,
+                        s=45, edgecolors="k", linewidths=0.8, zorder=4)
+        b = fi[np.argmax(y[fi])]
+        ax.annotate(f"mejor fit. medio: {y[b]:.0f} (gen {int(g[b])})",
+                    (x[b], y[b]), textcoords="offset points", xytext=(-8, -14),
+                    ha="right", fontsize=10)
+        ax.set_xlabel(xlabel, fontsize=AXIS_LABEL_FONTSIZE)
+        ax.set_ylabel("Fitness medio", fontsize=AXIS_LABEL_FONTSIZE)
+        ax.set_title(title)
+        ax.grid(True, alpha=0.3)
+        plt.colorbar(sc, ax=ax, label="Generación del individuo")
+    plt.tight_layout()
+    if args.save:
+        out = PREFIX + "_pareto_cumulative.png"
         plt.savefig(out, dpi=150); print(f"Guardado: {out}")
     else:
         plt.show()

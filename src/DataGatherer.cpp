@@ -109,6 +109,50 @@ void DataGatherer::save(int gen) {
         lsave(prefix_ + "_stats.out", stats);
     }
 
+    // --- Variation-operator counters (one row per generation) ---
+    if (!mutStats_.empty()) {
+        static const char* names[5] = {"addConn", "addNode", "enable", "mutAct", "toggleExc"};
+        std::ofstream mf(prefix_ + "_mutstats.csv");
+        mf << "gen,moo_conn";
+        for (const char* n : names) mf << ",chosen_" << n;
+        for (const char* n : names) mf << ",applied_" << n;
+        mf << '\n';
+        for (size_t g = 0; g < mutStats_.size(); ++g) {
+            const MutStats& m = mutStats_[g];
+            mf << g << ',' << m.mooConn;
+            for (int k = 0; k < 5; ++k) mf << ',' << m.chosen[k];
+            for (int k = 0; k < 5; ++k) mf << ',' << m.applied[k];
+            mf << '\n';
+        }
+
+        // --- Totals over the whole run ---
+        // pct_chosen = share of all mutations; pct_applied = share of that
+        // operator's picks that actually changed the genome.
+        long tChosen[5] = {0, 0, 0, 0, 0}, tApplied[5] = {0, 0, 0, 0, 0};
+        long mooConnGens = 0, mooMaxGens = 0;
+        for (const MutStats& m : mutStats_) {
+            for (int k = 0; k < 5; ++k) { tChosen[k] += m.chosen[k]; tApplied[k] += m.applied[k]; }
+            if (m.mooConn == 1) ++mooConnGens;
+            else if (m.mooConn == 0) ++mooMaxGens;
+        }
+        long allChosen = 0;
+        for (long c : tChosen) allChosen += c;
+        auto pct = [](long a, long b) { return b > 0 ? 100.0 * a / b : 0.0; };
+
+        std::ofstream sf(prefix_ + "_mutstats_summary.csv");
+        sf << std::fixed << std::setprecision(2);
+        sf << "operator,chosen,pct_chosen,applied,pct_applied\n";
+        for (int k = 0; k < 5; ++k)
+            sf << names[k] << ',' << tChosen[k] << ',' << pct(tChosen[k], allChosen) << ','
+               << tApplied[k] << ',' << pct(tApplied[k], tChosen[k]) << '\n';
+        sf << "total," << allChosen << ",100.00,"
+           << (tApplied[0] + tApplied[1] + tApplied[2] + tApplied[3] + tApplied[4]) << ','
+           << pct(tApplied[0] + tApplied[1] + tApplied[2] + tApplied[3] + tApplied[4], allChosen) << '\n';
+        sf << "\nprobMoo objective,generations,pct\n";
+        sf << "meanFit_vs_1/nConn," << mooConnGens << ',' << pct(mooConnGens, mooConnGens + mooMaxGens) << '\n';
+        sf << "meanFit_vs_maxFit," << mooMaxGens << ',' << pct(mooMaxGens, mooConnGens + mooMaxGens) << '\n';
+    }
+
     // --- Best individual network ---
     if (!best_.empty()) {
         const Ind& b = (gen >= 0 && gen < static_cast<int>(best_.size()))

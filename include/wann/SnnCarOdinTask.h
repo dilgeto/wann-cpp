@@ -60,6 +60,12 @@ public:
         long long nTicks = 0;    // inner window ticks (nEnvSteps * window_steps)
     };
     const Timings& timings() const { return timings_; }
+
+    // Per-episode diagnostics (filled by runEpisode): env steps taken and in
+    // how many of them each output neuron fired at least once in the window
+    // (a step with no output spike decodes to the constant action -1/-1).
+    struct EpisodeInfo { int steps = 0; int out0Steps = 0; int out1Steps = 0; };
+    const std::vector<EpisodeInfo>& episodeInfo() const { return episodeInfo_; }
     const hw::OdinNetwork& network() const { return network_; }
 
 private:
@@ -69,6 +75,7 @@ private:
     double simWindowMs_;
     hw::OdinNetwork network_;
     Timings timings_;
+    std::vector<EpisodeInfo> episodeInfo_;
 };
 
 } // namespace wann

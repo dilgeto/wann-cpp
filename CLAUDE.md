@@ -109,24 +109,7 @@ generation. WANN uses a single species. Mutation operators (`mutAddConn`,
 `mutAddNode`, `mutToggleExcitatory`) and `crossover`/`topoMutate` are private; NSGA-II
 style multi-objective sorting lives in `src/NsgaSort.cpp`. `nsga_sort()` returns a
 *strict* per-individual rank (crowding distance flattens each front into a total
-order, so no two individuals ever share a rank) — `lexicographic_parsimony` (bool,
-default `false`, task-agnostic like every other `Hyperparams` field) overrides that
-ordering only on a `meanFit` tie (within `lexicographic_parsimony_epsilon`, default
-`0.0` = exact equality only) between two individuals, preferring the one with fewer
-active connections (`Ind::nConn`) instead of leaving it to crowding distance; any
-fitness difference beyond epsilon is untouched (Luke & Panait, GECCO 2002). With
-`epsilon=0.0` in a continuous-reward task, exact ties are common early (many
-non-functional genomes share the same floor reward) but become vanishingly rare once
-the population is mostly functional, so the tie-break is effectively inert past
-roughly the first 100 generations — widen `epsilon` to keep it active later, at the
-cost of it no longer being a strict tie. Wired once in `Wann::recombine`'s member sort
-(`src/Wann.cpp`) — applies to every task's `main_*.cpp` and `wann_train`, no per-task
-wiring needed. `Wann::lastTieCount()` exposes how many adjacent-fitness pairs
-(population sorted by `meanFit`) fell within epsilon during the most recent `ask()`'s
-selection step — a diagnostic, not used by the algorithm itself; **currently only
-logged by `main_car.cpp`** (one `gen,tieCount,popSize` row per generation to
-`log/<prefix>_lpp_ties.csv`, only created when `lexicographic_parsimony` is enabled —
-not wired into the other tasks' `main_*.cpp`).
+order, so no two individuals ever share a rank).
 
 **Genome** (`include/wann/Ind.h`): `NodeGene` (input/output/hidden/bias + activation
 index 1-11) and `ConnGene` (src/dst node id, weight — NaN when disabled to preserve

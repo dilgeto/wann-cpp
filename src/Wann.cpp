@@ -52,7 +52,7 @@ Wann::Wann(const Hyperparams& hyp) : p(hyp) {}
 // =========================================================================
 
 std::vector<Ind>& Wann::ask() {
-    lastTieCount_ = 0;
+    mutStats_ = MutStats{};
     if (pop.empty()) {
         initPop();
     } else {
@@ -147,6 +147,7 @@ void Wann::probMoo() {
     // Build 2-objective matrix to pass to nsga_sort.
     std::vector<std::vector<double>> objVals(n, std::vector<double>(2));
     bool useMooConn = (p.alg_probMoo > randDouble());
+    mutStats_.mooConn = useMooConn ? 1 : 0;
     for (int i = 0; i < n; ++i) {
         objVals[i][0] = meanFit[i];
         objVals[i][1] = useMooConn ? invConn[i] : maxFit[i];
@@ -188,38 +189,12 @@ void Wann::evolvePop() {
 // =========================================================================
 std::vector<Ind> Wann::recombine(const Species& sp) {
     // Collect pointers in rank order (members already have .rank set).
-    // rank itself is a strict permutation (nsga_sort flattens fronts via
-    // crowding distance, so no two individuals ever share a rank) — the
-    // "tie" lexicographic parsimony pressure cares about is a meanFit tie
-    // within lexicographic_parsimony_epsilon, which crowding distance breaks
-    // arbitrarily w.r.t. size. Only ever overrides rank on that tie; any
-    // fitness difference beyond epsilon is untouched, so this can't lose
-    // real selection pressure.
     std::vector<Ind*> members;
     members.reserve(sp.memberIdx.size());
     for (int idx : sp.memberIdx) members.push_back(&pop[idx]);
 
-    // Diagnostic: count how many adjacent-fitness pairs (sorted by meanFit)
-    // actually fall within epsilon this generation — i.e. how many tie-break
-    // opportunities the pressure above had, independent of std::sort's
-    // internal comparison pattern. Read via Wann::lastTieCount().
-    if (p.lexicographic_parsimony) {
-        std::vector<double> fits;
-        fits.reserve(members.size());
-        for (const Ind* m : members) fits.push_back(m->fitness);
-        std::sort(fits.begin(), fits.end());
-        for (size_t i = 1; i < fits.size(); ++i)
-            if (fits[i] - fits[i - 1] <= p.lexicographic_parsimony_epsilon)
-                ++lastTieCount_;
-    }
-
     std::sort(members.begin(), members.end(),
-              [this](const Ind* a, const Ind* b) {
-                  if (p.lexicographic_parsimony &&
-                      std::abs(a->fitness - b->fitness) <= p.lexicographic_parsimony_epsilon)
-                      return a->nConn < b->nConn;
-                  return a->rank < b->rank;
-              });
+              [](const Ind* a, const Ind* b) { return a->rank < b->rank; });
 
     int nOffspring = sp.nOffspring;
 
@@ -295,7 +270,7 @@ Ind Wann::crossover(const Ind& parentA, const Ind& parentB) {
 // mutAddConn – add one new feed-forward connection.
 // Mirrors Python _variation.py::mutAddConn.
 // =========================================================================
-void Wann::mutAddConn(std::vector<ConnGene>& conns,
+bool Wann::mutAddConn(std::vector<ConnGene>& conns,
                       const std::vector<NodeGene>& nodes)
 {
     const int nNodes = static_cast<int>(nodes.size());
@@ -307,7 +282,7 @@ void Wann::mutAddConn(std::vector<ConnGene>& conns,
 
     // Topological sort to get the ordered weight matrix.
     auto [order, wMat] = getNodeOrder(nodes, conns);
-    if (order.empty()) return;  // cycle, skip
+    if (order.empty()) return false;  // cycle, skip
 
     // Extract hidden-only submatrix to compute layers.
     const int nHidden = nNodes - nIns - nOuts;
@@ -370,22 +345,23 @@ void Wann::mutAddConn(std::vector<ConnGene>& conns,
         int newInnov = innov.back().innov + 1;
         conns.push_back({newInnov, srcId, dstId, 1.0, true});
         innov.push_back({newInnov, srcId, dstId, -1, gen});
-        break;
+        return true;
     }
+    return false;
 }
 
 // =========================================================================
 // mutAddNode – split an existing connection with a new hidden node.
 // Mirrors Python _variation.py::mutAddNode.
 // =========================================================================
-void Wann::mutAddNode(std::vector<ConnGene>& conns,
+bool Wann::mutAddNode(std::vector<ConnGene>& conns,
                       std::vector<NodeGene>& nodes)
 {
     // Find active connections.
     std::vector<int> active;
     for (int i = 0; i < static_cast<int>(conns.size()); ++i)
         if (conns[i].enabled) active.push_back(i);
-    if (active.empty()) return;
+    if (active.empty()) return false;
 
     int connSplit = active[randInt(0, static_cast<int>(active.size()) - 1)];
 
@@ -425,6 +401,7 @@ void Wann::mutAddNode(std::vector<ConnGene>& conns,
     nodes.push_back({newNodeId, 3, newActivation});
     conns.push_back(connTo);
     conns.push_back(connFrom);
+    return true;
 }
 
 // =========================================================================
@@ -444,12 +421,12 @@ void Wann::mutAddNode(std::vector<ConnGene>& conns,
 // an output node's excitatory connections to a non-majority (<=) versus its
 // inhibitory ones.
 // =========================================================================
-void Wann::mutToggleExcitatory(std::vector<ConnGene>& conns,
+bool Wann::mutToggleExcitatory(std::vector<ConnGene>& conns,
                                 const std::vector<NodeGene>& nodes) {
     std::vector<int> active;
     for (int i = 0; i < static_cast<int>(conns.size()); ++i)
         if (conns[i].enabled) active.push_back(i);
-    if (active.empty()) return;
+    if (active.empty()) return false;
 
     std::vector<int> safe;
     if (p.require_output_excitatory_majority) {
@@ -466,10 +443,11 @@ void Wann::mutToggleExcitatory(std::vector<ConnGene>& conns,
     } else {
         safe = active;
     }
-    if (safe.empty()) return;  // every candidate would break some output's majority
+    if (safe.empty()) return false;  // every candidate would break some output's majority
 
     int idx = safe[randInt(0, static_cast<int>(safe.size()) - 1)];
     conns[idx].excitatory = !conns[idx].excitatory;
+    return true;
 }
 
 // =========================================================================
@@ -499,13 +477,14 @@ void Wann::topoMutate(Ind& child) {
         slot += weights[i];
     }
 
+    bool applied = false;
     switch (choice) {
         case 1:  // Add connection
-            mutAddConn(conns, nodes);
+            applied = mutAddConn(conns, nodes);
             break;
 
         case 2:  // Add node
-            mutAddNode(conns, nodes);
+            applied = mutAddNode(conns, nodes);
             break;
 
         case 3: { // Enable a disabled connection
@@ -532,8 +511,10 @@ void Wann::topoMutate(Ind& child) {
             } else {
                 safe = disabled;
             }
-            if (!safe.empty())
+            if (!safe.empty()) {
                 conns[safe[randInt(0, static_cast<int>(safe.size()) - 1)]].enabled = true;
+                applied = true;
+            }
             break;
         }
 
@@ -546,17 +527,24 @@ void Wann::topoMutate(Ind& child) {
                 const auto& actRange = p.ann_actRange;
                 std::vector<int> pool;
                 for (int a : actRange) if (a != curAct) pool.push_back(a);
-                if (!pool.empty())
+                if (!pool.empty()) {
                     nodes[mutIdx].activation = pool[randInt(0, static_cast<int>(pool.size()) - 1)];
+                    applied = true;
+                }
             }
             break;
         }
 
         case 5:  // Toggle excitatory/inhibitory polarity of one connection
-            mutToggleExcitatory(conns, nodes);
+            applied = mutToggleExcitatory(conns, nodes);
             break;
 
         default: break;
+    }
+
+    if (choice >= 1 && choice <= 5) {
+        ++mutStats_.chosen[choice - 1];
+        if (applied) ++mutStats_.applied[choice - 1];
     }
 
     child.birth = gen;

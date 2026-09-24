@@ -5,6 +5,19 @@
 
 namespace wann {
 
+// Per-generation counters of the variation operators, filled by ask().
+// Index order for the arrays: [addConn, addNode, enable, mutAct, toggleExcitatory].
+// `chosen` = times the roulette selected the operator; `applied` = times it
+// actually changed the genome (a chosen mutation can be a no-op, e.g. addConn
+// with no free (src,dst) pair, enable with no disabled connection).
+// `mooConn` is 1 if the generation's selection used [meanFit, 1/nConn]
+// (prob alg_probMoo), 0 if it used [meanFit, maxFit], -1 at gen 0 (no selection).
+struct MutStats {
+    int chosen[5]  = {0, 0, 0, 0, 0};
+    int applied[5] = {0, 0, 0, 0, 0};
+    int mooConn    = -1;
+};
+
 // -------------------------------------------------------------------------
 // Wann – main evolutionary algorithm (ask / tell interface).
 //
@@ -31,13 +44,8 @@ public:
     const std::vector<Ind>& population() const { return pop; }
     int generation() const { return gen; }
 
-    // Number of adjacent-fitness pairs (population sorted by meanFit) within
-    // lexicographic_parsimony_epsilon of each other, counted during the most
-    // recent ask() call's selection step — i.e. how many tie-break
-    // opportunities lexicographic_parsimony actually had last generation.
-    // Always 0 when lexicographic_parsimony is disabled, and at gen 0 (no
-    // selection has run yet). Diagnostic only, not used by the algorithm.
-    int lastTieCount() const { return lastTieCount_; }
+    // Operator counters for the population returned by the last ask().
+    const MutStats& lastMutStats() const { return mutStats_; }
 
     // Current population (public for DataGatherer access).
     std::vector<Ind> pop;
@@ -46,7 +54,7 @@ private:
     Hyperparams p;
     std::vector<InnovRecord> innov;
     int gen = 0;
-    int lastTieCount_ = 0;
+    MutStats mutStats_;
 
     // Minimal species container (WANN uses a single species).
     struct Species {
@@ -66,11 +74,12 @@ private:
 
     Ind    crossover   (const Ind& parentA, const Ind& parentB);
     void   topoMutate  (Ind& child);
-    void   mutAddConn          (std::vector<ConnGene>& conns,
+    // The mutation operators return true iff they changed the genome.
+    bool   mutAddConn          (std::vector<ConnGene>& conns,
                                 const std::vector<NodeGene>& nodes);
-    void   mutAddNode          (std::vector<ConnGene>& conns,
+    bool   mutAddNode          (std::vector<ConnGene>& conns,
                                 std::vector<NodeGene>& nodes);
-    void   mutToggleExcitatory (std::vector<ConnGene>& conns,
+    bool   mutToggleExcitatory (std::vector<ConnGene>& conns,
                                 const std::vector<NodeGene>& nodes);
 };
 
