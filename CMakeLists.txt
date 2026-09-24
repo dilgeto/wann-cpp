@@ -42,6 +42,8 @@ add_library(wann_lib STATIC
   src/NsgaSort.cpp
   src/Wann.cpp
   src/DataGatherer.cpp
+  src/GenomeIO.cpp
+  src/Neighborhood.cpp
 )
 
 target_include_directories(wann_lib PUBLIC include)
@@ -290,6 +292,25 @@ target_link_libraries(wann_car_eval PRIVATE
     snn_encoding_imp
     snn_core_imp
     rl_tools_iface)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_car_neighborhood – análisis de vecindad (N1/N2) de un
+# individuo: enumera todos los genomas a una mutación, los evalúa con las
+# semillas del padre y reporta mejores/neutros/peores. Sólo evalúa, no entrena.
+# ---------------------------------------------------------------------------
+add_executable(wann_car_neighborhood
+    src/main_car_neighborhood.cpp
+    src/SnnCarTask.cpp)
+
+target_include_directories(wann_car_neighborhood PRIVATE include)
+
+target_link_libraries(wann_car_neighborhood PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
 
 # ---------------------------------------------------------------------------
 # Executable: wann_car_odin_export – convierte una red car ya entrenada

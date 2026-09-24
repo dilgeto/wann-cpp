@@ -18,6 +18,21 @@ struct MutStats {
     int mooConn    = -1;
 };
 
+// Where one member of the population returned by ask() came from.
+// `parent` indexes the population evaluated in the previous generation
+// (the one whose reward matrix was given to tell()); -1 at generation 0.
+// `parentB` is the less-fit parent when crossover was used, else -1.
+// `op` is the operator picked by topoMutate, using the MutStats order
+// [addConn, addNode, enable, mutAct, toggleExcitatory]; -1 for an elite
+// copied unchanged (and at generation 0). `applied` = the operator really
+// changed the genome.
+struct ChildInfo {
+    int  parent  = -1;
+    int  parentB = -1;
+    int  op      = -1;
+    bool applied = false;
+};
+
 // -------------------------------------------------------------------------
 // Wann – main evolutionary algorithm (ask / tell interface).
 //
@@ -47,6 +62,10 @@ public:
     // Operator counters for the population returned by the last ask().
     const MutStats& lastMutStats() const { return mutStats_; }
 
+    // Provenance of each member of the population returned by the last ask()
+    // (same indexing as pop). See ChildInfo.
+    const std::vector<ChildInfo>& lastLineage() const { return lineage_; }
+
     // Current population (public for DataGatherer access).
     std::vector<Ind> pop;
 
@@ -55,6 +74,7 @@ private:
     std::vector<InnovRecord> innov;
     int gen = 0;
     MutStats mutStats_;
+    std::vector<ChildInfo> lineage_;
 
     // Minimal species container (WANN uses a single species).
     struct Species {
@@ -73,7 +93,8 @@ private:
     std::vector<Ind> recombine(const Species& sp);
 
     Ind    crossover   (const Ind& parentA, const Ind& parentB);
-    void   topoMutate  (Ind& child);
+    // Returns {operator index 0..4 (MutStats order), whether it changed the genome}.
+    std::pair<int,bool> topoMutate(Ind& child);
     // The mutation operators return true iff they changed the genome.
     bool   mutAddConn          (std::vector<ConnGene>& conns,
                                 const std::vector<NodeGene>& nodes);

@@ -53,8 +53,10 @@ Wann::Wann(const Hyperparams& hyp) : p(hyp) {}
 
 std::vector<Ind>& Wann::ask() {
     mutStats_ = MutStats{};
+    lineage_.clear();
     if (pop.empty()) {
         initPop();
+        lineage_.assign(pop.size(), ChildInfo{});
     } else {
         probMoo();
         speciate();
@@ -210,8 +212,16 @@ std::vector<Ind> Wann::recombine(const Species& sp) {
     // Elitism: keep top fraction unchanged.
     int nElites = static_cast<int>(std::floor(static_cast<double>(poolSize)
                                               * p.select_eliteRatio));
-    for (int i = 0; i < nElites && nOffspring > 0; ++i, --nOffspring)
+    // members[k] points into pop, so its offset from pop.data() is the
+    // index the parent had in the population evaluated last generation.
+    auto popIndex = [&](const Ind* m) { return static_cast<int>(m - pop.data()); };
+
+    for (int i = 0; i < nElites && nOffspring > 0; ++i, --nOffspring) {
         children.push_back(*members[i]);
+        ChildInfo info;
+        info.parent = popIndex(members[i]);
+        lineage_.push_back(info);
+    }
 
     // Tournament selection: pick best index from a random set.
     // Since members are sorted by rank (ascending = better), lower index = fitter.
@@ -235,9 +245,16 @@ std::vector<Ind> Wann::recombine(const Species& sp) {
             child = crossover(*members[pa], *members[pb]);
         }
 
-        topoMutate(child);
+        auto [op, applied] = topoMutate(child);
         child.express();
         children.push_back(std::move(child));
+
+        ChildInfo info;
+        info.parent  = popIndex(members[pa]);
+        info.parentB = (pa != pb) ? popIndex(members[pb]) : -1;
+        info.op      = op;
+        info.applied = applied;
+        lineage_.push_back(info);
     }
     return children;
 }
@@ -454,7 +471,7 @@ bool Wann::mutToggleExcitatory(std::vector<ConnGene>& conns,
 // topoMutate – choose exactly one topological mutation via roulette wheel.
 // Options: [addConn, addNode, enable, mutAct, toggleExcitatory]
 // =========================================================================
-void Wann::topoMutate(Ind& child) {
+std::pair<int,bool> Wann::topoMutate(Ind& child) {
     auto& conns = child.conns;
     auto& nodes = child.nodes;
 
@@ -548,6 +565,7 @@ void Wann::topoMutate(Ind& child) {
     }
 
     child.birth = gen;
+    return {choice - 1, applied};
 }
 
 } // namespace wann

@@ -50,6 +50,15 @@ struct Hyperparams {
     // before stopping early. 0 = disabled (run the full maxGen).
     int    early_stop_patience = 0;
 
+    // --- lineage / population snapshots (for wann_car_neighborhood) ---
+    // > 0: append per-generation parent/operator records to
+    // log/<prefix>_lineage.csv and, every this-many generations (plus the
+    // last one), write the whole population's genomes + rewards to
+    // log/<prefix>_snap/gen_XXXX.json. 0 = disabled. Pure bookkeeping: it
+    // does not consume RNG draws, so a seed reproduces the same run with or
+    // without it. Currently only wired into src/main_car.cpp.
+    int    snapshot_interval   = 0;
+
     // --- task-specific (set in JSON or programmatically) ---
     int    ann_nInput         = 5;
     int    ann_nOutput        = 1;
@@ -160,6 +169,7 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.save_mod,               "save_mod");
     get(p.bestReps,               "bestReps");
     get(p.early_stop_patience,    "early_stop_patience");
+    get(p.snapshot_interval,      "snapshot_interval");
     get(p.ann_nInput,             "ann_nInput");
     get(p.ann_nOutput,            "ann_nOutput");
     get(p.ann_initAct,            "ann_initAct");

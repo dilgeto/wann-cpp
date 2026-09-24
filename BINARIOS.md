@@ -37,6 +37,14 @@ Binarios: `wann_car`, `wann_acrobot`, `wann_disc_mc`, `wann_mountain_car`
 
 `early_stop_patience` (en el JSON) solo funciona en `wann_car`.
 
+`snapshot_interval` (en el JSON, default `0` = apagado, solo `wann_car`): si es
+`> 0`, escribe `log/<prefix>_lineage.csv` (cada generación: padre, operador y
+fitness de cada individuo) y, cada `snapshot_interval` generaciones más la
+última, `log/<prefix>_snap/gen_XXXXX.json` con los genomas completos de la
+población y sus recompensas. Es solo registro: no consume números aleatorios,
+así que la misma semilla da la misma corrida con o sin él. Lo consume
+`wann_car_neighborhood` (sección 4b).
+
 ### Reproducir un entrenamiento del screening (car, ttfs, first_spike)
 
 Los hiperparámetros ganadores del screening están en
@@ -152,6 +160,53 @@ un CSV con una fila por seed. Lo orquesta `eval_results/eval_p3_weights.py`.
 | `--episode-detail` | En vez del promedio por (seed, peso), imprime cada episodio individual (`seed,episode,reward`). Requiere `--weight-index` | off |
 | `--weight-index` | Índice de peso (≥ 0) para `--episode-detail` | — |
 | `--nreps` | Sobrescribe `alg_nReps` solo en memoria | del config |
+
+---
+
+## 4b. Análisis de vecindad — `wann_car_neighborhood`
+
+**Solo evalúa, no entrena.** Dado un individuo, enumera todos los genomas a una
+mutación de distancia (N1: cada `addConn`, `addNode`, `enable`, `mutAct` y
+`toggleExcitatory` posible), los evalúa con las **mismas semillas que el padre**
+y reporta cuántos mejoran, son neutros o empeoran, por operador. También da la
+probabilidad exacta por mutación de caer en un vecino que mejora. Sirve para
+distinguir "óptimo local estricto" de "hay vecinos mejores que la evolución no
+encuentra".
+
+```bash
+./build/wann_car_neighborhood -i <snapshot.json | red_best.out> [-d config.json] [-p overrides]
+    [-o prefijo] [--who elite|top:K|idx:N,N|all] [--seed S] [--max-per-op N]
+    [--noise-seeds R] [--eps E] [--n2-mids M] [--n2-per-mid S] [--n2-if-stuck]
+    [--climb K] [--rng-seed S] [--dry-run]
+```
+
+`-d`/`-p` deben ser **los mismos que en el entrenamiento** (probabilidades de
+operadores, `ann_actRange`, parámetros SNN).
+
+| Flag | Significado | Default |
+|------|-------------|---------|
+| `-i` | `*.json`: snapshot de `snapshot_interval` (genomas completos, semillas de entrenamiento). Otro: `*_best.out` (genoma **reconstruido**, aproximado; ver `GenomeIO.h`) | obligatorio |
+| `--who` | Individuos del snapshot a analizar (`elite` = mayor fitness medio) | `elite` |
+| `--seed` | Fuerza la semilla base de evaluación (individuo i: `S*10000+i`) | la del snapshot; `0` con `.out` |
+| `--max-per-op` | Submuestrea N vecinos por operador (`0` = todos). `weight` en el CSV reescala las probabilidades | `0` |
+| `--noise-seeds` | Re-evalúa el padre con R semillas para medir el ruido; sin `--eps`, `eps = 2·sd` | `4` |
+| `--eps` | Umbral fijo: `|d_mean| <= E` es neutro | `2·sd` del ruido |
+| `--n2-mids`, `--n2-per-mid` | Muestrea N2: M intermedios (ponderados por su probabilidad de aparecer) y S vecinos de cada uno. Separa mejoras alcanzables por un intermedio neutro de las que exigen cruzar un valle | `0`, `50` |
+| `--n2-if-stuck` | Solo corre N2 si N1 no tiene ningún vecino que mejore | off |
+| `--climb` | Ascenso voraz: hasta K pasos al mejor vecino que supere `eps`, con semilla nueva en cada paso | `0` |
+| `--dry-run` | Solo cuenta vecinos por operador; no simula | off |
+
+Salidas (`-o`, default `log/neighbors_<archivo>`): `_neighbors.csv` (una fila por
+individuo evaluado, con la recompensa por peso), `_parents.csv` (resumen por
+padre/paso) y `_ops.csv` (desglose por operador). Costo ≈ `nº vecinos × 6 pesos ×
+alg_nReps` episodios por padre; el binario lo imprime antes de simular.
+`OMP_NUM_THREADS` aplica igual que en el entrenamiento.
+
+```bash
+# vecindad del élite de una generación (N1 completa) y N2 si está atascado
+./build/wann_car_neighborhood -i log/mi_corrida_snap/gen_00400.json \
+    -d p/car_snn.json -p mi_override.json --n2-mids 20 --n2-if-stuck
+```
 
 ---
 

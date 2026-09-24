@@ -64,6 +64,13 @@ Per task `<X>` in `{acrobot, car, mountain_car, disc_mc, l2f}` (plus a generic
 - `wann_car_replay` — runs one episode with the best (or a specific) weight and
   exports the trajectory to CSV for visualization: `./wann_car_replay -f
   log/snn_car_best.out -d p/car_snn.json -w best -s 0`.
+- `wann_car_neighborhood` — evaluation-only neighbourhood analysis: enumerates every
+  single-mutation neighbour (N1) of an individual, evaluates them with the parent's
+  seeds and reports better/neutral/worse per operator (optional sampled N2 and a greedy
+  climb). Input is a `snapshot_interval` population snapshot or a legacy `*_best.out`
+  (genome reconstructed, approximate). See `BINARIOS.md` §4b. `Neighborhood.cpp`
+  re-implements `Wann`'s private mutation operators to enumerate them — keep the two in
+  sync if either changes.
 - `wann_train` — task-agnostic entry point (no SNN), for the plain WANN algorithm.
 
 **Terminology: "Mountain Car" (unqualified) always means the discrete task** — code
@@ -90,6 +97,16 @@ python eval_results/eval_p3_weights.py --task car --seeds 11   # sweep shared we
 bash generate_graphs.sh car                              # training curves, Pareto front, topology plots
 python bootstrap_results/bootstrap_compare_car_auto.py --run-key car_ttfs_first_spike  # bootstrap CI vs ANN/PPO
 ```
+
+`screening_full.py` in `phase3`/`both` mode automatically finishes by running the
+evaluation + bootstrap step (`bootstrap_results/bootstrap_compare_<task>_auto.py
+--run-key <run_key>`: shared-weight revalidation via `eval_p3_weights.py`, winner
+selection, bootstrap CI vs. ANN/PPO) for `car`, `acrobot` and `disc_mc` (the latter
+maps to `mountain_car` in the bootstrap scripts); other tasks skip it. It never trains,
+and a failure there is non-fatal (the error prints the command to retry). Opt out with
+`--no-post-eval`; tune with `--eval-seeds/--eval-nreps/--eval-jobs/--eval-omp/
+--bootstrap-n/--bootstrap-resamples`. So the manual `eval_p3_weights.py`/`*_auto.py`
+lines above are only needed for re-runs.
 
 `JOBS_*`/`OMP_*` env vars in `run_all.sh` control parallel process count vs. OpenMP
 threads per process — tune jointly against available cores, they multiply.
@@ -155,10 +172,16 @@ in one struct, loaded from JSON under `p/*.json` (one base config per task, e.g.
 `p/car_snn.json`) and mergeable with a second override JSON (file path or inline
 `{"key":val}` string) — the pattern used everywhere is `-d base.json -p
 overrides.json`. Screening scripts generate override JSONs on the fly to sweep this
-struct's fields. `early_stop_patience` (int, default `0` = disabled) stops training
+struct's fields. Every non-integer swept hyperparameter is limited to 2 decimals
+(`HP_DECIMALS` in `screening_reduce.py`): Optuna samples on a 0.01 grid (`step=0.01`, so
+no log-uniform sampling) and reduced-space bounds are snapped to it — hence
+`prob_enable` and `snn_ttfs_threshold` now start at `0.01` instead of `0.005`/`1e-6`. `early_stop_patience` (int, default `0` = disabled) stops training
 once that many generations pass with no new `fitTop` record (running-best elite
 fitness) — set it per JSON like any other hyperparameter. Currently only wired into
 `src/main_car.cpp`'s generation loop (not the other tasks' `main_*.cpp`).
+`snapshot_interval` (int, default `0` = off) is likewise `main_car.cpp`-only: it writes
+`log/<prefix>_lineage.csv` every generation and full-population genome snapshots to
+`log/<prefix>_snap/` (consumed by `wann_car_neighborhood`); pure bookkeeping, no RNG use.
 
 `snn_window_ms`/`snn_tau_exc`/`snn_tau_inh`/`snn_ttfs_threshold` are SNN-simulator
 microparameters (`ms` per env step given to the SNN before decoding an action; AMPA/
@@ -208,3 +231,42 @@ and Pareto snapshots consumed by `graph.py`/`graph_network.py`. Mirrors a Python
 - `graficos/`, `plots/` — generated figures, organized by task.
 - `lib/` — vendored front-end JS assets (`vis-9.1.2`, `tom-select`) unrelated to the
   C++/Python pipeline — not part of the WANN codebase proper.
+
+## Known issues to review (found, not fixed)
+
+Two quirks in the evolution core, confirmed against the real `Wann` code but left
+unchanged on purpose: fixing either changes the algorithm, so past runs would become a
+different experimental condition. Decide deliberately, ideally behind a hyperparameter
+that defaults to the current behaviour. If the user says they are looking for bugs or
+errors in the code, remind them of these and pick this up again.
+
+1. **`mutAddConn` never wires the deepest hidden layer to an output** (`src/Wann.cpp`,
+   `lastLayer`). Outputs get the same layer as the deepest hidden layer
+   (`lastLayer = max(hLay0)+1`, where `hLay0` is 0-based and hidden nodes use `hLay0+1`),
+   and destinations must be in a *strictly higher* layer. So with one hidden layer a
+   hidden node can never be connected to another output by `addConn` (only `addNode`
+   can wire it to an output). Probably an off-by-one from the initial literal port
+   (present since the first commit; the original Python was not available to compare —
+   from memory it used `max(hLay)+1` with `hLay` already shifted). Size on the saved
+   `car` elites: ~1 blocked pair per net (median) out of ~530 valid `addConn` pairs, but
+   source-first sampling makes that class ~3 % of `addConn` draws (median, max 24 %).
+   Unlikely to explain stagnation by itself. A fix would be outputs one layer deeper;
+   `src/Neighborhood.cpp` mirrors this rule and must follow. Open question: whether the
+   blocked moves are better than typical ones (a partial evaluation was started and
+   interrupted, not analysed).
+2. **Disabled hidden→hidden connections come back enabled in the expressed network.**
+   `getNodeOrder` (`src/Ind.cpp`) binarises the hidden block with `copysign`, and
+   `copysign(1, NaN) = +1`, so a disabled hidden→hidden gene shows up as `+1` in
+   `wMat`/`wVec`, in `*_best.out`, and in everything built from it (eval, replay,
+   `eval_p3_weights.py`, bootstrap, ODIN export). Training is unaffected: every task's
+   `evalPop` uses `buildNetwork(const Ind&)`, which reads the genes. Disabled
+   input→hidden and hidden→output genes are kept as `nan`, so only the hidden block is
+   hit. On the `car_ttfs_*` elites (geometry: 9 inputs, 2 outputs), 45 of 66 nets had at
+   least one such revived edge (lower bound: only detected as a "pure relay bypass"), but
+   correcting them moved fitness by a median 0.04 seed-sd (none > 1 sd, symmetric), so
+   past results look safe. It matters before ODIN deployment (extra synapses) and for
+   consistency. Fix in `Ind::express`, not in `getNodeOrder` (`mutAddConn`'s layering
+   reads that block, so changing it alters the operator and can create cycles). Beware
+   `nConn` (drives the 1/nConn objective in `probMoo`): correcting the matrix lowers it
+   and slightly changes selection. `genomeFromNetFile` (`GenomeIO.h`) inherits the same
+   limitation.

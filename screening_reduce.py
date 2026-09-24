@@ -221,9 +221,15 @@ def validate_task_files(task: str, executable: str, base_config: str) -> None:
 
 # ── Initial search space (14 hyperparameters) ─────────────────────────────────
 # Format: param → (kind, lo, hi)
-#   "float" – uniform in [lo, hi]
-#   "log"   – log-uniform in [lo, hi]
+#   "float" – uniform in [lo, hi], on a grid of 10**-HP_DECIMALS (2 decimals)
 #   "int"   – integer in {lo, ..., hi}
+#   "log"   – legacy (old space_log.jsonl entries): sampled like "float" (the
+#             2-decimal grid rules out log-uniform sampling, and bounds below
+#             0.01 cannot be represented); still used to bin in log scale.
+#
+# Every non-integer hyperparameter is limited to HP_DECIMALS decimals — both
+# the sampled values and the (reduced) bounds — see suggest_from_space() and
+# round_bounds().
 #
 # To stop optimizing one of these, just comment out its line (plain dict
 # literal — a commented-out entry is simply absent from INITIAL_SPACE, so
@@ -234,7 +240,7 @@ INITIAL_SPACE: dict[str, tuple] = {
     "alg_probMoo":           ("float", 0.05, 0.70),
     "prob_addConn":          ("float", 0.05, 0.50),
     "prob_addNode":          ("float", 0.05, 0.40),
-    "prob_enable":           ("log",   0.005, 0.25),
+    "prob_enable":           ("float", 0.01,  0.25),
     "prob_mutAct":           ("float", 0.10, 0.70),
     "prob_toggleExcitatory": ("float", 0.02, 0.30),
     "prob_initEnable":       ("float", 0.20, 0.80),
@@ -253,20 +259,41 @@ INITIAL_SPACE: dict[str, tuple] = {
     "snn_window_ms":         ("int",   20,    80),
     "snn_tau_exc":           ("float", 2.0,   15.0),
     "snn_tau_inh":           ("float", 4.0,   30.0),
-    "snn_ttfs_threshold":    ("log",   1e-6,  0.30),
+    "snn_ttfs_threshold":    ("float", 0.01,  0.30),
 }
 
 # ── Search space helpers ──────────────────────────────────────────────────────
 
+HP_DECIMALS = 2                 # max decimals for every non-int hyperparameter
+HP_STEP     = 10 ** -HP_DECIMALS
+
+
+def round_bounds(lo: float, hi: float, outward: bool = False) -> tuple[float, float]:
+    """Snap [lo, hi] to the HP_DECIMALS grid. outward=True widens (floor lo,
+    ceil hi — used when narrowing a space, which is meant to be conservative);
+    otherwise rounds to nearest. A strictly positive bound is never rounded
+    down to 0 (e.g. an old 1e-6 lower bound becomes 0.01, not 0.0)."""
+    f = 10 ** HP_DECIMALS
+    if outward:
+        new_lo, new_hi = np.floor(lo * f + 1e-9) / f, np.ceil(hi * f - 1e-9) / f
+    else:
+        new_lo, new_hi = round(lo, HP_DECIMALS), round(hi, HP_DECIMALS)
+    if lo > 0 and new_lo <= 0:
+        new_lo = HP_STEP
+    new_hi = max(new_hi, new_lo)
+    return round(float(new_lo), HP_DECIMALS), round(float(new_hi), HP_DECIMALS)
+
+
 def suggest_from_space(trial: optuna.Trial,
                        space: dict[str, tuple]) -> dict[str, Any]:
-    """Suggest all parameters respecting the current (possibly narrowed) space."""
+    """Suggest all parameters respecting the current (possibly narrowed) space.
+    Non-integer parameters are sampled on a HP_DECIMALS-decimal grid."""
     params: dict[str, Any] = {}
     for name, (kind, lo, hi) in space.items():
-        if kind == "float":
-            params[name] = trial.suggest_float(name, lo, hi)
-        elif kind == "log":
-            params[name] = trial.suggest_float(name, lo, hi, log=True)
+        if kind in ("float", "log"):
+            lo, hi = round_bounds(lo, hi)
+            params[name] = round(trial.suggest_float(name, lo, hi, step=HP_STEP),
+                                 HP_DECIMALS)
         elif kind == "int":
             params[name] = trial.suggest_int(name, int(lo), int(hi))
     return params
@@ -350,6 +377,12 @@ def reduce_space(
             new_hi = min(hi, float(int(np.floor(new_hi))))
             if new_lo > new_hi:
                 new_lo, new_hi = lo, hi  # fallback: keep original
+
+        else:
+            # Conservative: widen outward to the 2-decimal grid, never past
+            # the current bounds.
+            new_lo, new_hi = round_bounds(new_lo, new_hi, outward=True)
+            new_lo, new_hi = max(new_lo, round_bounds(lo, hi)[0]), min(new_hi, round_bounds(lo, hi)[1])
 
         new_space[param] = (kind, new_lo, new_hi)
 

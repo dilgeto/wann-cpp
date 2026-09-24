@@ -4,6 +4,7 @@
 //   ./wann_car [-d car_snn.json] [-p overrides.json] [-o prefix] [-s seed] [-v]
 
 #include "../include/wann/DataGatherer.h"
+#include "../include/wann/GenomeIO.h"
 #include "../include/wann/Hyperparams.h"
 #include "../include/wann/Ind.h"
 #include "../include/wann/Random.h"
@@ -113,6 +114,19 @@ int main(int argc, char* argv[]) {
     wann::Wann         alg(hyp);
     wann::DataGatherer data(outPrefix, hyp);
 
+    // Lineage (every generation) + population snapshots (every
+    // snapshot_interval generations), consumed by wann_car_neighborhood.
+    const std::string snapDir = "log/" + outPrefix + "_snap";
+    std::ofstream lineageFile;
+    if (hyp.snapshot_interval > 0) {
+        fs::create_directories(snapDir);
+        lineageFile.open("log/" + outPrefix + "_lineage.csv");
+        if (!lineageFile)
+            std::cerr << "Warning: cannot open lineage log for " << outPrefix << '\n';
+        else
+            lineageFile << "gen,idx,parent,parent_b,op,applied,fitness,fit_max,n_conn\n";
+    }
+
     using Clock = std::chrono::steady_clock;
     auto t_start = Clock::now();
 
@@ -143,6 +157,17 @@ int main(int argc, char* argv[]) {
         data.gatherMutStats(alg.lastMutStats());
         std::cout << gen << "\t - \t" << data.display() << '\n';
 
+        if (lineageFile) {
+            const auto& lin = alg.lastLineage();
+            for (int i = 0; i < static_cast<int>(pop.size()); ++i)
+                lineageFile << gen << ',' << i << ',' << lin[i].parent << ','
+                            << lin[i].parentB << ',' << lin[i].op << ','
+                            << (lin[i].applied ? 1 : 0) << ','
+                            << pop[i].fitness << ',' << pop[i].fitMax << ','
+                            << pop[i].nConn << '\n';
+            lineageFile.flush();
+        }
+
         bool earlyStop = false;
         if (hyp.early_stop_patience > 0) {
             double eliteFitness = pop[eliteIdx].fitness;
@@ -159,6 +184,24 @@ int main(int argc, char* argv[]) {
                 std::cout << "Early stopping: sin mejora de fitTop en "
                           << hyp.early_stop_patience << " generaciones "
                           << "(gen " << gen << "/" << hyp.maxGen - 1 << ")\n";
+            }
+        }
+
+        if (hyp.snapshot_interval > 0
+                && (gen % hyp.snapshot_interval == 0 || gen == hyp.maxGen - 1 || earlyStop)) {
+            wann::PopSnapshot snap;
+            snap.gen      = gen;
+            snap.evalSeed = static_cast<int>(seed) + gen;   // same value evalPop() got
+            snap.pop      = pop;
+            snap.reward   = reward;
+            snap.lineage  = alg.lastLineage();
+            std::ostringstream sname;
+            sname << snapDir << "/gen_" << std::setw(5) << std::setfill('0') << gen << ".json";
+            try {
+                wann::savePopSnapshot(sname.str(), snap);
+            } catch (const std::exception& e) {
+                std::cerr << "Warning: no se pudo guardar snapshot gen " << gen
+                          << ": " << e.what() << '\n';
             }
         }
 

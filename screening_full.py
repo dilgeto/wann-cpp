@@ -10,6 +10,14 @@ Phase 3  –  Validates the top-K configs from Phase 2 by re-running each
             with N different seeds. Reports mean ± std to confirm results
             are reproducible and not due to random luck.
 
+After Phase 3 (modes phase3/both) the script automatically runs, for the
+tasks that support it (car, acrobot, disc_mc), the evaluation + bootstrap
+pipeline: bootstrap_results/bootstrap_compare_<task>_auto.py --run-key <run_key>
+(shared-weight revalidation via eval_results/eval_p3_weights.py, winner
+selection, bootstrap CI vs. the ANN baseline). Disable with --no-post-eval;
+tune with --eval-seeds/--eval-nreps/--bootstrap-n/--bootstrap-resamples.
+Nothing is trained there — only the saved Phase-3 models are evaluated.
+
 Workflow
 --------
   # Both phases in sequence (typical use)
@@ -619,6 +627,51 @@ def cmd_analyse(run_key: str, n_top: int = 5) -> None:
     rpt_path.write_text(report)
     print(f"Analysis → {rpt_path}")
 
+# ── Post-Phase-3: evaluation + bootstrap ─────────────────────────────────────
+
+# screening_full task → bootstrap_compare_<name>_auto.py. Note the naming
+# split: screening's "disc_mc" (discrete Mountain Car) is "mountain_car" in
+# the evaluation/bootstrap scripts (see TASKS in eval_p3_weights.py). Tasks
+# without a wann_eval_weights_<task> binary + ANN baseline are absent here.
+POST_EVAL_SCRIPT = {
+    "car":     "bootstrap_results/bootstrap_compare_car_auto.py",
+    "acrobot": "bootstrap_results/bootstrap_compare_acrobot_auto.py",
+    "disc_mc": "bootstrap_results/bootstrap_compare_mountain_car_auto.py",
+}
+
+
+def run_post_eval(task: str, run_key: str, args: argparse.Namespace) -> bool:
+    """Revalidate the Phase-3 models of run_key and bootstrap the winner vs.
+    the ANN baseline. Failures are reported but never raise: Phase 3 results
+    are already on disk and this step can be re-run by hand (add
+    --skip-revalidation to reuse eval_results/<run_key>/<task>_best.csv)."""
+    script = POST_EVAL_SCRIPT.get(task)
+    if script is None:
+        print(f"\n── Post-eval: omitido, --task {task} no tiene pipeline de "
+              f"evaluación/bootstrap (solo {', '.join(POST_EVAL_SCRIPT)}). ──")
+        return False
+
+    cmd = [sys.executable, script, "--run-key", run_key,
+           "--seeds",     str(args.eval_seeds),
+           "--nreps",     str(args.eval_nreps),
+           "--n",         str(args.bootstrap_n),
+           "--resamples", str(args.bootstrap_resamples)]
+    if args.eval_jobs is not None:
+        cmd += ["--eval-jobs", str(args.eval_jobs)]
+    if args.eval_omp is not None:
+        cmd += ["--eval-omp", str(args.eval_omp)]
+
+    print(f"\n── Post-eval: evaluación de pesos + bootstrap ({run_key}) ──")
+    print("  " + " ".join(cmd) + "\n", flush=True)
+    rc = subprocess.run(cmd).returncode
+    if rc != 0:
+        print(f"\nWARNING: post-eval falló (exit {rc}). Los resultados de Phase 3 "
+              f"están intactos; reintentar con:\n  {' '.join(cmd)}",
+              file=sys.stderr)
+        return False
+    return True
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
@@ -672,6 +725,26 @@ def parse_args() -> argparse.Namespace:
                          "the full maxGen). Default: 100. Car-only — "
                          "early_stop_patience is only wired into main_car.cpp, "
                          "a no-op for every other task.")
+    # Post-Phase-3 evaluation + bootstrap
+    ap.add_argument("--no-post-eval", action="store_true", dest="no_post_eval",
+                    help="Do not run the shared-weight evaluation + bootstrap "
+                         "(bootstrap_compare_<task>_auto.py) after Phase 3.")
+    ap.add_argument("--eval-seeds", type=int, default=11, dest="eval_seeds",
+                    help="Post-eval: seeds for weight revalidation (default: 11)")
+    ap.add_argument("--eval-nreps", type=int, default=11, dest="eval_nreps",
+                    help="Post-eval: episodes averaged per seed (default: 11)")
+    ap.add_argument("--eval-jobs", type=int, default=None, dest="eval_jobs",
+                    help="Post-eval: models evaluated in parallel "
+                         "(default: bootstrap script's default, 4)")
+    ap.add_argument("--eval-omp", type=int, default=None, dest="eval_omp",
+                    help="Post-eval: OMP_NUM_THREADS per evaluation run "
+                         "(default: cpu_count // eval_jobs)")
+    ap.add_argument("--bootstrap-n", type=int, default=100, dest="bootstrap_n",
+                    help="Post-eval: episodes per agent for the bootstrap "
+                         "(default: 100)")
+    ap.add_argument("--bootstrap-resamples", type=int, default=10000,
+                    dest="bootstrap_resamples",
+                    help="Post-eval: bootstrap resamples (default: 10000)")
     return ap.parse_args()
 
 
@@ -801,6 +874,9 @@ def main() -> None:
                   f"{row['std']:8.4f} {row['min']:9.4f} {row['max']:9.4f}")
 
     cmd_analyse(rkey, args.top_analyse)
+
+    if args.mode in ("phase3", "both") and not args.no_post_eval:
+        run_post_eval(args.task, rkey, args)
 
 
 if __name__ == "__main__":
