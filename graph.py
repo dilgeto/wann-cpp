@@ -240,6 +240,49 @@ if pareto_files:
     else:
         plt.show()
 
+    # ── Complejidad del mejor individuo (fitMax) de cada snapshot ──
+    # Por generación guardada: el individuo con mayor fitMax (peak, mejor peso);
+    # si hay empate en fitMax se toma el de mayor fitness medio.
+    best_rows = []
+    for g in np.unique(all_d[:, 4]):
+        pop_g = all_d[all_d[:, 4] == g]
+        i = np.lexsort((-pop_g[:, 0], -pop_g[:, 1]))[0]   # fitMax desc, fit medio desc
+        best_rows.append(pop_g[i])
+    best_rows = np.array(best_rows)                # fit, fitMax, nConn, nNodes, gen
+    g_b = best_rows[:, 4]
+
+    # Mejor histórico: récord de fitMax hasta cada snapshot (mejora estricta;
+    # en empate se conserva el individuo más antiguo).
+    hist_rows, cur = [], best_rows[0]
+    for r in best_rows:
+        if r[1] > cur[1]:
+            cur = r
+        hist_rows.append(cur)
+    hist_rows = np.array(hist_rows)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 4.5), sharex=True)
+    fig.suptitle(f"{TASK} — Complejidad del mejor individuo (fitMax)")
+    for ax, rows, title in [
+            (axes[0], best_rows, "Mejor de cada generación"),
+            (axes[1], hist_rows, "Mejor histórico hasta esa generación")]:
+        ax2 = ax.twinx()
+        ln1 = ax.plot( g_b, rows[:, 3], label="Nodos", color="purple", linewidth=1.5)
+        ln2 = ax2.plot(g_b, rows[:, 2], label="Conexiones", color="teal",
+                       linewidth=1.5, linestyle="--")
+        ax.set_xlabel("Generación", fontsize=AXIS_LABEL_FONTSIZE)
+        ax.set_ylabel("Nodos", color="purple", fontsize=AXIS_LABEL_FONTSIZE)
+        ax2.set_ylabel("Conexiones", color="teal", fontsize=AXIS_LABEL_FONTSIZE)
+        ax.set_title(title)
+        lns = ln1 + ln2
+        ax.legend(lns, [l.get_label() for l in lns], fontsize=13)
+        ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    if args.save:
+        out = PREFIX + "_best_complexity.png"
+        plt.savefig(out, dpi=150); print(f"Guardado: {out}")
+    else:
+        plt.show()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Visualización del mejor individuo
 # ─────────────────────────────────────────────────────────────────────────────

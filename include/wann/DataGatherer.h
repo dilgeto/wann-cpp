@@ -71,6 +71,7 @@ private:
     std::vector<Ind> best_;     // running best (may plateau)
     bool             newBest_ = false;
     int              bestWi_  = 0;     // weight index of the best individual
+    int              bestGen_ = -1;    // generation where best_ last improved
 
     // Original fitness tracking (set via setEliteOriginalFitness before gatherData).
     double eliteOrigFit_       = 0.0;

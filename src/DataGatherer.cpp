@@ -64,9 +64,11 @@ void DataGatherer::gatherData(const std::vector<Ind>& pop) {
     if (best_.empty()) {
         best_.push_back(elite_.back());
         newBest_ = true;
+        bestGen_ = static_cast<int>(best_.size()) - 1;
     } else if (elite_.back().fitness > best_.back().fitness) {
         best_.push_back(elite_.back());
         newBest_ = true;
+        bestGen_ = static_cast<int>(best_.size()) - 1;
     } else {
         best_.push_back(best_.back());
         newBest_ = false;
@@ -162,7 +164,7 @@ void DataGatherer::save(int gen) {
             std::ofstream wif(prefix_ + "_best.wi");
             wif << bestWi_ << '\n';
             std::ofstream gf(prefix_ + "_best.gen");
-            gf << gen << '\n';
+            gf << bestGen_ << '\n';   // generation where the running best was found
         }
 
         // Per-generation snapshot.
