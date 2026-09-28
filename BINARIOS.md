@@ -198,6 +198,14 @@ operadores, `ann_actRange`, parámetros SNN).
 | `--climb` | Ascenso voraz: hasta K pasos al mejor vecino que supere `eps`, con semilla nueva en cada paso | `0` |
 | `--dry-run` | Solo cuenta vecinos por operador; no simula | off |
 
+**Ojo con `eps`.** Por defecto `eps = 2·sd` del fitness del *padre* entre semillas, que mide el
+ruido de evaluar un individuo con otra semilla. Para comparar un vecino con su padre **con la
+misma semilla** ese umbral es demasiado alto: en las corridas de `diag_rank02` salió en ~0.4 del
+fitness del padre, mientras que el mejor vecino ganaba solo +1 a +20 y el percentil 99 de los Δ
+era ~+4. Un resultado "ningún vecino supera eps" solo descarta mejoras grandes. Para mirar
+mejoras pequeñas usa `--eps` bajo (p. ej. `--eps 0`) junto con `--confirm` y más semillas de
+confirmación, y revisa la distribución de `d_mean` en `_neighbors.csv`.
+
 Salidas (`-o`, default `log/neighbors_<archivo>`): `_neighbors.csv` (una fila por
 individuo evaluado, con la recompensa por peso), `_parents.csv` (resumen por
 padre/paso), `_ops.csv` (desglose por operador) y `_confirm.csv` (candidatos
@@ -242,6 +250,7 @@ python diagnostico/neighborhood_summary.py --dir log/diag_neighborhood \
 | `lineage_analysis.py` | Cuándo se "decide" una corrida: nº de ancestros de la gen 0 vivos por generación, cuándo queda uno solo, ancestro común más reciente de la población final, percentil del ancestro del élite final, largo del estancamiento y tasa de hijos que superan al élite por operador (fase temprana vs tardía). Salidas `_runs/_curves/_ops.csv` |
 | `early_prediction.py` | Cuánto predice lo medido en la generación g (fitness del élite, récord, top 5 %, nº de conexiones) el nivel final, entre corridas: Spearman con IC 95 % bootstrap. Salidas `_prediction.csv/.png` |
 | `run_neighborhood.py` | Elige el snapshot más cercano a cada generación pedida y lanza `wann_car_neighborhood`. **Por defecto solo imprime el plan**; `--estimate` cuenta episodios sin simular; `--run` ejecuta. Salta lo ya hecho (`--force` rehace) |
+| `confirm_report.py` | ¿Las "mejoras confirmadas" son reales o azar? Por generación: % confirmado frente al esperado por azar (t de Student), p binomial, Δ medio en cribado vs validado, y cuántos resisten Bonferroni por padre (y con efecto ≥ 2 % del fitness). Sirve además como **control positivo**: las generaciones tempranas, donde el élite sí sube, deben mostrar señal |
 | `neighborhood_summary.py` | Clasifica cada padre (óptimo local en N1 / mejoras no confirmadas / mejoras confirmadas) y, con N2, si la salida pasa por un intermedio neutro o por un valle. Agrupa por terciles con `--runs-csv` |
 
 Notas: el fitness de cada generación se evalúa con otra semilla y los élites se

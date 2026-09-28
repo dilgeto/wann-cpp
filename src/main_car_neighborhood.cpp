@@ -21,7 +21,8 @@
 //       [-p overrides.json] [-o prefix] [--who elite|top:K|idx:N,N|all]
 //       [--seed S] [--max-per-op N] [--noise-seeds R] [--eps E]
 //       [--n2-mids M] [--n2-per-mid S] [--n2-if-stuck]
-//       [--confirm K] [--confirm-seeds V] [--climb K] [--rng-seed S] [--dry-run]
+//       [--confirm K] [--confirm-seeds V] [--alpha A] [--min-effect F]
+//       [--climb K] [--rng-seed S] [--dry-run]
 //
 //   -d/-p deben ser los MISMOS que en el entrenamiento (operadores, actRange,
 //   parámetros SNN); si no, la vecindad y las recompensas describen otra cosa.
@@ -48,10 +49,27 @@
 //                 ~1000 evaluaciones ruidosas se sobreestima su ventaja (maldición
 //                 del ganador). Los K vecinos con mayor d que superen eps se
 //                 re-evalúan, junto al padre, con --confirm-seeds semillas nuevas
-//                 (default 5, pareadas por semilla); se confirman si la ventaja
-//                 media supera 2 errores estándar. Con confirmación activa,
-//                 --climb y --n2-if-stuck usan solo vecinos confirmados. Si hay más
-//                 de K candidatos, P(mejora confirmada) es una cota inferior.
+//                 (default 5, pareadas por semilla). Un candidato se confirma solo
+//                 si pasa DOS pruebas:
+//                   1. significancia: t-test de una cola, p < --alpha / K (Bonferroni
+//                      entre los K candidatos de ESTE padre — sin esto, con eps bajo
+//                      y decenas de candidatos por padre, ~alpha de ellos "confirma"
+//                      por puro azar de muestreo; verificado empíricamente: con
+//                      eps=0, 32 de 827 candidatos (3.9%) superaban el viejo criterio
+//                      ingenuo de "media - 2·ee > 0", igual al 3.8% esperado sin
+//                      ningún efecto real).
+//                   2. efecto práctico: el Δ validado debe ser >= --min-effect
+//                      (fracción del fitness del padre; default 0.2%) — una mutación
+//                      estadísticamente real pero minúscula no es una mejora que la
+//                      evolución se esté perdiendo.
+//                 Con confirmación activa, --climb y --n2-if-stuck usan solo vecinos
+//                 confirmados. Si hay más de K candidatos, P(mejora confirmada) es
+//                 una cota inferior.
+//   --alpha A     significancia deseada para la confirmación, antes de dividir por
+//                 K (default 0.05).
+//   --min-effect F efecto mínimo para confirmar, como fracción del fitness del
+//                 padre (default 0.002 = 0.2%; los efectos reales encontrados en
+//                 pruebas de control fueron de 0.03% a 0.8%, nunca de varios %).
 //   --climb K     ascenso voraz: hasta K veces, pasa al mejor vecino (confirmado,
 //                 si --confirm > 0) que supere eps y repite. Cada paso re-evalúa
 //                 con una semilla nueva.
@@ -114,6 +132,8 @@ struct Options {
     int         climb      = 0;
     int         confirm    = 20;   // candidatos a re-evaluar (0 = sin confirmación)
     int         confirmSeeds = 5;
+    double      alpha      = 0.05; // significancia deseada, corregida por Bonferroni entre los K candidatos
+    double      minEffect  = 0.002; // efecto práctico mínimo, fracción del fitness del padre
     uint32_t    rngSeed    = 1;
     bool        dryRun     = false;
 };
@@ -137,6 +157,56 @@ int countHidden(const Ind& ind) {
     int n = 0;
     for (const auto& nd : ind.nodes) n += (nd.type == 3);
     return n;
+}
+
+// --- Student's t survival function P(T > t), sin dependencias externas ------
+// Vía la función beta incompleta regularizada (Numerical Recipes 6.4/6.2):
+// para t >= 0, P(T > t) = 0.5 * I_x(df/2, 1/2), x = df/(df+t^2).
+// Sirve para el criterio de confirmación (más abajo): decidir si el Δ
+// validado de un candidato es distinguible del ruido, con la significancia
+// corregida por Bonferroni según cuántos candidatos se probaron.
+double betacf(double a, double b, double x) {
+    const int MAXIT = 200;
+    const double EPS = 3e-12, FPMIN = 1e-300;
+    double qab = a + b, qap = a + 1.0, qam = a - 1.0;
+    double c = 1.0, d = 1.0 - qab * x / qap;
+    if (std::fabs(d) < FPMIN) d = FPMIN;
+    d = 1.0 / d;
+    double h = d;
+    for (int m = 1; m <= MAXIT; ++m) {
+        int m2 = 2 * m;
+        double aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+        d = 1.0 + aa * d; if (std::fabs(d) < FPMIN) d = FPMIN;
+        c = 1.0 + aa / c;  if (std::fabs(c) < FPMIN) c = FPMIN;
+        d = 1.0 / d;
+        h *= d * c;
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+        d = 1.0 + aa * d; if (std::fabs(d) < FPMIN) d = FPMIN;
+        c = 1.0 + aa / c;  if (std::fabs(c) < FPMIN) c = FPMIN;
+        d = 1.0 / d;
+        double del = d * c;
+        h *= del;
+        if (std::fabs(del - 1.0) < EPS) break;
+    }
+    return h;
+}
+
+double regularizedIncompleteBeta(double a, double b, double x) {
+    if (x <= 0.0) return 0.0;
+    if (x >= 1.0) return 1.0;
+    double logBt = std::lgamma(a + b) - std::lgamma(a) - std::lgamma(b)
+                 + a * std::log(x) + b * std::log(1.0 - x);
+    double bt = std::exp(logBt);
+    if (x < (a + 1.0) / (a + b + 2.0))
+        return bt * betacf(a, b, x) / a;
+    return 1.0 - bt * betacf(b, a, 1.0 - x) / b;
+}
+
+double tSurvival(double t, double df) {
+    if (df <= 0.0) return 0.5;
+    if (t < 0.0) return 1.0 - tSurvival(-t, df);
+    double x = df / (df + t * t);
+    return 0.5 * regularizedIncompleteBeta(df / 2.0, 0.5, x);
 }
 
 // Recompensa [individuo][peso] de cada genoma con la misma semilla `seed`.
@@ -398,10 +468,20 @@ Analyzer::StepOut Analyzer::step(const Parent& p, const Ind& cur, int stepNo, in
     // --- confirmación ---
     // El cribado evalúa cada vecino con UNA semilla. Al quedarse con los mejores de
     // ~1000 vecinos ruidosos se sobreestima su ventaja (maldición del ganador), y con
-    // eps = 2*sd todavía pasan algunos por azar. Aquí los mejores candidatos se
-    // re-evalúan, junto al padre, con V semillas nuevas (pareadas dentro de cada
-    // semilla) y se confirman si su ventaja media supera 2 errores estándar.
-    struct Conf { int idx; double screenD, valD, se; bool ok; };
+    // eps bajo casi cualquier candidato pasa por puro azar de muestreo. Aquí los
+    // mejores candidatos se re-evalúan, junto al padre, con V semillas nuevas
+    // (pareadas dentro de cada semilla), y se confirman solo si pasan DOS pruebas:
+    //   1. Significancia: t = mean(Δ)/ee, con p = P(T > t) de una t de Student de
+    //      V-1 grados de libertad, comparado contra alpha/k (Bonferroni: alpha
+    //      dividido por los k candidatos probados en ESTE padre). Sin esta
+    //      corrección, con eps bajo y decenas de candidatos por padre, el criterio
+    //      ingenuo "media - 2*ee > 0" confirma ~4% de puro ruido — verificado
+    //      empíricamente: en 827 candidatos de control (eps=0) se confirmaron 32
+    //      (3.9%), estadísticamente indistinguible del 3.8% esperado por azar.
+    //   2. Efecto práctico: el Δ validado debe superar --min-effect (fracción del
+    //      fitness del padre) — una mutación estadísticamente real pero que aporta
+    //      0.01% del fitness no es una "mejora que la evolución se está perdiendo".
+    struct Conf { int idx; double screenD, valD, se, t, pVal; bool sig, ok; };
     std::vector<Conf> conf;
     int nConfirmed = 0;
     double pConfirmed = 0.0;
@@ -414,6 +494,8 @@ Analyzer::StepOut Analyzer::step(const Parent& p, const Ind& cur, int stepNo, in
                       [](const auto& x, const auto& y) { return x.first > y.first; });
             const int k = std::min<int>(opt.confirm, static_cast<int>(cands.size()));
             const int V = opt.confirmSeeds;
+            const double alphaCorrected = opt.alpha / static_cast<double>(k);
+            const double minEffectAbs   = opt.minEffect * pMean;
             std::vector<const Ind*> cptrs;
             for (int j = 0; j < k; ++j) cptrs.push_back(&nbs[cands[j].second].ind);
 
@@ -427,15 +509,21 @@ Analyzer::StepOut Analyzer::step(const Parent& p, const Ind& cur, int stepNo, in
             std::cout << "  confirmación: " << k << " de " << cands.size() << " candidatos (mayor d del cribado), "
                       << V << " semillas nuevas (~"
                       << static_cast<size_t>(k + 1) * V * static_cast<size_t>(nW) * static_cast<size_t>(hyp.alg_nReps)
-                      << " episodios)\n";
-            std::cout << "    #  operador            d_cribado   d_validado (± ee)   confirmado\n";
+                      << " episodios); alpha=" << opt.alpha << "/" << k << "=" << std::setprecision(5)
+                      << alphaCorrected << std::setprecision(3) << "  min_effect=" << minEffectAbs << " ("
+                      << opt.minEffect * 100.0 << "% de " << pMean << ")\n";
+            std::cout << "    #  operador            d_cribado   d_validado (± ee)     t       p     confirmado\n";
             double sumScreen = 0.0, sumVal = 0.0;
             for (int j = 0; j < k; ++j) {
                 const double mu = meanOf(dv[j]);
                 double ss = 0.0;
                 for (double x : dv[j]) ss += (x - mu) * (x - mu);
                 const double se = std::sqrt(ss / (V - 1)) / std::sqrt(static_cast<double>(V));
-                Conf c{cands[j].second, cands[j].first, mu, se, mu - 2.0 * se > 0.0};
+                const double t  = (se > 0.0) ? mu / se : (mu > 0.0 ? std::numeric_limits<double>::infinity() : 0.0);
+                const double pv = tSurvival(t, static_cast<double>(V - 1));
+                const bool   sig = (mu > 0.0) && (pv < alphaCorrected);
+                const bool   ok  = sig && (mu >= minEffectAbs);
+                Conf c{cands[j].second, cands[j].first, mu, se, t, pv, sig, ok};
                 conf.push_back(c);
                 sumScreen += c.screenD; sumVal += c.valD;
                 const auto& nb = nbs[c.idx];
@@ -453,11 +541,14 @@ Analyzer::StepOut Analyzer::step(const Parent& p, const Ind& cur, int stepNo, in
                     std::cout << "  " << std::setw(3) << j + 1 << "  " << std::left << std::setw(18) << mutDesc(nb)
                               << std::right << std::setw(10) << c.screenD << std::setw(12) << c.valD
                               << " ± " << std::left << std::setw(7) << c.se << std::right
-                              << (c.ok ? "   sí" : "   no") << '\n';
+                              << std::setw(7) << c.t << std::setw(7) << std::setprecision(4) << c.pVal
+                              << std::setprecision(3)
+                              << (c.ok ? "   sí" : (c.sig ? "  sig.,chico" : "   no")) << '\n';
                 confOut << p.label << ',' << p.idx << ',' << stepNo << ',' << j + 1 << ',' << c.idx << ','
                         << mutDesc(nb) << ',' << nb.a << ',' << nb.b << ',' << nb.c << ','
                         << nb.prob << ',' << weight[c.idx] << ',' << c.screenD << ',' << c.valD << ','
-                        << c.se << ',' << V << ',' << (c.ok ? 1 : 0) << '\n';
+                        << c.se << ',' << V << ',' << c.t << ',' << c.pVal << ',' << (c.sig ? 1 : 0) << ','
+                        << (c.ok ? 1 : 0) << '\n';
             }
             if (k > 10) std::cout << "    ... (" << k - 10 << " más en " << opt.outPrefix << "_confirm.csv)\n";
             std::cout << "    d medio: cribado " << sumScreen / k << "  ->  validado " << sumVal / k
@@ -585,7 +676,8 @@ void usage() {
         "       [-p overrides.json] [-o prefix] [--who elite|top:K|idx:N,N|all]\n"
         "       [--seed S] [--max-per-op N] [--noise-seeds R] [--eps E]\n"
         "       [--n2-mids M] [--n2-per-mid S] [--n2-if-stuck]\n"
-        "       [--confirm K] [--confirm-seeds V] [--climb K] [--rng-seed S] [--dry-run]\n";
+        "       [--confirm K] [--confirm-seeds V] [--alpha A] [--min-effect F]\n"
+        "       [--climb K] [--rng-seed S] [--dry-run]\n";
 }
 
 } // namespace
@@ -614,6 +706,8 @@ int main(int argc, char* argv[]) {
             else if (arg == "--climb")        opt.climb       = std::stoi(next());
             else if (arg == "--confirm")      opt.confirm     = std::stoi(next());
             else if (arg == "--confirm-seeds") opt.confirmSeeds = std::stoi(next());
+            else if (arg == "--alpha")        opt.alpha       = std::stod(next());
+            else if (arg == "--min-effect")   opt.minEffect   = std::stod(next());
             else if (arg == "--rng-seed")     opt.rngSeed     = static_cast<uint32_t>(std::stoul(next()));
             else if (arg == "--dry-run")      opt.dryRun      = true;
             else { usage(); return 1; }
@@ -716,7 +810,8 @@ int main(int argc, char* argv[]) {
     parCsv << "label,idx,step,seed,fit_mean,fit_max,n_conn,n_hidden,noise_sd,eps,stored_maxdiff,"
               "n_neighbors,n_better,n_neutral,n_identical,n_worse,n_invalid,stuck,p_better,exp_mutations_to_improve,"
               "n_candidates,n_confirm_tested,n_confirmed,p_confirmed\n";
-    confCsv << "label,idx,step,rank,neighbor,op,a,b,c,prob,weight,screen_d,val_d,val_se,val_seeds,confirmed\n";
+    confCsv << "label,idx,step,rank,neighbor,op,a,b,c,prob,weight,screen_d,val_d,val_se,val_seeds,"
+               "t,p_value,significant,confirmed\n";
     opsCsv << "label,idx,step,op,n,n_better,n_neutral,n_identical,n_worse,n_invalid,best_d_mean,p_op,p_better\n";
 
     Analyzer analyzer(opt, hyp, task, nbCsv, parCsv, opsCsv, confCsv);
