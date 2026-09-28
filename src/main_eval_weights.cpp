@@ -11,7 +11,7 @@
 //   pero llamando a evalEpisodes() y promediando su componente original.
 //
 // La tarea concreta se fija en tiempo de compilación (una de
-// EVAL_TASK_ACROBOT / EVAL_TASK_CAR / EVAL_TASK_DISC_MC) porque cada
+// EVAL_TASK_ACROBOT / EVAL_TASK_CAR / EVAL_TASK_DISC_MC / EVAL_TASK_BIPEDAL) porque cada
 // TaskXxx.cpp instancia símbolos no-inline de rl-tools que chocan (multiple
 // definition) si dos de ellas se linkean en el mismo binario.
 //
@@ -45,8 +45,11 @@
 #elif defined(EVAL_TASK_DISC_MC)
     #include "../include/wann/SnnDiscMCTask.h"
     using EvalTask = wann::SnnDiscMCTask;
+#elif defined(EVAL_TASK_BIPEDAL)
+    #include "../include/wann/SnnBipedalTask.h"
+    using EvalTask = wann::SnnBipedalTask;
 #else
-    #error "Define EVAL_TASK_ACROBOT, EVAL_TASK_CAR o EVAL_TASK_DISC_MC"
+    #error "Define EVAL_TASK_ACROBOT, EVAL_TASK_CAR, EVAL_TASK_DISC_MC o EVAL_TASK_BIPEDAL"
 #endif
 
 #include <iostream>

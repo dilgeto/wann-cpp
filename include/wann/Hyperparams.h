@@ -139,6 +139,18 @@ struct Hyperparams {
     double l2f_init_max_angle            = 1.5707963267948966; // 90 degrees
     double l2f_init_max_linear_velocity  = 1.0;
     double l2f_init_max_angular_velocity = 1.0;
+
+    // --- BipedalWalker (SnnBipedalTask only) ---
+    // true (default): BipedalWalkerHardcore-v3 (pits/stumps/stairs, 2000-step
+    // limit). false: plain BipedalWalker-v3 (gentle random terrain, 1600
+    // steps) — same walker, physics, observation and reward, useful as an
+    // easier curriculum stage.
+    bool   bipedal_hardcore  = true;
+    // Episode step cap. 0 (default) = the environment's own limit (2000
+    // hardcore / 1600 normal). A lower cap cuts evaluation cost, but a
+    // truncated episode can no longer reach the end of the terrain, so
+    // rewards are not comparable with full-length ones (nor with Gymnasium).
+    int    bipedal_max_steps = 0;
 };
 
 namespace detail {
@@ -191,6 +203,8 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.l2f_init_max_angle,            "l2f_init_max_angle");
     get(p.l2f_init_max_linear_velocity,  "l2f_init_max_linear_velocity");
     get(p.l2f_init_max_angular_velocity, "l2f_init_max_angular_velocity");
+    get(p.bipedal_hardcore,              "bipedal_hardcore");
+    get(p.bipedal_max_steps,             "bipedal_max_steps");
 }
 
 // Parse a string that is either a file path or an inline JSON object.

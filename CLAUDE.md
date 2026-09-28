@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 C++17 implementation of Weight Agnostic Neural Networks (WANN, NEAT-style topology
 evolution with shared/scalar weights) driving Spiking Neural Network (SNN) controllers
 on classic-control RL tasks (Acrobot, MountainCar, a racing-car track, Pendulum,
-L2F/Crazyflie). Python scripts around the C++ binaries do hyperparameter screening,
+L2F/Crazyflie, BipedalWalker Hardcore). Python scripts around the C++ binaries do hyperparameter screening,
 statistical comparison (bootstrap CIs) against ANN/PPO baselines, and plotting.
 
 ## Agent policy — never run training
@@ -46,14 +46,14 @@ CSVs/plots.
 
 ### Binaries (in `build/`)
 
-Per task `<X>` in `{acrobot, car, mountain_car, disc_mc, l2f}` (plus a generic
+Per task `<X>` in `{acrobot, car, mountain_car, disc_mc, l2f, bipedal}` (plus a generic
 `wann_snn` for Pendulum), three binaries share one pattern:
 
 - `wann_<X>` — runs WANN evolution (ask/tell loop) with the SNN task as fitness
   function. `./wann_car [-d p/car_snn.json] [-p overrides.json] [-o out_prefix] [-s seed] [-v]`.
   `-p` accepts a file path or an inline JSON string (e.g. `-p '{"maxGen":1}'`).
 - `wann_<X>_eval` — evaluates N episodes with the best saved network.
-- `wann_eval_weights_<X>` (acrobot/car/disc_mc only) — loads a saved network and sweeps
+- `wann_eval_weights_<X>` (acrobot/car/disc_mc/bipedal only) — loads a saved network and sweeps
   its `alg_nVals` shared-weight values across a list of seeds, printing per-seed CSV
   to stdout; see `eval_results/eval_p3_weights.py` for the orchestrating script. `--reward
   shaped|original` and `--episode-detail --weight-index N` control output.
@@ -168,6 +168,18 @@ encoders) — for a manual run, set `ann_nOutput` yourself in the override JSON.
 has not been checked against a population-decoded network — verify before exporting
 one.
 
+**BipedalWalker** (`SnnBipedalTask`, binaries `wann_bipedal*`, config
+`p/bipedal_snn.json`): the Box2D-free C++ port in `../snn-simulator/include/rl/environments/
+bipedal_walker/` (header-only, float32 physics as validated against Box2D there). Hardcore
+by default; `bipedal_hardcore=false` switches to plain BipedalWalker-v3 (same walker/reward,
+easier terrain — a curriculum stage). `bipedal_max_steps` (0 = env limit, 2000/1600) caps
+episode length to cut cost; truncated rewards are not comparable to full-length ones.
+Terrain is resampled per episode from the episode seed. 24 obs → 4 torques; `population_vector`
+needs `ann_nOutput = 4 * snn_neurons_per_var`, `small`/`large` need `ann_nInput = 48` /
+`24 * snn_neurons_per_var` (the constructor throws otherwise; screening scripts set them via
+`TASK_DEFAULTS["bipedal"]["n_actions"]`). With `first_spike` a silent output means zero torque,
+not −1. No `bootstrap_compare_*_auto.py` for it yet (screening_full skips that step).
+
 **Config** (`include/wann/Hyperparams.h`): all algorithm/task/SNN hyperparameters live
 in one struct, loaded from JSON under `p/*.json` (one base config per task, e.g.
 `p/car_snn.json`) and mergeable with a second override JSON (file path or inline
@@ -187,7 +199,7 @@ fitness) — set it per JSON like any other hyperparameter. Currently only wired
 `snn_window_ms`/`snn_tau_exc`/`snn_tau_inh`/`snn_ttfs_threshold` are SNN-simulator
 microparameters (`ms` per env step given to the SNN before decoding an action; AMPA/
 GABA conductance decay time constants; TTFS no-spike cutoff) — **currently wired only
-into `SnnCarTask`** (`snn_window_ms` replaced what used to be the compile-time
+into `SnnCarTask` and `SnnBipedalTask`** (`snn_window_ms` replaced what used to be the compile-time
 `WANN_CAR_SIM_WINDOW_MS` macro; the other `Snn<Task>Task.cpp` files still hardcode
 their own `SIM_WINDOW_MS` and never touch `tau_exc`/`tau_inh`/TTFS threshold at all).
 Do not add `DT` to a search alongside `snn_window_ms` (the FIRST_SPIKE decoder's

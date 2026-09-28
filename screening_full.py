@@ -769,7 +769,7 @@ def main() -> None:
             fixed_overrides["ann_nInput"] = n_input
     if args.decoder:
         fixed_overrides["snn_decoder"] = args.decoder
-        n_output = decoder_nOutput(args.decoder, neurons_per_var=npv)
+        n_output = decoder_nOutput(args.decoder, TASK_DEFAULTS[args.task].get("n_actions", 2), npv)
         if n_output is not None:
             fixed_overrides["ann_nOutput"] = n_output
     if args.early_stop_patience > 0:

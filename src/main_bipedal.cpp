@@ -1,0 +1,222 @@
+// wann_bipedal – WANN evolution + SNN simulator + BipedalWalker(Hardcore)-v3
+// (Box2D-free port in snn-simulator). Hardcore unless bipedal_hardcore=false.
+//
+// Usage:
+//   ./wann_bipedal [-d bipedal_snn.json] [-p overrides.json] [-o prefix] [-s seed] [-v]
+
+#include "../include/wann/DataGatherer.h"
+#include "../include/wann/Hyperparams.h"
+#include "../include/wann/Ind.h"
+#include "../include/wann/Random.h"
+#include "../include/wann/SnnBipedalTask.h"
+#include "../include/wann/SnnDebug.h"
+#include "../include/wann/Wann.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <string>
+#include <vector>
+
+namespace fs = std::filesystem;
+
+static constexpr int REPLAY_INTERVAL = 256;
+
+static std::vector<std::vector<double>>
+evalPop(const std::vector<wann::Ind>& pop,
+        wann::SnnBipedalTask&             task,
+        int                           seed)
+{
+    const int n  = static_cast<int>(pop.size());
+    const int nW = task.numWeightVals();
+
+    // Phase A: build each individual's network topology once. Independent
+    // of weight value (the shared scalar is applied at simulation time),
+    // so this avoids re-parsing the same genome nW times below.
+    std::vector<Network> templates(n);
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < n; ++i)
+        templates[i] = task.buildNetwork(pop[i]);
+
+    // Phase B: evaluate every (individual, weight-value) pair from a cheap
+    // copy of its pre-built template — finer-grained dynamic scheduling so
+    // idle threads keep finding work near the end of a generation.
+    std::vector<std::vector<double>> reward(n, std::vector<double>(nW, 0.0));
+    const int total = n * nW;
+    #pragma omp parallel for schedule(dynamic)
+    for (int idx = 0; idx < total; ++idx) {
+        const int i  = idx / nW;
+        const int wi = idx % nW;
+        reward[i][wi] = task.evaluateWeight(templates[i], wi, seed * 10000 + i);
+    }
+
+    return reward;
+}
+
+int main(int argc, char* argv[]) {
+    std::string defaultHyp = "p/bipedal_snn.json";
+    std::string overrideHyp;
+    std::string outPrefix  = "snn_bipedal";
+    uint32_t    seed       = 42;
+    bool        debugLog   = false;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if      (arg == "-d" && i+1 < argc) { defaultHyp  = argv[++i]; }
+        else if (arg == "-p" && i+1 < argc) { overrideHyp = argv[++i]; }
+        else if (arg == "-o" && i+1 < argc) { outPrefix   = argv[++i]; }
+        else if (arg == "-s" && i+1 < argc) { seed = static_cast<uint32_t>(std::atoi(argv[++i])); }
+        else if (arg == "-v")               { debugLog = true; }
+        else {
+            std::cerr << "Usage: wann_bipedal [-d default.json] [-p overrides.json]"
+                         " [-o prefix] [-s seed] [-v]\n";
+            return 1;
+        }
+    }
+
+    wann::Hyperparams hyp;
+    try {
+        hyp = wann::loadHyp(defaultHyp);
+        if (!overrideHyp.empty()) wann::updateHyp(hyp, overrideHyp);
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading hyperparameters: " << e.what() << '\n';
+        return 1;
+    }
+
+    std::cout << "Task: SNN BipedalWalker"
+              << (hyp.bipedal_hardcore ? "Hardcore" : "")
+              << "  nInput="  << hyp.ann_nInput
+              << "  nOutput=" << hyp.ann_nOutput
+              << "  popSize=" << hyp.popSize
+              << "  maxGen="  << hyp.maxGen << '\n';
+
+    wann::seedRng(seed);
+    fs::create_directories("log");
+
+    const std::string replayDir = "log/" + outPrefix + "_replay";
+    fs::create_directories(replayDir);
+
+    std::ofstream dbgFile;
+    if (debugLog) {
+        std::string dbgPath = "log/" + outPrefix + "_debug.log";
+        dbgFile.open(dbgPath);
+        if (!dbgFile)
+            std::cerr << "Warning: cannot open debug log " << dbgPath << '\n';
+        else
+            std::cout << "Debug log: " << dbgPath << '\n';
+    }
+
+    wann::SnnBipedalTask   task(hyp);
+    wann::Wann         alg(hyp);
+    wann::DataGatherer data(outPrefix, hyp);
+
+    using Clock = std::chrono::steady_clock;
+    auto t_start = Clock::now();
+
+    // Early stopping: stop once early_stop_patience generations pass with no
+    // new fitTop record (running-best elite fitness). 0 = disabled.
+    double bestFitnessSoFar   = -std::numeric_limits<double>::infinity();
+    int    gensSinceImprove   = 0;
+    int    lastGen            = hyp.maxGen - 1;
+    bool   stoppedEarly       = false;
+
+    for (int gen = 0; gen < hyp.maxGen; ++gen) {
+        auto& pop    = alg.ask();
+        auto  reward = evalPop(pop, task, static_cast<int>(seed) + gen);
+        alg.tell(reward);
+
+        // Find elite by fitness.
+        int eliteIdx = static_cast<int>(
+            std::max_element(pop.begin(), pop.end(),
+                [](const wann::Ind& a, const wann::Ind& b){ return a.fitness < b.fitness; })
+            - pop.begin());
+
+        const auto& rw = reward[eliteIdx];
+        int bestWi = static_cast<int>(
+            std::max_element(rw.begin(), rw.end()) - rw.begin());
+
+        data.setBestWi(bestWi);
+        data.gatherData(pop);
+        data.gatherMutStats(alg.lastMutStats());
+        std::cout << gen << "\t - \t" << data.display() << '\n';
+
+        bool earlyStop = false;
+        if (hyp.early_stop_patience > 0) {
+            double eliteFitness = pop[eliteIdx].fitness;
+            if (eliteFitness > bestFitnessSoFar) {
+                bestFitnessSoFar = eliteFitness;
+                gensSinceImprove = 0;
+            } else {
+                ++gensSinceImprove;
+            }
+            if (gensSinceImprove >= hyp.early_stop_patience) {
+                earlyStop    = true;
+                stoppedEarly = true;
+                lastGen      = gen;
+                std::cout << "Early stopping: sin mejora de fitTop en "
+                          << hyp.early_stop_patience << " generaciones "
+                          << "(gen " << gen << "/" << hyp.maxGen - 1 << ")\n";
+            }
+        }
+
+        if (gen % hyp.save_mod == 0 || earlyStop) {
+            data.save(gen);
+            data.savePareto(pop, gen);
+            if (dbgFile) {
+                dbgFile << "========== Generation " << gen << " ==========\n";
+                wann::debugSnn(pop[0], dbgFile);
+                dbgFile.flush();
+            }
+        }
+
+        // Export elite trajectory periodically for replay visualization.
+        if ((gen % REPLAY_INTERVAL == 0 || gen == hyp.maxGen - 1 || earlyStop)
+                && !pop[eliteIdx].wVec.empty()) {
+
+            std::ostringstream fname;
+            fname << replayDir << "/gen_"
+                  << std::setw(4) << std::setfill('0') << gen << ".csv";
+            try {
+                // evalSeed must match what evalPop() used for this individual.
+                int evalSeed = (static_cast<int>(seed) + gen) * 10000 + eliteIdx;
+                task.exportTrajectory(pop[eliteIdx].wVec, pop[eliteIdx].aVec,
+                                      bestWi, evalSeed,
+                                      fname.str());
+            } catch (const std::exception& e) {
+                std::cerr << "Warning: no se pudo guardar replay gen " << gen
+                          << ": " << e.what() << '\n';
+            }
+        }
+
+        if (earlyStop) break;
+    }
+
+    int    gensRun = lastGen + 1;
+    double total_s = std::chrono::duration<double>(Clock::now() - t_start).count();
+    double per_gen = total_s / gensRun;
+
+    std::ofstream tlog("log/" + outPrefix + "_time.log");
+    tlog << std::fixed << std::setprecision(3)
+         << "total_s           " << total_s                                 << '\n'
+         << "per_gen_s         " << per_gen                                 << '\n'
+         << "maxGen            " << hyp.maxGen                              << '\n'
+         << "gensRun           " << gensRun                                 << '\n'
+         << "popSize           " << hyp.popSize                             << '\n'
+         << "early_stopped     " << (stoppedEarly ? "true" : "false")       << '\n'
+         << "early_stop_gen    " << (stoppedEarly ? lastGen : -1)           << '\n'
+         << "early_stop_patience " << hyp.early_stop_patience               << '\n';
+    std::cout << "Time: " << total_s << " s  ("
+              << per_gen << " s/gen)\n";
+    if (stoppedEarly)
+        std::cout << "Early stopping activo: se detuvo en la generación "
+                  << lastGen << " de " << hyp.maxGen - 1 << " máximas.\n";
+
+    data.save();
+    std::cout << "Done. Results written to log/" << outPrefix << "_*\n";
+    return 0;
+}

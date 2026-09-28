@@ -419,3 +419,48 @@ target_link_libraries(wann_eval_weights_disc_mc PRIVATE
     snn_core_imp
     rl_tools_iface
     OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
+# BipedalWalker(Hardcore)-v3 – port a C++ sin Box2D que vive en snn-simulator
+# (include/rl/environments/bipedal_walker/, solo cabeceras, ya cubierto por las
+# include dirs de snn_*_imp). Hardcore por defecto; bipedal_hardcore=false
+# cambia al modo normal.
+#   wann_bipedal               – entrenamiento WANN
+#   wann_bipedal_eval          – evalúa N episodios con la mejor red
+#   wann_eval_weights_bipedal  – barrido de pesos compartidos por seed
+# ---------------------------------------------------------------------------
+add_executable(wann_bipedal
+    src/main_bipedal.cpp
+    src/SnnBipedalTask.cpp)
+target_include_directories(wann_bipedal PRIVATE include)
+target_link_libraries(wann_bipedal PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
+
+add_executable(wann_bipedal_eval
+    src/main_eval_bipedal.cpp
+    src/SnnBipedalTask.cpp)
+target_include_directories(wann_bipedal_eval PRIVATE include)
+target_link_libraries(wann_bipedal_eval PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface)
+
+add_executable(wann_eval_weights_bipedal
+    src/main_eval_weights.cpp
+    src/SnnBipedalTask.cpp)
+target_compile_definitions(wann_eval_weights_bipedal PRIVATE EVAL_TASK_BIPEDAL)
+target_include_directories(wann_eval_weights_bipedal PRIVATE include)
+target_link_libraries(wann_eval_weights_bipedal PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)

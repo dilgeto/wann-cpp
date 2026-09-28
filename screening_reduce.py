@@ -129,6 +129,17 @@ TASK_DEFAULTS: dict[str, dict] = {
             "maxGen": 64, "popSize": 64, "alg_nVals": 4,
             "alg_nReps": 2, "bestReps": 5,
         },
+    },    "bipedal": {
+        # BipedalWalkerHardcore-v3 (bipedal_hardcore=false in the base config
+        # switches to plain BipedalWalker-v3).
+        "executable":  "./build/wann_bipedal",
+        "base_config": "p/bipedal_snn.json",
+        "n_obs": 24,
+        "n_actions": 4,   # hip/knee torques of each leg (population_vector)
+        "fidelity": {
+            "maxGen": 128, "popSize": 96, "alg_nVals": 4,
+            "alg_nReps": 2, "bestReps": 5,
+        },
     },
 }
 
@@ -184,7 +195,8 @@ def decoder_nOutput(decoder: str | None, n_actions: int = 2,
       population_vector : neurons_per_var per action → n_actions * neurons_per_var
       others             : 1 neuron per action        → no override needed
 
-    SnnCarTask-only (n_actions=2: throttle, steering) as of now. Pass
+    Supported by SnnCarTask (n_actions=2: throttle, steering) and
+    SnnBipedalTask (n_actions=4) — take it from TASK_DEFAULTS[task]. Pass
     neurons_per_var=read_neurons_per_var(base_config) — the default here is
     only a fallback for callers that don't have a base_config handy.
     """
@@ -660,7 +672,7 @@ def cmd_full(
             fixed_overrides["ann_nInput"] = n_input
     if decoder:
         fixed_overrides["snn_decoder"] = decoder
-        n_output = decoder_nOutput(decoder, neurons_per_var=npv)
+        n_output = decoder_nOutput(decoder, TASK_DEFAULTS[task].get("n_actions", 2), npv)
         if n_output is not None:
             fixed_overrides["ann_nOutput"] = n_output
 
