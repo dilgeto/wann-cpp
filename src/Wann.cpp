@@ -80,10 +80,9 @@ void Wann::tell(const std::vector<std::vector<double>>& reward) {
 }
 
 // =========================================================================
-// initPop
-// Mirrors Python Wann::initPop exactly.
+// baseGenome / randomBaseIndividual
 // =========================================================================
-void Wann::initPop() {
+std::pair<std::vector<NodeGene>, std::vector<ConnGene>> Wann::baseGenome() const {
     // ----- Build base nodes -----
     //   ID=0          : bias (type 4)
     //   ID=1..nIn     : inputs (type 1)
@@ -92,42 +91,63 @@ void Wann::initPop() {
     const int nOut = p.ann_nOutput;
     const int nNodes = 1 + nIn + nOut;
 
-    std::vector<NodeGene> baseNodes;
-    baseNodes.reserve(nNodes);
-    baseNodes.push_back({0, 4, p.ann_initAct});              // bias
+    std::vector<NodeGene> nodes;
+    nodes.reserve(nNodes);
+    nodes.push_back({0, 4, p.ann_initAct});              // bias
     for (int i = 1; i <= nIn;            ++i)
-        baseNodes.push_back({i, 1, p.ann_initAct});          // inputs
+        nodes.push_back({i, 1, p.ann_initAct});          // inputs
     for (int i = nIn+1; i <= nIn+nOut;   ++i)
-        baseNodes.push_back({i, 2, p.ann_initAct});          // outputs
+        nodes.push_back({i, 2, p.ann_initAct});          // outputs
 
     // ----- Build base connections: all (bias+inputs) → outputs -----
     // Innovation IDs start at 0.
-    std::vector<ConnGene> baseConns;
+    std::vector<ConnGene> conns;
     int innovIdx = 0;
     for (int src = 0; src <= nIn; ++src)           // 0..nIn (bias + inputs)
         for (int dst = nIn+1; dst <= nIn+nOut; ++dst)
-            baseConns.push_back({innovIdx++, src, dst, 1.0, true});
+            conns.push_back({innovIdx++, src, dst, 1.0, true});
 
+    return {std::move(nodes), std::move(conns)};
+}
+
+Ind Wann::randomBaseIndividual() {
+    auto [nodes, conns] = baseGenome();
+    // Randomise enable flags; weight value irrelevant (WANN uses shared w).
+    for (auto& c : conns) {
+        c.weight  = 1.0;
+        c.enabled = randDouble() < p.prob_initEnable;
+    }
+    Ind ind(conns, nodes);
+    ind.express();
+    ind.birth = gen;
+    return ind;
+}
+
+// =========================================================================
+// initPop
+// Mirrors Python Wann::initPop exactly.
+// =========================================================================
+void Wann::initPop() {
     // ----- Create population -----
     pop.clear();
     pop.reserve(p.popSize);
-    for (int i = 0; i < p.popSize; ++i) {
-        Ind ind(baseConns, baseNodes);
-        // Randomise enable flags; weight value irrelevant (WANN uses shared w).
-        for (auto& c : ind.conns) {
-            c.weight  = 1.0;
-            c.enabled = randDouble() < p.prob_initEnable;
-        }
-        ind.express();
-        ind.birth = 0;
-        pop.push_back(std::move(ind));
-    }
+    for (int i = 0; i < p.popSize; ++i)
+        pop.push_back(randomBaseIndividual());
 
     // ----- Build initial innovation record -----
+    auto [baseNodes, baseConns] = baseGenome();
+    (void)baseNodes;
     innov.clear();
     innov.reserve(static_cast<int>(baseConns.size()));
     for (const auto& c : baseConns)
         innov.push_back({c.innov, c.src, c.dst, -1, 0});
+
+    // ----- Random-immigrants bookkeeping (see Hyperparams.h) -----
+    if (p.immigrant_min_founders > 0) {
+        founderId_.assign(p.popSize, 0);
+        std::iota(founderId_.begin(), founderId_.end(), 0);
+        nextFounderId_ = p.popSize;
+    }
 }
 
 // =========================================================================
@@ -183,6 +203,17 @@ void Wann::evolvePop() {
         for (auto& c : children) newPop.push_back(std::move(c));
     }
     pop = std::move(newPop);
+
+    // Propagate founder ids to the new population (see Hyperparams.h):
+    // inherited from the parent, or freshly minted for a random immigrant
+    // (op == -2, has no parent). Mirrors diagnostico/diag_lib.py's founders().
+    if (p.immigrant_min_founders > 0) {
+        std::vector<int> newFounderId(lineage_.size());
+        for (std::size_t i = 0; i < lineage_.size(); ++i)
+            newFounderId[i] = (lineage_[i].op == -2) ? nextFounderId_++
+                                                      : founderId_[lineage_[i].parent];
+        founderId_ = std::move(newFounderId);
+    }
 }
 
 // =========================================================================
@@ -223,6 +254,18 @@ std::vector<Ind> Wann::recombine(const Species& sp) {
         lineage_.push_back(info);
     }
 
+    // Random immigrants (see Hyperparams.h): while the population's current
+    // founder count is below immigrant_min_founders, replace this fraction of
+    // non-elite children with brand-new random individuals instead of
+    // tournament+mutation offspring. Both hyperparameters default to 0, and
+    // the && short-circuits before the std::unordered_set below is ever
+    // built, so this costs nothing and draws no RNG when off.
+    bool immigrantsActive = false;
+    if (p.immigrant_fraction > 0.0 && p.immigrant_min_founders > 0) {
+        std::unordered_set<int> distinctFounders(founderId_.begin(), founderId_.end());
+        immigrantsActive = static_cast<int>(distinctFounders.size()) < p.immigrant_min_founders;
+    }
+
     // Tournament selection: pick best index from a random set.
     // Since members are sorted by rank (ascending = better), lower index = fitter.
     auto tournament = [&]() -> int {
@@ -233,6 +276,14 @@ std::vector<Ind> Wann::recombine(const Species& sp) {
     };
 
     for (int i = 0; i < nOffspring; ++i) {
+        if (immigrantsActive && randDouble() < p.immigrant_fraction) {
+            children.push_back(randomBaseIndividual());
+            ChildInfo info;                 // parent = parentB = -1, op = -2: no parent
+            info.op = -2;
+            lineage_.push_back(info);
+            continue;
+        }
+
         int pa = tournament();
         int pb = tournament();
         if (pa > pb) std::swap(pa, pb);  // pa = more fit (lower index)

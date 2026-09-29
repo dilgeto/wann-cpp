@@ -59,6 +59,30 @@ struct Hyperparams {
     // without it. Currently only wired into src/main_car.cpp.
     int    snapshot_interval   = 0;
 
+    // --- random immigrants (premature-convergence countermeasure) ---
+    // While the current population's number of distinct founders (gen-0
+    // ancestors, plus any immigrant introduced since — see Wann::evolvePop)
+    // is below immigrant_min_founders, each generation replaces this fraction
+    // of non-elite offspring with brand-new random individuals (same
+    // construction as gen 0, via Wann::randomBaseIndividual) instead of
+    // tournament+mutation children. Targets what diagnostico/'s lineage
+    // analysis measured: a single gen-0 founder dominates the whole
+    // population by a median of generation 14 (of 1024), well before the
+    // window (~gen 25-100) where most real fitness gains happen — and that
+    // founder's own rank in generation 0 does not predict the final result,
+    // consistent with premature convergence rather than early merit. This is
+    // Grefenstette's "random immigrants" (1992); the founder-count trigger
+    // (rather than a fixed generation cutoff) is specific to this project.
+    // Both default to 0 = disabled: the coin flip deciding "is this child an
+    // immigrant" is skipped entirely (never evaluated and discarded) and the
+    // founder-count bookkeeping never runs, so genomes, fitness and RNG usage
+    // are byte-for-byte identical to before these existed. Unlike
+    // early_stop_patience/snapshot_interval, this lives in Wann.cpp itself
+    // (recombine/evolvePop), so it applies to every wann_<task> binary, not
+    // just wann_car. See CLAUDE.md's "Stagnation diagnosis" section, Option E.
+    double immigrant_fraction     = 0.0;
+    int    immigrant_min_founders = 0;
+
     // --- task-specific (set in JSON or programmatically) ---
     int    ann_nInput         = 5;
     int    ann_nOutput        = 1;
@@ -182,6 +206,8 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.bestReps,               "bestReps");
     get(p.early_stop_patience,    "early_stop_patience");
     get(p.snapshot_interval,      "snapshot_interval");
+    get(p.immigrant_fraction,     "immigrant_fraction");
+    get(p.immigrant_min_founders, "immigrant_min_founders");
     get(p.ann_nInput,             "ann_nInput");
     get(p.ann_nOutput,            "ann_nOutput");
     get(p.ann_initAct,            "ann_initAct");

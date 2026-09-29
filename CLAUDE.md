@@ -287,3 +287,129 @@ errors in the code, remind them of these and pick this up again.
    `nConn` (drives the 1/nConn objective in `probMoo`): correcting the matrix lowers it
    and slightly changes selection. `genomeFromNetFile` (`GenomeIO.h`) inherits the same
    limitation.
+
+## Stagnation diagnosis and candidate interventions (analysed, not implemented)
+
+`diagnostico/RESUMEN_DIAGNOSTICO.md` documents a full diagnosis (linaje/coalescencia,
+predicción temprana, control positivo, neutralidad) of why `wann_car` training stagnates
+and depends so heavily on the seed, on 30 runs of the `car_ttfs_first_spike`/`rank02`
+config. Headline finding: by the late generations ~89% of single-mutation neighbours
+(N1, via `wann_car_neighborhood`) don't change behaviour at all, yet the genome keeps
+growing regardless — inert structural accumulation, not a search or detection problem
+(verified with a positive control: the same tool *does* find real improving neighbours
+in early generations, where the run's outcome is actually still being decided).
+
+A first candidate fix (Option A: disable, at a configurable interval, every enabled
+connection with no structural path from an input to an output — pure graph reachability,
+no simulation) was implemented, verified correct and fully toggleable, then **reverted**
+(2026-09-28, not in the repo) after testing against ~87,000 real evolved connections
+(4 population snapshots up to gen 1023) and fresh training runs up to 300 generations:
+it never found anything to prune. Reasoned from the operators themselves and confirmed
+empirically: `mutAddNode` always inserts its new node into an already-live path, and no
+operator disables a previously-live edge except that same self-preserving split — so a
+connection that's enabled but structurally disconnected from the input-output flow
+appears to be unreachable as a genome state under `Wann`'s current 5 operators. The
+~89% neutrality measured is real but *behavioural* (spiking dynamics / decoder
+saturation / timing), not structural, and needs simulation to detect — which is exactly
+what Options B and C below would do differently.
+
+One further candidate intervention was designed but **not implemented yet** — pick this
+up deliberately, behind a hyperparameter that defaults to current behaviour, same
+convention as `early_stop_patience`/`snapshot_interval`:
+
+- **Option B — DISCARDED (2026-09-29), not just "more invasive": proven a no-op.**
+  The idea was to change what `probMoo`'s `1/nConn` objective (`src/Wann.cpp`) counts —
+  only connections on some input-to-output path, instead of every enabled connection —
+  to push selection toward less structural bloat. It relies on the exact same
+  reachability definition as Option A. Since Option A's empirical test already showed
+  that under `Wann`'s 5 operators an enabled connection is *never* structurally
+  unreachable (0 of ~87,000 real evolved connections), "connections on an input-to-output
+  path" and "every enabled connection" are the same set for any genome this codebase can
+  produce — so the two objectives would compute the exact same `nConn` value, always.
+  Redefining it this way cannot change a single selection decision Wann ever makes; it is
+  not a smaller/weaker version of Option A, it is mathematically identical to not
+  implementing it at all. Reviving this would need a genuinely different notion of "live"
+  (e.g. weighted by behavioural redundancy — see Option C), not a structural one.
+- **Option C — prune behaviourally-neutral connections.** Periodically (e.g. every N
+  generations), for each individual, test whether disabling a connection changes fitness
+  under simulation (paired seed, like `wann_car_neighborhood`'s N1 screening), and disable
+  ones that don't. Targets the *actual* neutrality measured (behavioural, not structural),
+  unlike A. Costs extra simulation per generation — cost/benefit not yet estimated.
+
+A third idea (Option D, from the same discussion, distinct from B/C): instead of trying
+to reduce stagnation, detect it cheaply and reliably. `early_stop_patience` currently
+stops training after a fixed K generations with no new `fitTop` record, with no evidence
+that the plateau is a genuine local optimum rather than bad luck — real median stagnation
+length was ~440 generations (of 1023) across the 30 diagnosed runs. On triggering the
+existing patience condition, run a cheap subset-of-N1 check (`wann_car_neighborhood
+--max-per-op N --confirm ...`, e.g. ~30 neighbours of the elite, confirmed) instead of
+stopping outright: if nothing confirms, stop with actual evidence it's a true local
+optimum; if something does, keep training. Estimated overhead: ~0.2% of total training
+compute (a ~1,000-episode check every ~50 generations against a ~17,000-episode/generation
+run). Doesn't create new fitness — it only saves the compute otherwise spent waiting out
+a confirmed-empty plateau.
+
+Update (2026-09-29): checked the gap (generations 150/200/250/300/350, `log/
+diag_neighborhood_mid/`) that was missing between the dense-signal window (25-100) and
+the empty one (400/1023). It's not a clean cutoff, it's a regime change: dense,
+strongly-significant confirmations through ~gen 100, then from 150 on confirmations
+become rare (5 of 42 run×generation combinations in the alto group had any) and, where
+they exist, small (0.34%-2.8% of the parent's fitness) — never absent, never large.
+A stopping-check at, say, every 50 generations past gen ~100-150 would correctly find
+"nothing" most of the time and occasionally a real small candidate — see
+`diagnostico/RESUMEN_DIAGNOSTICO.md` §4 for the numbers (includes a concrete case:
+`seed22`, which only escapes its plateau around gen ~680, already had confirmed
+~0.35%-effect neighbours at gen 150 that evolution took hundreds of generations to
+exploit).
+
+- **Option E — random immigrants, IMPLEMENTED (2026-09-29), not yet trained/tested.**
+  Distinct from B/C/D: doesn't rescue an already-stuck lineage (a fresh random
+  individual competing against an already-evolved network with 50+ hidden nodes would
+  essentially never win a tournament — pointless once a run has already stagnated),
+  it targets a different local optimum: which of the 480 starting genomes wins the
+  premature-convergence race. Measured: a single generation-0 founder dominates the
+  whole population by a median of generation 14 (`diagnostico/lineage_analysis.py`),
+  and that founder's own rank in generation 0 does NOT predict the final result (ρ ≈
+  0.03, not significant) — consistent with an early, largely arbitrary bottleneck,
+  not early merit. This is Grefenstette's "random immigrants" (1992), a known
+  countermeasure for premature convergence (see also ALPS, Hornby 2006); the
+  founder-count trigger (adaptive, not a fixed generation cutoff) is specific to this
+  project, reusing the same founder-counting logic `diagnostico/diag_lib.py`'s
+  `founders()` already computed post-hoc, now live in `Wann.cpp`.
+
+  Mechanism: `immigrant_fraction` (double) and `immigrant_min_founders` (int), both 0
+  by default. While the population's current distinct-founder count is below
+  `immigrant_min_founders`, each generation replaces `immigrant_fraction` of the
+  non-elite offspring with brand-new random individuals (`Wann::randomBaseIndividual`,
+  the same construction as generation 0) instead of tournament+mutation children —
+  recorded in the lineage with `op == -2`, `parent == parentB == -1` (no parent).
+  Lives in `Wann.cpp`/`Wann.h` itself (`recombine`/`evolvePop`, plus the extracted
+  `baseGenome`/`randomBaseIndividual`), not in `main_car.cpp`, so — unlike
+  `early_stop_patience`/`snapshot_interval`/the reverted Option A — it applies to
+  every `wann_<task>` binary, not just `wann_car`. Essentially free in compute:
+  immigrants are evaluated exactly like any other individual in that generation's
+  `evalPop()`, so this never adds simulated episodes, only changes which genomes
+  occupy some population slots.
+
+  Verified: compiles clean across every target; with both hyperparameters at 0 (or
+  omitted), the RNG draw deciding "is this child an immigrant" and the founder-count
+  bookkeeping are both skipped entirely (never evaluated-and-discarded), so `stats.out`
+  for a fixed seed is byte-for-byte identical to before this existed. `diag_lib.py`'s
+  `founders()` was updated to recognise `op == -2` as a fresh founder rather than
+  mis-indexing `parent == -1` as "the last individual of the previous generation"
+  (verified against a hand-built synthetic lineage with an immigrant) — `mrca_gen()`
+  has the same latent bug, **not yet fixed**, don't trust it on a run with immigrants
+  enabled until it is (immigrant-free runs, i.e. everything diagnosed so far, are
+  unaffected either way).
+
+  Not verified: whether it actually changes training outcomes. That needs a real
+  multi-seed training comparison (with vs. without), which — per the project's agent
+  policy — the user runs, not the agent. Two things left unresolved even before that:
+  sensible defaults for `immigrant_fraction`/`immigrant_min_founders` were discussed
+  (~0.05-0.1 / ~20-50) but not settled or tested; and there's a live, unresolved
+  alternative hypothesis this design does not itself distinguish from "premature
+  convergence wastes a good starting bet" — that early lineages are roughly
+  fungible and the real bottleneck is something that happens *after* arriving at the
+  productive window (gen ~25-100) regardless of which lineage gets there, in which
+  case giving the population more early candidates to choose from wouldn't move the
+  outcome much. Only the real experiment adjudicates between these.

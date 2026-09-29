@@ -1,6 +1,7 @@
 #pragma once
 #include "Hyperparams.h"
 #include "Ind.h"
+#include <utility>
 #include <vector>
 
 namespace wann {
@@ -24,8 +25,10 @@ struct MutStats {
 // `parentB` is the less-fit parent when crossover was used, else -1.
 // `op` is the operator picked by topoMutate, using the MutStats order
 // [addConn, addNode, enable, mutAct, toggleExcitatory]; -1 for an elite
-// copied unchanged (and at generation 0). `applied` = the operator really
-// changed the genome.
+// copied unchanged (and at generation 0); -2 for a random immigrant (see
+// immigrant_fraction/immigrant_min_founders in Hyperparams.h) — parent/parentB
+// are -1 too in that case (it has none). `applied` = the operator really
+// changed the genome (always false for an elite or an immigrant).
 struct ChildInfo {
     int  parent  = -1;
     int  parentB = -1;
@@ -76,6 +79,15 @@ private:
     MutStats mutStats_;
     std::vector<ChildInfo> lineage_;
 
+    // Random-immigrants bookkeeping (see immigrant_fraction/immigrant_min_founders
+    // in Hyperparams.h). founderId_[i] = which original founder pop[i] descends
+    // from: 0..popSize-1 for a generation-0 individual, or a fresh id
+    // (>= popSize, assigned by nextFounderId_) for a random immigrant and
+    // everything that later descends from it. Left empty/unused whenever
+    // immigrant_min_founders == 0.
+    std::vector<int> founderId_;
+    int              nextFounderId_ = 0;
+
     // Minimal species container (WANN uses a single species).
     struct Species {
         int         seedIdx    = 0;    // index into pop
@@ -91,6 +103,21 @@ private:
 
     // Returns children produced from one species; updates innov.
     std::vector<Ind> recombine(const Species& sp);
+
+    // The fixed template every gen-0 individual (and later random immigrant)
+    // starts from: bias/inputs wired directly to every output, one gene per
+    // pair, innovation numbers 0..(nIn+1)*nOut-1 in a fixed order. `enabled`
+    // in the returned ConnGenes is a placeholder (always true); an actual
+    // instance randomises it independently (see randomBaseIndividual).
+    std::pair<std::vector<NodeGene>, std::vector<ConnGene>> baseGenome() const;
+
+    // One individual built from baseGenome(), each connection independently
+    // enabled with probability prob_initEnable. Used by initPop() for every
+    // member of the starting population, and by recombine() for random
+    // immigrants — an immigrant's genes share gen-0's innovation numbers by
+    // construction, so NEAT-style tracking treats them as the same
+    // structural genes as everyone else's, not new ones.
+    Ind randomBaseIndividual();
 
     Ind    crossover   (const Ind& parentA, const Ind& parentB);
     // Returns {operator index 0..4 (MutStats order), whether it changed the genome}.
