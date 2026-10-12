@@ -133,6 +133,32 @@ double phi(const Env::State& s) {
     return sum / Env::PARAMETERS::ARENA_WIDTH;
 }
 
+// Ordinary (not potential-based — this deliberately changes what counts as
+// optimal, it's not just a learning aid) per-step penalty for driving
+// opposite to one's own heading. The environment's reward only looks at
+// x-position, so an agent that spawns/turns to face -x and then applies
+// reverse (negative linear) acceleration crosses the arena just as
+// effectively while its forward-facing LIDAR looks away from where it's
+// actually going — observed in replays after the WEIGHT_VALS/shaping fix.
+// velocity·heading (dot product with the unit heading vector) is positive
+// when moving the way you're facing, negative in reverse; only the negative
+// part is penalized, scaled by how fast. Gated on the agent being alive in
+// `state` (before the step) — next_state freezes a dead agent's velocity in
+// place, so without the gate this would keep charging the same penalty
+// every remaining step after death, increasingly punishing early deaths for
+// a reason unrelated to the behavior being targeted.
+double reversePenalty(const Env::State& state, const Env::State& next_state) {
+    double total = 0.0;
+    for (int i = 0; i < wann::SnnBottleneckTask::N_AGENTS; ++i) {
+        if (state.agent_states[i].dead) continue;
+        const auto& a = next_state.agent_states[i];
+        const double forward = a.velocity[0] * std::cos(a.orientation)
+                              + a.velocity[1] * std::sin(a.orientation);
+        total += std::max(0.0, -forward);
+    }
+    return total;
+}
+
 // Classical population vector (same as SnnCarTask/SnnBipedalTask): neuron k
 // of a `count`-sized population has a fixed preferred value uniformly spaced
 // in [-1,1]; the action is the spike-count-weighted average. No spikes → 0.0.
@@ -211,6 +237,7 @@ SnnBottleneckTask::SnnBottleneckTask(const Hyperparams& hyp)
     , tauInh_(hyp.snn_tau_inh)
     , ttfsThreshold_(hyp.snn_ttfs_threshold)
     , shapingScale_(hyp.reward_shaping_scale)
+    , reversePenaltyScale_(hyp.bottleneck_reverse_penalty_scale)
 {
     const int expectedOut = (decoder_ == SnnDecoder::POPULATION_VECTOR)
                             ? PER_AGENT_ACTION_DIM * neuronsPerVar_ : PER_AGENT_ACTION_DIM;
@@ -450,6 +477,8 @@ std::pair<double,double> SnnBottleneckTask::runEpisode(const Network& templateNe
         total_shaped   += reward;
         if (shapingScale_ != 0.0)
             total_shaped += shapingScale_ * (phi(next_state) - phi(state));
+        if (reversePenaltyScale_ != 0.0)
+            total_shaped -= reversePenaltyScale_ * reversePenalty(state, next_state);
 
         if (csv) *csv << ',' << reward << '\n';
 

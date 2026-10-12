@@ -31,5 +31,6 @@
     "snn_tau_exc":              5.0,
     "snn_tau_inh":              10.0,
     "snn_ttfs_threshold":       1e-9,
-    "reward_shaping_scale":     2.0
+    "reward_shaping_scale":     2.0,
+    "bottleneck_reverse_penalty_scale": 0.02
 }

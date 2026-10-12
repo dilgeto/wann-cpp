@@ -63,6 +63,14 @@ namespace wann {
 // crossing), while any real movement risks the -1 death penalty with zero
 // partial credit for progress — so WANN had no gradient to climb out of
 // that sink. The shaping term below gives that gradient.
+//
+// bottleneck_reverse_penalty_scale addresses a follow-up failure mode seen
+// once agents started moving: since the reward only cares about
+// x-position, nothing stops an agent from facing away from +x and driving
+// in reverse to get there — which "works" but means its forward-facing
+// LIDAR never looks where it's actually going, making it far more
+// collision-prone than it needs to be. See reversePenalty() in
+// SnnBottleneckTask.cpp.
 class SnnBottleneckTask : public ITask {
 public:
     static constexpr int    N_WEIGHTS           = 6;
@@ -96,7 +104,9 @@ public:
 
     // Run nEpisodes with the given shared weight.
     // Returns {shaped_rewards, original_rewards}; shaped adds a potential-based
-    // bonus for forward (+x) progress on top of the environment's own reward.
+    // bonus for forward (+x) progress and, if enabled, a penalty for driving
+    // in reverse relative to one's own heading, on top of the environment's
+    // own reward.
     std::pair<std::vector<double>,std::vector<double>>
     evalEpisodes(const std::vector<double>& wVec,
                  const std::vector<int>&    aVec,
@@ -126,6 +136,7 @@ private:
     double     tauInh_;
     double     ttfsThreshold_;
     double     shapingScale_;
+    double     reversePenaltyScale_;
 
     static NeuronType wannActToNeuronType(int actId);
 

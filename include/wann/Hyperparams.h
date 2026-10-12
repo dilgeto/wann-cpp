@@ -175,6 +175,18 @@ struct Hyperparams {
     // truncated episode can no longer reach the end of the terrain, so
     // rewards are not comparable with full-length ones (nor with Gymnasium).
     int    bipedal_max_steps = 0;
+
+    // --- Bottleneck (SnnBottleneckTask only) ---
+    // Per-step penalty for moving opposite to one's own heading (negative
+    // velocity·heading dot product), scaled by how fast; 0 (default) =
+    // disabled. The environment's own reward only cares about x-position,
+    // not orientation, so nothing stops an agent from reaching the far side
+    // by driving in reverse while facing some other direction — which
+    // works, but means its forward-facing LIDAR never actually looks where
+    // it is going. This penalty makes facing your direction of travel
+    // (so LIDAR is useful for collision avoidance) part of the objective
+    // instead of an accident of topology.
+    double bottleneck_reverse_penalty_scale = 0.0;
 };
 
 namespace detail {
@@ -231,6 +243,7 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.l2f_init_max_angular_velocity, "l2f_init_max_angular_velocity");
     get(p.bipedal_hardcore,              "bipedal_hardcore");
     get(p.bipedal_max_steps,             "bipedal_max_steps");
+    get(p.bottleneck_reverse_penalty_scale, "bottleneck_reverse_penalty_scale");
 }
 
 // Parse a string that is either a file path or an inline JSON object.
