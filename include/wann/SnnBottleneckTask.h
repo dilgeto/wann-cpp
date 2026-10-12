@@ -48,6 +48,21 @@ namespace wann {
 // both ∈ [-1, 1].
 //
 // Episode ends at step 200 (EPISODE_STEP_LIMIT) or when every agent is dead.
+//
+// WEIGHT_VALS and reward_shaping_scale (wired here, unlike most other tasks
+// where it's unused — see Hyperparams.h) both address the same failure mode
+// found in an early training run (bottle_test): every individual converged
+// to all-zero actions ("stand still"), because (1) WEIGHT_VALS inherited
+// verbatim from SnnBipedalTask's {0.5..8} is far too weak to reliably cross
+// an output neuron's firing threshold given this task's typical fan-in
+// (confirmed against the SNN simulator directly: even 5 converging synapses
+// barely fire at weight=8, needing ~60-130 for reliable firing) — so with
+// FIRST_SPIKE's "silent → 0.0" convention, most individuals are structurally
+// near-mute regardless of topology; and (2) standing still is the *only*
+// risk-free, exactly-zero-variance payoff in this reward (no collision, no
+// crossing), while any real movement risks the -1 death penalty with zero
+// partial credit for progress — so WANN had no gradient to climb out of
+// that sink. The shaping term below gives that gradient.
 class SnnBottleneckTask : public ITask {
 public:
     static constexpr int    N_WEIGHTS           = 6;
@@ -80,7 +95,8 @@ public:
     int numWeightVals() const override { return N_WEIGHTS; }
 
     // Run nEpisodes with the given shared weight.
-    // Returns {shaped_rewards, original_rewards}; shaped == original (no shaping).
+    // Returns {shaped_rewards, original_rewards}; shaped adds a potential-based
+    // bonus for forward (+x) progress on top of the environment's own reward.
     std::pair<std::vector<double>,std::vector<double>>
     evalEpisodes(const std::vector<double>& wVec,
                  const std::vector<int>&    aVec,
@@ -109,6 +125,7 @@ private:
     double     tauExc_;
     double     tauInh_;
     double     ttfsThreshold_;
+    double     shapingScale_;
 
     static NeuronType wannActToNeuronType(int actId);
 

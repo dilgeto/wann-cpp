@@ -114,6 +114,25 @@ double normalise(int i, double v) {
     return std::clamp((v - lo) / (hi - lo), 0.0, 1.0);
 }
 
+// Potential-based shaping term: phi(s) = (sum of agents' x-position) /
+// ARENA_WIDTH. Sum, not mean, so one agent's progress isn't diluted by
+// N_AGENTS — a single agent crossing at full speed (dx ≈ AGENT_MAX_SPEED*DT)
+// gives a per-step delta on the same order as the environment's own
+// per-step reward (~0.1/agent while on the right side), instead of a
+// negligible fraction of it. Dead agents freeze in place rather than
+// teleporting (rl-tools' step() leaves a dead agent's state untouched), so
+// phi is continuous across a death transition — it does not double-count
+// the environment's own one-time -1 death penalty. Being a pure function of
+// state (not of the action taken), this is a valid potential-based shaping
+// term (Ng, Harada & Russell 1999): it cannot change which policy is
+// ultimately optimal, only how easy it is for evolution to find it.
+double phi(const Env::State& s) {
+    double sum = 0.0;
+    for (int i = 0; i < wann::SnnBottleneckTask::N_AGENTS; ++i)
+        sum += s.agent_states[i].position[0];
+    return sum / Env::PARAMETERS::ARENA_WIDTH;
+}
+
 // Classical population vector (same as SnnCarTask/SnnBipedalTask): neuron k
 // of a `count`-sized population has a fixed preferred value uniformly spaced
 // in [-1,1]; the action is the spike-count-weighted average. No spikes → 0.0.
@@ -164,8 +183,18 @@ std::array<double, wann::SnnBottleneckTask::PER_AGENT_ACTION_DIM> decodeActions(
 
 namespace wann {
 
+// NOT the {0.5..8} range the other tasks (incl. SnnBipedalTask, where this
+// was copied from) use — recalibrated against this task's actual fan-in.
+// Measured directly against the SNN simulator (tau_exc=5, tau_inh=10,
+// window=20ms, matching bottleneck_snn.json): 5 converging excitatory
+// synapses firing within the window barely cross threshold even at
+// weight=8 (3-4/20 steps in the best case); weights in the 60-130 range are
+// needed for an output to fire reliably. This span covers "mostly silent"
+// (5) through "reliably firing" (160) so evolution can actually find a
+// weight where moving is possible, instead of every value sitting in the
+// silent regime where "do nothing" wins by default (see class doc comment).
 const double SnnBottleneckTask::WEIGHT_VALS[N_WEIGHTS] = {
-    0.5, 1.0, 2.0, 3.0, 5.0, 8.0
+    5.0, 15.0, 30.0, 60.0, 100.0, 160.0
 };
 
 SnnBottleneckTask::SnnBottleneckTask(const Hyperparams& hyp)
@@ -181,6 +210,7 @@ SnnBottleneckTask::SnnBottleneckTask(const Hyperparams& hyp)
     , tauExc_(hyp.snn_tau_exc)
     , tauInh_(hyp.snn_tau_inh)
     , ttfsThreshold_(hyp.snn_ttfs_threshold)
+    , shapingScale_(hyp.reward_shaping_scale)
 {
     const int expectedOut = (decoder_ == SnnDecoder::POPULATION_VECTOR)
                             ? PER_AGENT_ACTION_DIM * neuronsPerVar_ : PER_AGENT_ACTION_DIM;
@@ -351,7 +381,8 @@ std::pair<double,double> SnnBottleneckTask::runEpisode(const Network& templateNe
     std::vector<std::vector<double>> spike_trains(n_channels);
     std::vector<std::vector<double>> outSpikes(nOutput_);
 
-    double total_reward = 0.0;
+    double total_shaped   = 0.0;
+    double total_original = 0.0;
 
     for (int step = 0; step < stepLimit; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
@@ -415,7 +446,10 @@ std::pair<double,double> SnnBottleneckTask::runEpisode(const Network& templateNe
         rlt::step(device, env, params, state, action_mat, next_state, rng);
         const double reward = static_cast<double>(
             rlt::reward(device, env, params, state, action_mat, next_state, rng));
-        total_reward += reward;
+        total_original += reward;
+        total_shaped   += reward;
+        if (shapingScale_ != 0.0)
+            total_shaped += shapingScale_ * (phi(next_state) - phi(state));
 
         if (csv) *csv << ',' << reward << '\n';
 
@@ -423,7 +457,7 @@ std::pair<double,double> SnnBottleneckTask::runEpisode(const Network& templateNe
         if (rlt::terminated(device, env, params, state, rng)) break;
     }
 
-    return {total_reward, total_reward};
+    return {total_shaped, total_original};
 }
 
 double SnnBottleneckTask::evaluateWeight(const Network& templateNet, int wi, int seed) const
