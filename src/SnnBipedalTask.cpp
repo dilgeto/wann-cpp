@@ -105,13 +105,19 @@ double populationVectorDecode(const std::vector<std::vector<double>>& outSpikes,
 }
 
 // Decode output spike trains into the 4 torques ∈ [-1, 1].
-// FIRST_SPIKE: latency → [0,1] → [-1,1]; a silent output gives 0.0 (no
-//   torque), not the -1 that the latency formula would give, since "never
-//   spiked" has no latency and full reverse torque is not a neutral action
-//   (same reasoning as SnnL2FTask).
-// SPIKE_COUNT / default (rate-style): n / max_spikes → [-1,1]; 0 spikes is
-//   the bottom of a continuous scale here, so it stays -1.
-// POPULATION_VECTOR: outSpikes[a*P .. a*P+P-1] = population of action a.
+// A joint with zero output spikes this step must NOT fall through to the
+// per-decoder "empty" formula below: FIRST_SPIKE's latency formula and the
+// SPIKE_COUNT/default rate-style n/max_spikes formula both collapse an empty
+// spike train to the bottom of their scale, i.e. -1.0 (full reverse torque).
+// That's a hard, sustained max-flexion command on a merely-quiet joint, not a
+// neutral/no-op action — same convention bug SnnL2FTask guards against for
+// its rotor thrust (there, -1 cuts a rotor to free-fall; here, -1 on all 4
+// joints together drives hip+knee of both legs into one extreme and holds it,
+// which topples/collapses the walker instead of leaving it passive). Treat
+// "no spike" as "no new command" (0.0, i.e. no torque) for every decoder.
+// POPULATION_VECTOR: outSpikes[a*P .. a*P+P-1] = population of action a;
+// populationVectorDecode already returns 0.0 when the whole population is
+// silent, so it needs no extra guard here.
 std::array<double, 4> decodeActions(const std::vector<std::vector<double>>& outSpikes,
                                     wann::SnnDecoder decoder,
                                     const RLDecoder& rl_decoder,
@@ -121,18 +127,20 @@ std::array<double, 4> decodeActions(const std::vector<std::vector<double>>& outS
     std::array<double, 4> a{};
     for (int k = 0; k < 4; ++k) {
         double v;
-        switch (decoder) {
-            case wann::SnnDecoder::FIRST_SPIKE:
-                v = outSpikes[k].empty()
-                    ? 0.0
-                    : rl_decoder.decodeContinuousAction(outSpikes[k]) * 2.0 - 1.0;
-                break;
-            case wann::SnnDecoder::POPULATION_VECTOR:
-                v = populationVectorDecode(outSpikes, k * neuronsPerVar, neuronsPerVar);
-                break;
-            default:
-                v = std::min(1.0, static_cast<double>(outSpikes[k].size()) / max_spikes) * 2.0 - 1.0;
-                break;
+        if (decoder != wann::SnnDecoder::POPULATION_VECTOR && outSpikes[k].empty()) {
+            v = 0.0;
+        } else {
+            switch (decoder) {
+                case wann::SnnDecoder::FIRST_SPIKE:
+                    v = rl_decoder.decodeContinuousAction(outSpikes[k]) * 2.0 - 1.0;
+                    break;
+                case wann::SnnDecoder::POPULATION_VECTOR:
+                    v = populationVectorDecode(outSpikes, k * neuronsPerVar, neuronsPerVar);
+                    break;
+                default:
+                    v = std::min(1.0, static_cast<double>(outSpikes[k].size()) / max_spikes) * 2.0 - 1.0;
+                    break;
+            }
         }
         a[k] = std::clamp(v, -1.0, 1.0);
     }
