@@ -260,6 +260,75 @@ corridas los intervalos de correlación son muy anchos (los scripts avisan).
 
 ---
 
+## 4d. Robustez a ruido de memristores — `wann_car_noise`
+
+**Solo evalúa, no entrena.** Mide qué tan robusta es una red `car` ya
+entrenada al ruido de memristores (escritura/programación del chip + lectura
+en cada inferencia), usando los modelos de `memristor_noise.hpp` (puertos
+literales de IBM `aihwkit`: PCM — Nandakumar et al., ICECS 2019 — y ReRAM —
+Wan et al., Nature 2022). Dos modos activables con `--mode`:
+
+- `shared`: un único valor ruidoso para **toda** la red (como ya evalúa
+  `wann_eval_weights_car`/`evalEpisodes`, pero con el escalar perturbado por
+  ruido en vez de fijo) — barato, no ve fragilidad sinapsis-a-sinapsis.
+- `per-synapse`: cada conexión habilitada recibe su propio valor ruidoso,
+  muestreado de forma independiente — el escenario realista de N memristores
+  físicos distintos. Requiere soporte de peso-por-sinapsis agregado a
+  `Network` en `../snn-simulator` (`setSynapseWeight`/`step()`/`run(duration)`
+  sin escalar — adiciones puras, no tocan el `step(double)` de siempre).
+
+```bash
+./build/wann_car_noise -f red.out -d p/car_snn.json [-p overrides.json] \
+    (--weight-index N | --weight VAL) \
+    [--mode shared|per-synapse] [--noise-model none|simple|pcm|reram] \
+    [--n-chips N] [--reads-per-chip N] [--t-inference t1,t2,...] \
+    [--w-max V] --seeds s0,s1,...
+```
+
+| Flag | Significado | Default |
+|------|-------------|---------|
+| `-f` | Red guardada (**obligatorio**) | — |
+| `-d` | Config (**obligatorio**) | — |
+| `--seeds` | Lista de seeds separadas por coma (**obligatorio**) | — |
+| `--weight-index` / `--weight` | Uno de los dos, **obligatorio**: índice en `WEIGHT_VALS` (`0..5`) o un valor de peso directo | — |
+| `-p` | Overrides del config (archivo) | ninguno |
+| `--mode` | `shared` o `per-synapse` | `shared` |
+| `--noise-model` | `none` (sin ruido — chequeo de regresión), `simple` (placeholder de dos coeficientes), `pcm`, `reram` | `none` |
+| `--n-chips` | Nº de instancias de "chip" simuladas (cada una re-sortea ruido de escritura) | `100` |
+| `--reads-per-chip` | Nº de lecturas (inferencias) por chip (ruido de lectura fresco en cada una) | `1` |
+| `--t-inference` | Segundos desde la programación, CSV. Solo importa para `pcm`/`reram` (deriva). `reram` exige que coincida exactamente con una clave de `ReRamWan2022DeviceModel::coeff_dic` | `0` (pcm); `1,86400,172800` (reram) |
+| `--w-max` | Conductancia máxima del chip en unidades de peso lógico (mapea `|peso| = w_max` → `g_max`) | máximo de `WEIGHT_VALS` (`8.0`) |
+
+Salida: CSV a stdout, una fila por `(seed, chip, read, t_inference)` con el
+reward promediado sobre `alg_nReps` episodios —
+`seed,chip,read,t_inference,mode,noise_model,weight,reward_shaped,reward_original`
+(`weight` = el peso nominal usado, `--weight`/`WEIGHT_VALS[--weight-index]` —
+sirve para no perder esa información si concatenás corridas con distintos
+pesos). Sin agregación estadística en C++: usar
+`eval_results/summarize_car_noise.py` sobre el CSV resultante.
+
+```bash
+# chequeo de regresión: deben coincidir EXACTAMENTE (verificado al implementar)
+./build/wann_car_noise -f red.out -d p/car_snn.json --weight-index 1 \
+    --mode shared      --noise-model none --n-chips 1 --reads-per-chip 1 --seeds 0
+./build/wann_car_noise -f red.out -d p/car_snn.json --weight-index 1 \
+    --mode per-synapse --noise-model none --n-chips 1 --reads-per-chip 1 --seeds 0
+
+# robustez real: 100 chips × 3 lecturas con el modelo PCM, modo per-sinapsis.
+# Guardar también un baseline sin ruido (mismo mode/weight) para comparar.
+./build/wann_car_noise -f red.out -d p/car_snn.json --weight-index 1 \
+    --mode per-synapse --noise-model none --n-chips 1 --reads-per-chip 1 \
+    --seeds 0,1,2,3,4 > log/car_noise_none.csv
+./build/wann_car_noise -f red.out -d p/car_snn.json --weight-index 1 \
+    --mode per-synapse --noise-model pcm --n-chips 100 --reads-per-chip 3 \
+    --t-inference 0,3600,86400 --seeds 0,1,2,3,4 > log/car_noise_pcm.csv
+
+# resumen (media/std/sem entre chips y caída de reward vs. el baseline sin ruido)
+python eval_results/summarize_car_noise.py --csv log/car_noise_none.csv log/car_noise_pcm.csv
+```
+
+---
+
 ## 5. Exportar a ODIN — `wann_car_odin_export`
 
 Convierte una red car ya evolucionada a un JSON de configuración para el core

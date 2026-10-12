@@ -73,6 +73,19 @@ public:
                  double weight, int nEpisodes,
                  int baseSeed) const;
 
+    // Como evalEpisodes(), pero cada conexión habilitada recibe su propia
+    // magnitud desde synapseMagnitudes (mismo layout N×N disperso que wVec,
+    // misma posición i*N+j, mismo patrón de ceros) en vez de un escalar
+    // compartido para toda la red — para análisis de robustez a ruido de
+    // memristores (ver memristor_noise.hpp / wann_car_noise). El signo de
+    // cada conexión lo sigue dando wVec (vía excitatory); synapseMagnitudes
+    // solo aporta la magnitud (se usa su valor absoluto).
+    std::pair<std::vector<double>,std::vector<double>>
+    evalEpisodesPerSynapse(const std::vector<double>& wVec,
+                           const std::vector<int>&    aVec,
+                           const std::vector<double>& synapseMagnitudes,
+                           int nEpisodes, int baseSeed) const;
+
     // Run one episode and write trajectory CSV.
     // Columns: step,x,y,mu,vx,vy,omega,lidar_l,lidar_c,lidar_r,throttle,steering,reward
     // bestWi: index into WEIGHT_VALS used for the logged episode.
@@ -99,10 +112,18 @@ private:
 
     static NeuronType wannActToNeuronType(int actId);
 
+    // synapseMagnitudes (opcional): layout N×N disperso igual a wVec; si no es
+    // null, fija además net.setSynapseWeight(sid, fabs(synapseMagnitudes[i*N+j]))
+    // por cada sinapsis creada (ver evalEpisodesPerSynapse()).
     Network buildNetwork(const std::vector<double>& wVec,
-                         const std::vector<int>&    aVec) const;
+                         const std::vector<int>&    aVec,
+                         const std::vector<double>* synapseMagnitudes = nullptr) const;
 
-    std::pair<double,double> runEpisode(Network& net, double sharedWeight, long long episodeSeed) const;
+    // perSynapseWeights: si true, usa net.step() (pesos por sinapsis ya fijados
+    // por buildNetwork(..., synapseMagnitudes)) en vez de net.step(sharedWeight)
+    // — sharedWeight se ignora en ese caso.
+    std::pair<double,double> runEpisode(Network& net, double sharedWeight, long long episodeSeed,
+                                        bool perSynapseWeights = false) const;
 };
 
 } // namespace wann

@@ -313,6 +313,26 @@ target_link_libraries(wann_car_neighborhood PRIVATE
     OpenMP::OpenMP_CXX)
 
 # ---------------------------------------------------------------------------
+# Executable: wann_car_noise – evalúa la robustez de una red car ya entrenada
+# a ruido de memristores (escritura/lectura), en modo "shared" (un escalar
+# ruidoso para toda la red) o "per-synapse" (cada conexión con su propio valor
+# ruidoso independiente). Solo evalúa, no entrena. Ver memristor_noise.hpp.
+# ---------------------------------------------------------------------------
+add_executable(wann_car_noise
+    src/main_car_noise.cpp
+    src/SnnCarTask.cpp)
+
+target_include_directories(wann_car_noise PRIVATE include ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(wann_car_noise PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
 # Executable: wann_car_odin_export – convierte una red car ya entrenada
 # (.out/.wi) a una configuración para el core neuromórfico ODIN (mapeo de
 # neuronas a direcciones físicas, parámetros Izhikevich, sinapsis de 3 bits).
@@ -464,3 +484,32 @@ target_link_libraries(wann_eval_weights_bipedal PRIVATE
     snn_core_imp
     rl_tools_iface
     OpenMP::OpenMP_CXX)
+
+# ---------------------------------------------------------------------------
+# Executable: wann_bottleneck – WANN + SNN simulator + rl-tools multi-agent
+# Bottleneck (shared-weight network run independently per agent).
+#   wann_bottleneck       – entrenamiento WANN
+#   wann_bottleneck_eval  – evalúa N episodios con la mejor red
+# ---------------------------------------------------------------------------
+add_executable(wann_bottleneck
+    src/main_bottleneck.cpp
+    src/SnnBottleneckTask.cpp)
+target_include_directories(wann_bottleneck PRIVATE include)
+target_link_libraries(wann_bottleneck PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
+
+add_executable(wann_bottleneck_eval
+    src/main_eval_bottleneck.cpp
+    src/SnnBottleneckTask.cpp)
+target_include_directories(wann_bottleneck_eval PRIVATE include)
+target_link_libraries(wann_bottleneck_eval PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface)

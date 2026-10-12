@@ -167,7 +167,8 @@ Network SnnCarTask::buildNetwork(const Ind& ind) const
 }
 
 Network SnnCarTask::buildNetwork(const std::vector<double>& wVec,
-                                 const std::vector<int>&    aVec) const
+                                 const std::vector<int>&    aVec,
+                                 const std::vector<double>* synapseMagnitudes) const
 {
     const int N = static_cast<int>(std::sqrt(static_cast<double>(wVec.size())));
     Network net(1.0, true);
@@ -185,8 +186,11 @@ Network SnnCarTask::buildNetwork(const std::vector<double>& wVec,
         if (snn_id[i] < 0) continue;
         for (int j = 0; j < N; ++j) {
             if (snn_id[j] < 0 || i == j) continue;
-            if (wVec[i * N + j] != 0.0)
-                net.addSynapse(snn_id[i], snn_id[j], wVec[i * N + j] > 0.0);
+            if (wVec[i * N + j] != 0.0) {
+                int sid = net.addSynapse(snn_id[i], snn_id[j], wVec[i * N + j] > 0.0);
+                if (synapseMagnitudes)
+                    net.setSynapseWeight(sid, std::fabs((*synapseMagnitudes)[i * N + j]));
+            }
         }
     }
 
@@ -248,7 +252,8 @@ static std::pair<double,double> decodeActions(
     return { std::clamp(t, -1.0, 1.0), std::clamp(s, -1.0, 1.0) };
 }
 
-std::pair<double,double> SnnCarTask::runEpisode(Network& net, double sharedWeight, long long episodeSeed) const
+std::pair<double,double> SnnCarTask::runEpisode(Network& net, double sharedWeight, long long episodeSeed,
+                                                bool perSynapseWeights) const
 {
     net.fastReset();
     DEVICE device;
@@ -318,7 +323,7 @@ std::pair<double,double> SnnCarTask::runEpisode(Network& net, double sharedWeigh
 
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
-                net.step(sharedWeight);
+                if (perSynapseWeights) net.step(); else net.step(sharedWeight);
                 const auto& out = net.getOutputSpikes();
                 for (int oi = 0; oi < nOutput_ && oi < static_cast<int>(out.size()); ++oi)
                     if (out[oi]) outSpikes[oi].push_back(static_cast<double>(t));
@@ -377,7 +382,7 @@ std::pair<double,double> SnnCarTask::runEpisode(Network& net, double sharedWeigh
 
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);
-                net.step(sharedWeight);
+                if (perSynapseWeights) net.step(); else net.step(sharedWeight);
                 const auto& out = net.getOutputSpikes();
                 for (int oi = 0; oi < nOutput_ && oi < static_cast<int>(out.size()); ++oi)
                     if (out[oi]) outSpikes[oi].push_back(static_cast<double>(t));
@@ -448,6 +453,22 @@ std::pair<std::vector<double>,std::vector<double>> SnnCarTask::evalEpisodes(
     std::vector<double> shaped(nEpisodes), original(nEpisodes);
     for (int i = 0; i < nEpisodes; ++i) {
         auto [s, o] = runEpisode(net, weight, baseSeed + i);
+        shaped[i]   = s;
+        original[i] = o;
+    }
+    return {shaped, original};
+}
+
+std::pair<std::vector<double>,std::vector<double>> SnnCarTask::evalEpisodesPerSynapse(
+        const std::vector<double>& wVec,
+        const std::vector<int>&    aVec,
+        const std::vector<double>& synapseMagnitudes,
+        int nEpisodes, int baseSeed) const
+{
+    Network net = buildNetwork(wVec, aVec, &synapseMagnitudes);
+    std::vector<double> shaped(nEpisodes), original(nEpisodes);
+    for (int i = 0; i < nEpisodes; ++i) {
+        auto [s, o] = runEpisode(net, 0.0, baseSeed + i, /*perSynapseWeights=*/true);
         shaped[i]   = s;
         original[i] = o;
     }

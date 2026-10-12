@@ -22,6 +22,13 @@ and, where applicable, the project's non-training tools (`wann_<task>_eval`,
 results. Training is compute-heavy and expected to run on the user's own machine or
 cluster, not be launched by the agent.
 
+When the user asks for "the bootstrap"/"bootstrapping" (`bootstrap_compare_*_auto.py`
+or `bootstrap_compare.py`) to be run, without saying otherwise, use `--n 100
+--resamples 10000` (the scripts' own defaults) — don't silently shrink them (e.g.
+`--n 20`) for a quicker turnaround. A smaller/quicker run is fine only as an explicit,
+labeled smoke test to sanity-check plumbing (and say so), never presented as the real
+result.
+
 ## Build
 
 This project depends on a sibling repo, `../snn-simulator`, which must be built first
