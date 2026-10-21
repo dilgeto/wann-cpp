@@ -1,0 +1,4 @@
+task,run_key,rank,seed_idx,weight_index,weight_value,n_neurons,n_exc,n_inh,n_RS,n_FS,n_CH,n_LTS,n_IB,n_RZ
+car,car_ttfs_first_spike,2,0,5,8.0,61,54,39,6,11,16,8,15,5
+acrobot,acrobot_small_first_spike,1,1,4,2.5,35,29,15,6,10,5,7,5,2
+mountain_car,mountain_car_small_first_spike,2,10,1,1.0,33,75,15,3,5,7,6,5,7

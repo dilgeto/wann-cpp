@@ -8,7 +8,7 @@
 //
 // Mapeo de pesos con par diferencial: w = (G+ - G-) * (w_max / g_max).
 //
-// Este archivo tiene tres modelos independientes:
+// Este archivo tiene cuatro modelos independientes:
 //   - DeviceModel / NoisyCrossbar: modelo simple de dos coeficientes (placeholder original,
 //     útil para barridos de sensibilidad genéricos; sus coeficientes NO están calibrados
 //     contra ningún dispositivo real — ver TODO).
@@ -21,9 +21,16 @@
 //     `aihwkit.inference.noise.reram.ReRamWan2022NoiseModel` (misma librería/licencia),
 //     ajustado a datos publicados por Wan et al., Nature (2022) para ReRAM — sin ley de
 //     deriva continua, solo tres instantes de tiempo medidos (1 s / 1 día / 2 días).
+//   - ReRamCMODeviceModel / ReRamCMONoisyCrossbar: puerto literal de
+//     `aihwkit.inference.noise.reram.ReRamCMONoiseModel` (misma librería/licencia),
+//     ajustado a dispositivos ReRAM filamentarios CMO/HfOx (Falcone et al., IBM Research
+//     Europa-Zúrich). A diferencia de los otros dos: SÍ tiene deriva continua en log(t)
+//     (como PCM), pero `g_max`/`g_min` no tienen valor por defecto en aihwkit (hay que
+//     fijarlos con mediciones propias) y el polinomio de programación no se normaliza por
+//     g_max — ver las notas junto a la struct.
 //
-// Fuente de los dos modelos portados (verificada línea a línea contra el código fuente,
-// revisión "master" leída el 2026-10-08):
+// Fuente de los modelos portados (verificada línea a línea contra el código fuente,
+// revisión "master" leída el 2026-10-08/2026-10-14):
 //   https://github.com/IBM/aihwkit/blob/master/src/aihwkit/inference/noise/pcm.py
 //   https://github.com/IBM/aihwkit/blob/master/src/aihwkit/inference/noise/reram.py
 //   https://github.com/IBM/aihwkit/blob/master/src/aihwkit/inference/noise/base.py
@@ -31,20 +38,35 @@
 // (sin Tensor/batch, sin PyTorch) para encajar con el resto de este header.
 //
 // TODO: los coeficientes de DeviceModel (el modelo simple) son PLACEHOLDERS. Los de
-//       PCMDeviceModel/ReRamWan2022DeviceModel SÍ están ajustados a dispositivos reales
-//       (ver las citas arriba), pero siguen siendo genéricos de la literatura, no
-//       calibrados al chip/dispositivo específico de este proyecto — reemplazar si se
-//       dispone de esas mediciones.
+//       PCMDeviceModel/ReRamWan2022DeviceModel/ReRamCMODeviceModel SÍ están ajustados a
+//       dispositivos reales (ver las citas arriba), pero siguen siendo genéricos de la
+//       literatura, no calibrados al chip/dispositivo específico de este proyecto —
+//       reemplazar si se dispone de esas mediciones.
 
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <random>
 #include <stdexcept>
 #include <vector>
 
 namespace memnoise {
+
+// Niveles finitos de conductancia: un dispositivo real solo puede asentarse en uno
+// de N estados distinguibles entre 0 y g_max (resolución finita de programación/
+// verificación), no en cualquier valor continuo. n_levels <= 1 = sin cuantizar
+// (comportamiento de siempre, preservado exactamente). Se aplica solo al estado
+// YA ESCRITO (en program(), después del ruido de programación) — no en cada
+// lectura, que sigue siendo una medición continua de ese estado físico fijo.
+namespace detail {
+inline double quantizeConductance(double g, double g_max, int n_levels) {
+    if (n_levels <= 1) return g;
+    const double step = g_max / static_cast<double>(n_levels - 1);
+    return std::clamp(std::round(g / step) * step, 0.0, g_max);
+}
+}  // namespace detail
 
 struct DeviceModel {
     double g_max = 1.0;                 // conductancia máxima (unidad arbitraria, p. ej. µS)
@@ -57,6 +79,9 @@ struct DeviceModel {
     //   read_exp = 0.5 -> dependencia ~sqrt(g)
     double r0 = 0.01;
     double read_exp = 0.5;
+
+    // Niveles de conductancia distinguibles al programar (<=1 = continuo).
+    int n_levels = 0;
 
     double sigma_prog(double g) const {
         const double u = std::clamp(g / g_max, 0.0, 1.0);
@@ -88,7 +113,8 @@ public:
     void program(RNG& rng) {
         std::normal_distribution<double> Z(0.0, 1.0);
         auto draw = [&](double g) {
-            return std::clamp(g + dev_.sigma_prog(g) * Z(rng), 0.0, dev_.g_max);
+            const double gp = std::clamp(g + dev_.sigma_prog(g) * Z(rng), 0.0, dev_.g_max);
+            return detail::quantizeConductance(gp, dev_.g_max, dev_.n_levels);
         };
         for (size_t i = 0; i < n_; ++i) {
             g_prog_pos_[i] = draw(g_target_pos_[i]);
@@ -164,6 +190,12 @@ struct PCMDeviceModel {
 
     double t_read = 250.0e-9;  // s; parámetro del ajuste de ruido 1/f.
     double t_0 = 20.0;         // s; "primer instante de lectura" del ajuste de deriva.
+
+    // Niveles de conductancia distinguibles al programar (<=1 = continuo, por
+    // defecto — así venía el modelo original de aihwkit, que asume conductancia
+    // continua). No representa ningún dato de Nandakumar et al.; es un mecanismo
+    // adicional para estudiar el efecto de una resolución de programación finita.
+    int n_levels = 0;
 };
 
 // Mismo par diferencial (G+/G-) que NoisyCrossbar, pero con deriva (drift) por ley de
@@ -193,12 +225,12 @@ public:
     template <class RNG>
     void program(RNG& rng) {
         for (size_t i = 0; i < n_; ++i) {
-            g_prog_pos_[i] = detail::applyPolyProgrammingNoise(
+            g_prog_pos_[i] = detail::quantizeConductance(detail::applyPolyProgrammingNoise(
                 g_target_pos_[i], dev_.prog_coeff, dev_.g_max, dev_.prog_coeff_g_max_reference,
-                dev_.prog_noise_scale, rng);
-            g_prog_neg_[i] = detail::applyPolyProgrammingNoise(
+                dev_.prog_noise_scale, rng), dev_.g_max, dev_.n_levels);
+            g_prog_neg_[i] = detail::quantizeConductance(detail::applyPolyProgrammingNoise(
                 g_target_neg_[i], dev_.prog_coeff, dev_.g_max, dev_.prog_coeff_g_max_reference,
-                dev_.prog_noise_scale, rng);
+                dev_.prog_noise_scale, rng), dev_.g_max, dev_.n_levels);
             // nu se sortea a partir del target ORIGINAL (pre-ruido), igual que aihwkit
             // (generate_drift_coefficients se llama con g_target, no con g_prog).
             nu_pos_[i] = sampleDriftNu(g_target_pos_[i], rng);
@@ -282,6 +314,11 @@ struct ReRamWan2022DeviceModel {
     double coeff_g_max_reference = 40.0;
     double noise_scale = 1.0;
 
+    // Niveles de conductancia distinguibles al programar (<=1 = continuo, por
+    // defecto). No representa ningún dato de Wan et al.; mecanismo adicional
+    // para estudiar el efecto de una resolución de programación finita.
+    int n_levels = 0;
+
     // t_inference (s) -> coeficientes ascendentes [c0..c4] en µS (Wan et al., Nature 2022,
     // fig. ajustada por IBM). std::map ordena por clave ascendente: program() usa siempre
     // la clave más chica (igual que aihwkit: min(coeff_dic.keys())).
@@ -313,12 +350,12 @@ public:
     void program(RNG& rng) {
         const auto& coeff0 = dev_.coeff_dic.begin()->second;
         for (size_t i = 0; i < n_; ++i) {
-            g_prog_pos_[i] = detail::applyPolyProgrammingNoise(
+            g_prog_pos_[i] = detail::quantizeConductance(detail::applyPolyProgrammingNoise(
                 g_target_pos_[i], coeff0, dev_.g_max, dev_.coeff_g_max_reference,
-                dev_.noise_scale, rng);
-            g_prog_neg_[i] = detail::applyPolyProgrammingNoise(
+                dev_.noise_scale, rng), dev_.g_max, dev_.n_levels);
+            g_prog_neg_[i] = detail::quantizeConductance(detail::applyPolyProgrammingNoise(
                 g_target_neg_[i], coeff0, dev_.g_max, dev_.coeff_g_max_reference,
-                dev_.noise_scale, rng);
+                dev_.noise_scale, rng), dev_.g_max, dev_.n_levels);
         }
     }
 
@@ -350,6 +387,180 @@ public:
 
 private:
     ReRamWan2022DeviceModel dev_;
+    double w_max_;
+    size_t n_;
+    std::vector<double> g_target_pos_, g_target_neg_, g_prog_pos_, g_prog_neg_;
+};
+
+// ===========================================================================
+// Puerto de ReRamCMONoiseModel (aihwkit.inference.noise.reram), ajustado a
+// dispositivos ReRAM filamentarios CMO/HfOx — Falcone et al., IBM Research
+// Europa-Zúrich (citado por aihwkit como "In Review" al momento de portar
+// esto, sin DOI público confirmado).
+// ===========================================================================
+//
+// Diferencias reales frente a PCM/ReRamWan2022 (no son descuidos de este puerto,
+// así está en aihwkit):
+//   - El polinomio de ruido de programación NO se normaliza por g_max — usa
+//     g_target crudo, no u=g_target/g_max. El propio código de aihwkit lo deja
+//     explícito con un comentario: `mat *= g_target  # / self.g_max`.
+//     `coeff_g_max_reference` tampoco existe como parámetro separado: el
+//     __init__ de aihwkit lo fija siempre en self.g_max, así que el reescalado
+//     g_max/coeff_g_max_reference es SIEMPRE 1 (a diferencia del bug de
+//     nombres de ReRamWan2022) — por eso acá ni se calcula, es un no-op.
+//   - generate_drift_coefficients() de aihwkit es un no-op ("la relajación de
+//     conductancia es independiente del nivel de conductancia"): no hay ningún
+//     coeficiente que sortear una vez por chip en program(), a diferencia del
+//     nu de PCM.
+//   - A t_inference == 0, aihwkit devuelve g_prog SIN NINGÚN cambio (bypass
+//     literal) — no "deriva nula + algo de ruido de lectura" como en PCM.
+//   - aihwkit usa SingleDeviceConductanceConverter (un dispositivo por peso,
+//     con g_min propio) en vez de SinglePairConductanceConverter. Acá se aplica
+//     igual por separado a cada rama del par diferencial (g_target_pos_/neg_)
+//     para encajar con el resto de este header — adaptación nuestra, no literal.
+//   - g_max/g_min NO tienen valor por defecto en aihwkit (su __init__ exige que
+//     se pasen, o lanza ValueError) — a diferencia de PCM (25 µS) y ReRamWan2022
+//     (40 µS), acá no hay ningún número de referencia que copiar. Se dejan en
+//     NaN y el constructor de la crossbar lanza si no se fijan explícitamente,
+//     en vez de inventar un valor no verificado.
+//   - aihwkit NO recorta g_prog a >= 0 en su _apply_poly (sin clamp inferior),
+//     lo que puede dar conductancias negativas que después rompen el
+//     log10(g_drift) de apply_drift_noise_to_conductance con NaN. Acá SÍ se
+//     recorta (programación a [0, g_max]; drift a un epsilon chico antes del
+//     log10) — una adición defensiva nuestra, necesaria en C++ para no
+//     propagar NaN silenciosamente; no cambia el resultado en el rango normal
+//     de operación, solo evita el caso límite.
+struct ReRamCMODeviceModel {
+    // Sin valor por defecto confiable — aihwkit tampoco trae uno para este
+    // modelo (ValueError si no se pasan). Fijarlos a mediciones reales del
+    // propio dispositivo CMO/HfOx antes de usar; NaN hace fallar rápido si se
+    // te olvida, en vez de simular con un número inventado.
+    double g_max = std::numeric_limits<double>::quiet_NaN();  // µS
+    double g_min = std::numeric_limits<double>::quiet_NaN();  // µS
+
+    double prog_noise_scale = 1.0;
+    double read_noise_scale = 1.0;
+    double drift_scale = 1.0;
+
+    // Ventana de aceptación del lazo de programar-y-verificar (0.2% = más
+    // estricta/menos ruido; 2% = más laxa/más ruido) — debe ser una clave
+    // exacta de prog_coeff; si no, se usa la más chica disponible (igual que
+    // aihwkit: min(coeff_dict.keys())).
+    double acceptance_range = 2e-2;
+
+    // acceptance_range -> coeficientes ascendentes [c0,c1] en µS, LINEALES en
+    // g_target crudo (no normalizado). Ajustados por IBM a caracterización de
+    // dispositivos CMO/HfOx.
+    std::map<double, std::vector<double>> prog_coeff = {
+        {0.2e-2, {0.00081107, 0.00106879}},
+        {2.0e-2, {0.0112185391, 0.01129027418}},
+    };
+
+    // Deriva: desplazamiento de la media y ensanchamiento del desvío con
+    // log(t_inference), independiente del nivel de conductancia.
+    double decay_mean = -0.08900206;
+    double decay_std_slope = 0.04201137, decay_std_intercept = 0.41183342;
+
+    // Ruido de lectura acumulado.
+    double read_K = 0.0277316483;
+    double t_read = 1.0e-6;  // s
+
+    // Niveles de conductancia distinguibles al programar (<=1 = continuo).
+    int n_levels = 0;
+};
+
+class ReRamCMONoisyCrossbar {
+public:
+    ReRamCMONoisyCrossbar(std::vector<double> weights, double w_max, ReRamCMODeviceModel dev)
+        : dev_(dev), w_max_(w_max), n_(weights.size()),
+          g_target_pos_(n_), g_target_neg_(n_), g_prog_pos_(n_), g_prog_neg_(n_) {
+        if (!(dev_.g_max > 0.0))
+            throw std::invalid_argument(
+                "ReRamCMONoisyCrossbar: hay que fijar g_max > 0 — este modelo no trae un "
+                "valor por defecto en aihwkit, no inventamos uno acá");
+        if (!(dev_.g_min >= 0.0) || !(dev_.g_min < dev_.g_max))
+            throw std::invalid_argument("ReRamCMONoisyCrossbar: hay que fijar 0 <= g_min < g_max");
+        for (size_t i = 0; i < n_; ++i) {
+            const double g = std::clamp(std::abs(weights[i]) / w_max_, 0.0, 1.0) * dev_.g_max;
+            g_target_pos_[i] = weights[i] > 0 ? g : 0.0;
+            g_target_neg_[i] = weights[i] < 0 ? g : 0.0;
+        }
+        g_prog_pos_ = g_target_pos_;
+        g_prog_neg_ = g_target_neg_;
+    }
+
+    // (1) Ruido de escritura: llamar UNA vez por chip simulado. Sin coeficiente
+    // de deriva que sortear (generate_drift_coefficients es un no-op en este modelo).
+    template <class RNG>
+    void program(RNG& rng) {
+        const auto& coeff = progCoeff();
+        for (size_t i = 0; i < n_; ++i) {
+            g_prog_pos_[i] = progNoise(g_target_pos_[i], coeff, rng);
+            g_prog_neg_[i] = progNoise(g_target_neg_[i], coeff, rng);
+        }
+    }
+
+    // (2) Deriva (log-lineal, independiente del estado) + ruido de lectura
+    // acumulado, a t_inference segundos de la programación. A t_inference==0
+    // devuelve g_prog sin cambios (igual que aihwkit).
+    template <class RNG>
+    void read_weights(RNG& rng, double t_inference, std::vector<double>& out) const {
+        out.resize(n_);
+        const double scale = w_max_ / dev_.g_max;
+        for (size_t i = 0; i < n_; ++i) {
+            const double gp = driftAndRead(g_prog_pos_[i], t_inference, rng);
+            const double gn = driftAndRead(g_prog_neg_[i], t_inference, rng);
+            out[i] = (gp - gn) * scale;
+        }
+    }
+
+    size_t size() const { return n_; }
+
+private:
+    const std::vector<double>& progCoeff() const {
+        auto it = dev_.prog_coeff.find(dev_.acceptance_range);
+        if (it == dev_.prog_coeff.end()) it = dev_.prog_coeff.begin();  // min key, igual que aihwkit
+        return it->second;
+    }
+
+    // _apply_poly: polinomio lineal en g_target CRUDO (sin normalizar por
+    // g_max — ver nota de la sección). Recorte a [0, g_max] agregado acá
+    // (aihwkit no lo tiene en este modelo).
+    template <class RNG>
+    double progNoise(double g_target, const std::vector<double>& coeff, RNG& rng) const {
+        double mat = 1.0;
+        double sig = coeff.empty() ? 0.0 : coeff[0];
+        for (size_t i = 1; i < coeff.size(); ++i) {
+            mat *= g_target;
+            sig += mat * coeff[i];
+        }
+        std::normal_distribution<double> Z(0.0, 1.0);
+        const double g_prog = g_target + dev_.prog_noise_scale * sig * Z(rng);
+        return detail::quantizeConductance(std::clamp(g_prog, 0.0, dev_.g_max),
+                                            dev_.g_max, dev_.n_levels);
+    }
+
+    // apply_drift_noise_to_conductance: desplaza media y desvío con
+    // log(t_inference) (sin depender del nivel de conductancia), más ruido de
+    // lectura vía log10(g_drift). Recorte a un epsilon chico antes del log10
+    // agregado acá para no propagar NaN si el drift empujó g_drift a <= 0
+    // (aihwkit no lo tiene).
+    template <class RNG>
+    double driftAndRead(double g_prog, double t_inference, RNG& rng) const {
+        if (t_inference == 0.0) return g_prog;
+        std::normal_distribution<double> Z(0.0, 1.0);
+        const double lt = std::log(t_inference);
+        const double g_mean = g_prog + dev_.decay_mean * lt * dev_.drift_scale;
+        const double sigma_relax = dev_.decay_std_slope * lt + dev_.decay_std_intercept;
+        const double g_drift = g_mean + Z(rng) * sigma_relax * dev_.drift_scale;
+        constexpr double kFloor = 1e-6;  // evita log10(<=0); no está en aihwkit
+        const double sigma_read = dev_.read_K * std::log10(std::max(g_drift, kFloor)) *
+            std::sqrt(std::log((t_inference + dev_.t_read) / (2.0 * dev_.t_read)));
+        const double g_final = g_drift + Z(rng) * sigma_read * dev_.read_noise_scale;
+        return std::clamp(g_final, dev_.g_min, dev_.g_max);
+    }
+
+    ReRamCMODeviceModel dev_;
     double w_max_;
     size_t n_;
     std::vector<double> g_target_pos_, g_target_neg_, g_prog_pos_, g_prog_neg_;
@@ -401,6 +612,27 @@ int main() {
         for (int chip = 0; chip < 3; ++chip) {
             xb.program(rng);
             for (double t_inference : {1.0, 86400.0, 172800.0}) {
+                std::vector<double> we;
+                xb.read_weights(rng, t_inference, we);
+                std::printf("chip %d t=%.0fs:", chip, t_inference);
+                for (double x : we) std::printf(" %+.3f", x);
+                std::printf("\n");
+            }
+        }
+    }
+
+    std::printf("-- ReRAM CMO/HfOx (aihwkit ReRamCMONoiseModel) --\n");
+    {
+        // g_max/g_min: sin default en aihwkit (ver nota de la struct) — estos
+        // dos números son solo ilustrativos para que el demo corra, NO una
+        // medición de Falcone et al.
+        ReRamCMODeviceModel dev;
+        dev.g_max = 25.0;
+        dev.g_min = 1.0;
+        ReRamCMONoisyCrossbar xb(w, /*w_max=*/2.0, dev);
+        for (int chip = 0; chip < 3; ++chip) {
+            xb.program(rng);
+            for (double t_inference : {0.0, 3600.0, 86400.0}) {  // t=0, 1h, 1 día
                 std::vector<double> we;
                 xb.read_weights(rng, t_inference, we);
                 std::printf("chip %d t=%.0fs:", chip, t_inference);

@@ -29,6 +29,14 @@ or `bootstrap_compare.py`) to be run, without saying otherwise, use `--n 100
 labeled smoke test to sanity-check plumbing (and say so), never presented as the real
 result.
 
+Any chart or figure the user asks for must be generated with a Python script
+(matplotlib, same convention as `graph.py`/`generate_graphs.sh` and
+`graficos/<Tarea>/`) — never as an HTML/Artifact page — unless the user explicitly
+asks for it some other way. Save the script under a sensible location (e.g.
+`eval_results/` alongside the data it reads) and the output PNG under
+`graficos/<Tarea>/`, matching the existing naming convention there
+(`<run_key>_<kind>.png`).
+
 ## Build
 
 This project depends on a sibling repo, `../snn-simulator`, which must be built first
@@ -420,3 +428,81 @@ exploit).
   productive window (gen ~25-100) regardless of which lineage gets there, in which
   case giving the population more early candidates to choose from wouldn't move the
   outcome much. Only the real experiment adjudicates between these.
+
+## Memristor noise robustness — deferred items (analysed, not implemented)
+
+The memristor-noise harness (`memristor_noise.hpp`, `wann_car_noise`,
+`eval_results/{summarize,plot,run}_car_noise*.py` — see `BINARIOS.md` §4d) went
+through a round of external review (recommendations from a separate Claude web
+session, checked against aihwkit primary sources before acting on them — see the
+chat history for the verified/unverified citation breakdown: Le Gallo et al. 2023,
+Rasch et al. 2023, Joshi et al. 2020, Gaier & Ha 2019 confirmed; AnalogNets' specific
+drift-compensation claim not confirmed). What got implemented: two-level variance
+decomposition (between-chip vs. within-chip) + percentile bands + bootstrap CI +
+success-threshold in `summarize_car_noise.py`; per-mechanism ablation
+(`--prog-noise-scale`/`--read-noise-scale`/`--drift-scale`) in `wann_car_noise`;
+a cross-model-comparable `weight_rmse` metric; a scale×time grid + heatmap;
+`--weight-indices` sweeping; conductance quantization (`--n-levels`); a
+60s-to-1-year log time grid for PCM; and (2026-10-14) a fourth noise model,
+`ReRamCMODeviceModel`/`ReRamCMONoisyCrossbar` in `memristor_noise.hpp`, ported
+from aihwkit's `ReRamCMONoiseModel` (Falcone et al., CMO/HfOx, IBM Research
+Europe-Zurich) — unlike ReRAM Wan2022 it has continuous `log(t)`-based drift
+(like PCM), but `g_max`/`g_min` have no default in aihwkit (left as NaN,
+constructor throws if unset — `wann_car_noise`'s own `--reramcmo-g-max`/
+`--reramcmo-g-min` default to 25/1 µS, explicitly *not* claimed as Falcone et
+al.'s measured values). One real, verified-not-a-bug consequence worth
+knowing: `g_min > 0` means the "off" branch of every differential pair always
+floors to at least `g_min` even with every noise scale at 0 (confirmed this
+reproduces aihwkit's own `g_final.clamp(min=g_min, max=g_max)` — setting
+`--reramcmo-g-min 0` recovers the exact zero-noise match to `--noise-model
+none`, proving the scale-ablation logic itself is correct and the gap was
+purely the floor).
+
+Left deliberately unimplemented, pick up if it becomes the priority:
+
+1. **Neuron-parameter variability (mismatch).** Rasch et al. 2023 found output/
+   input noise matters more than weight noise for dense analog MAC accelerators
+   with an analog-sum + ADC readout — but this SNN simulator has no such stage
+   (weights feed `IzhikevichNeuron`s simulated in double-precision C++, no analog
+   summing junction, no ADC). The architecturally-correct analogue here is
+   per-neuron threshold/leak mismatch (fabrication variability), not a literal ADC
+   noise port. Would need a core change to `IzhikevichNeuron` in `../snn-simulator`
+   (same shape as the `Network::setSynapseWeight`/`step()` additions already made
+   for per-synapse weights) — sample jitter once per "chip" instance, same as D2D.
+2. **Drift compensation (with/without).** aihwkit has a global scale factor `γ`
+   applied at crossbar-output to correct a known conductance shift. There's no
+   literal "MAC output" to rescale in an SNN; the candidate analogue is a global
+   LIF/Izhikevich threshold or leak adjustment. Needs its own design (how do you
+   even estimate the right correction for nonlinear spike timing?) before coding —
+   not a quick aihwkit-style port.
+3. **Trained baselines.** Same topology fine-tuned with RL, a conventional ANN
+   trained with RL, and noise-aware-trained versions of both (Joshi et al. 2020
+   is the standard reference for the training method) — without these, "the noise
+   degrades the model only a little" doesn't establish that WANN's own premise
+   (weight-agnostic performance also implies noise robustness) is doing any work.
+   Blocked by the agent policy above (never run training) — the user has to train
+   these; the harness is ready to evaluate them once they exist.
+4. **Noise-aware fitness during topology search.** Inject per-synapse noise into
+   `evalPop()`'s fitness evaluation during actual evolution, same
+   off-by-default-hyperparameter pattern as `immigrant_fraction` above. Doubly
+   blocked: implementing the hook is agent-doable, but evaluating whether it
+   changes evolved topologies needs a real training campaign, which the agent
+   cannot run.
+5. **Other tasks.** The whole harness (`SnnCarTask::evalEpisodesPerSynapse`,
+   `wann_car_noise`, the `eval_results/*_car_noise*.py` scripts) is `car`-only.
+   Porting to another task repeats the same `buildNetwork`/`runEpisode` pattern
+   per `SnnXxxTask.cpp` — mechanical, but a real decision of which task matters
+   enough to justify the duplication.
+6. **Connections absent from the genome as real G_min devices.** Speculative (not
+   from any source): a physical crossbar's "empty" mask positions are still real
+   devices sitting at `G_min` with their own noise/leakage, which the current
+   per-synapse model doesn't represent (disabled connections just don't get a
+   `Synapse` at all). Implementing it for real means simulating a dense N² crossbar
+   instead of only the genome's sparse topology — a real architectural change.
+   Before committing to that: estimate how sparse actual evolved `car` topologies
+   are (if sparsity is low, the aggregate leakage contribution is probably small)
+   — that cheap check was proposed but never run. Note: `ReRamCMODeviceModel`
+   above already shows a *piece* of this for free — its `g_min > 0` floors the
+   "off" branch of every differential pair at `g_min`, not 0 — but that's the
+   differential pair's idle branch, not a genuinely absent/disabled connection
+   (which still has no `Synapse` at all, so no floor applies to it either way).

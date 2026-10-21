@@ -109,11 +109,27 @@ def load_lineage(path: str | Path) -> Lineage:
 
 # --------------------------------------------------------------------------- linaje
 def founders(lin: Lineage) -> np.ndarray:
-    """founders[g, i] = índice, en la gen 0, del ancestro de i en la gen g."""
+    """founders[g, i] = id del fundador del que desciende i en la gen g: su índice
+    en la gen 0 (0..pop-1), o un id nuevo (>= pop) si desciende de un "random
+    immigrant" (Hyperparams.h: immigrant_fraction/immigrant_min_founders) — un
+    individuo sin padre creado en una gen > 0 (op == -2 en el CSV de linaje;
+    parent/parentB quedan en -1 porque no tiene). Sin este caso especial,
+    `f[g-1][lin.parent[g]]` indexaría -1 como "el último de la gen anterior"
+    (numpy no distingue -1 de "sin padre"), corrompiendo el conteo en silencio
+    en vez de fallar. Corridas sin inmigrantes (immigrant_min_founders == 0,
+    el default) nunca tienen ninguna fila con op == -2, así que se comportan
+    exactamente como antes."""
     f = np.empty_like(lin.parent)
     f[0] = np.arange(lin.pop)
+    next_id = lin.pop
     for g in range(1, lin.n_gen):
-        f[g] = f[g - 1][lin.parent[g]]
+        immigrant = lin.op[g] == -2
+        safe_parent = np.where(immigrant, 0, lin.parent[g])  # evita indexar -1; se sobreescribe abajo
+        f[g] = f[g - 1][safe_parent]
+        n_new = int(immigrant.sum())
+        if n_new:
+            f[g, immigrant] = np.arange(next_id, next_id + n_new)
+            next_id += n_new
     return f
 
 
@@ -128,7 +144,16 @@ def ancestor_line(lin: Lineage, g_end: int, i_end: int) -> np.ndarray:
 
 def mrca_gen(lin: Lineage) -> float:
     """Última generación en que UN solo individuo es ancestro de toda la población
-    final (ancestro común más reciente). NaN si en la gen 0 sobreviven varios."""
+    final (ancestro común más reciente). NaN si en la gen 0 sobreviven varios.
+
+    LIMITACIÓN CONOCIDA, sin corregir: a diferencia de founders() (arriba), esta
+    función no distingue todavía un "random immigrant" (parent == -1 en gen > 0,
+    ver Hyperparams.h) de "no hay ancestro" — con inmigrantes activos podría
+    indexar -1 como el último individuo de la generación anterior y dar un
+    resultado incorrecto en silencio, igual que founders() antes de este arreglo.
+    No usar en corridas con immigrant_min_founders > 0 hasta revisarla; en
+    corridas sin inmigrantes (el caso de todo lo diagnosticado hasta ahora) no
+    hay ninguna fila con parent == -1 después de la gen 0, así que no aplica."""
     ancestors = np.arange(lin.pop)
     for g in range(lin.last_gen, 0, -1):
         ancestors = np.unique(lin.parent[g][ancestors])

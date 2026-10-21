@@ -1,0 +1,2 @@
+task,run_key,rank,seed_idx,weight_index,weight_value,n_neurons,n_exc,n_inh,n_RS,n_FS,n_CH,n_LTS,n_IB,n_RZ
+car,car_ttfs_first_spike_discrete,0,6,1,1.0,27,20,15,6,4,9,2,3,3

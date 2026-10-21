@@ -1,0 +1,2 @@
+task,run_key,rank,seed_idx,weight_index,weight_value,n_neurons,n_exc,n_inh,n_RS,n_FS,n_CH,n_LTS,n_IB,n_RZ
+mountain_car,mountain_car_small_rate_argmax,0,1,4,5.0,16,15,16,4,4,3,0,1,4

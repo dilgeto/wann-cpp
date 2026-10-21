@@ -12,20 +12,43 @@
 //                         ruidoso, muestreado de forma independiente — un
 //                         memristor físico distinto por sinapsis.
 //
-// --noise-model none|simple|pcm|reram selecciona el modelo de
-// memristor_noise.hpp (DeviceModel/PCMDeviceModel/ReRamWan2022DeviceModel,
-// valores por defecto del header; "none" no agrega ruido — sirve de chequeo
-// de regresión: con --mode per-synapse --noise-model none el resultado debe
-// coincidir EXACTAMENTE con --mode shared para el mismo --weight).
+// --noise-model none|simple|pcm|reram|reramcmo selecciona el modelo de
+// memristor_noise.hpp (DeviceModel/PCMDeviceModel/ReRamWan2022DeviceModel/
+// ReRamCMODeviceModel, valores por defecto del header; "none" no agrega ruido
+// — sirve de chequeo de regresión: con --mode per-synapse --noise-model none
+// el resultado debe coincidir EXACTAMENTE con --mode shared para el mismo
+// --weight). "reramcmo" necesita además --reramcmo-g-max/--reramcmo-g-min
+// (sin default confiable — ver memristor_noise.hpp).
 //
 // Solo evalúa episodios con una red ya entrenada — nunca entrena.
+//
+// --noise-scale escala la intensidad del modelo elegido (0=sin ruido, 1=los
+// valores por defecto del header, 2=el doble). --prog-noise-scale/
+// --read-noise-scale/--drift-scale la desglosan por mecanismo para ablación
+// uno-a-la-vez (si no se pasan, caen en --noise-scale). ReRAM (Wan2022) no
+// separa programación de deriva/lectura en su modelo — un solo valor para
+// los tres; ReRamCMO sí los separa, como PCM.
+//
+// Cada fila también imprime weight_rmse: el RMSE de los pesos realmente
+// realizados (tras el ruido) contra los nominales, normalizado por w_max —
+// a diferencia de noise_scale, es la MISMA unidad en los cuatro modelos, así
+// que sirve de eje común para comparar simple/pcm/reram/reramcmo entre sí.
+//
+// --n-levels N: cuantiza la conductancia a N niveles distinguibles al
+// programar (<=1 = continuo, de siempre). No es parte de ningún dato de
+// Nandakumar/Wan — mecanismo adicional para estudiar el efecto de una
+// resolución de programación finita (par diferencial, cada rama por
+// separado).
 //
 // Uso:
 //   ./wann_car_noise -f red.out -d p/car_snn.json [-p overrides.json] \
 //       (--weight-index N | --weight VAL) \
-//       [--mode shared|per-synapse] [--noise-model none|simple|pcm|reram] \
+//       [--mode shared|per-synapse] [--noise-model none|simple|pcm|reram|reramcmo] \
 //       [--n-chips N] [--reads-per-chip N] [--t-inference t1,t2,...] \
-//       [--w-max V] --seeds s0,s1,...
+//       [--w-max V] [--noise-scale F] \
+//       [--prog-noise-scale F] [--read-noise-scale F] [--drift-scale F] \
+//       [--n-levels N] [--reramcmo-g-max V] [--reramcmo-g-min V] \
+//       --seeds s0,s1,...
 
 #include "../include/wann/Hyperparams.h"
 #include "../include/wann/Ind.h"
@@ -107,15 +130,31 @@ struct Args {
     int readsPerChip = 1;
     std::string tInferenceArg;
     double wMax = -1.0;  // -1 = sin especificar -> default más abajo
+    double noiseScale = 1.0;
+    // Sentinela -1 = "no se pasó esta flag, usar noiseScale". Permiten
+    // ablación mecanismo-por-mecanismo (p. ej. --read-noise-scale 0
+    // --drift-scale 0 para medir SOLO ruido de programación/D2D).
+    double progNoiseScale = -1.0;
+    double readNoiseScale = -1.0;
+    double driftScaleArg  = -1.0;
+    int nLevels = 0;  // <=1 (o 0) = conductancia continua, de siempre
+    // reramcmo no tiene default confiable en aihwkit (ver memristor_noise.hpp)
+    // — estos SÍ son valores de este binario, no de Falcone et al.; pasar los
+    // propios si se tienen mediciones reales.
+    double reramcmoGMax = 25.0;
+    double reramcmoGMin = 1.0;
 };
 
 void printUsage(const char* argv0) {
     std::cerr << "Uso: " << argv0
               << " -f red.out -d config.json [-p overrides.json] "
                  "(--weight-index N | --weight VAL) "
-                 "[--mode shared|per-synapse] [--noise-model none|simple|pcm|reram] "
+                 "[--mode shared|per-synapse] [--noise-model none|simple|pcm|reram|reramcmo] "
                  "[--n-chips N] [--reads-per-chip N] [--t-inference t1,t2,...] "
-                 "[--w-max V] --seeds s0,s1,...\n";
+                 "[--w-max V] [--noise-scale F] "
+                 "[--prog-noise-scale F] [--read-noise-scale F] [--drift-scale F] "
+                 "[--n-levels N] [--reramcmo-g-max V] [--reramcmo-g-min V] "
+                 "--seeds s0,s1,...\n";
 }
 
 }  // namespace
@@ -136,6 +175,13 @@ int main(int argc, char* argv[]) {
         else if (arg == "--reads-per-chip" && i+1 < argc) { a.readsPerChip = std::stoi(argv[++i]); }
         else if (arg == "--t-inference"    && i+1 < argc) { a.tInferenceArg = argv[++i]; }
         else if (arg == "--w-max"          && i+1 < argc) { a.wMax         = std::stod(argv[++i]); }
+        else if (arg == "--noise-scale"    && i+1 < argc) { a.noiseScale   = std::stod(argv[++i]); }
+        else if (arg == "--prog-noise-scale" && i+1 < argc) { a.progNoiseScale = std::stod(argv[++i]); }
+        else if (arg == "--read-noise-scale" && i+1 < argc) { a.readNoiseScale = std::stod(argv[++i]); }
+        else if (arg == "--drift-scale"      && i+1 < argc) { a.driftScaleArg  = std::stod(argv[++i]); }
+        else if (arg == "--n-levels"         && i+1 < argc) { a.nLevels        = std::stoi(argv[++i]); }
+        else if (arg == "--reramcmo-g-max"   && i+1 < argc) { a.reramcmoGMax   = std::stod(argv[++i]); }
+        else if (arg == "--reramcmo-g-min"   && i+1 < argc) { a.reramcmoGMin   = std::stod(argv[++i]); }
         else { printUsage(argv[0]); return 1; }
     }
 
@@ -149,8 +195,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     if (a.noiseModel != "none" && a.noiseModel != "simple" &&
-        a.noiseModel != "pcm" && a.noiseModel != "reram") {
-        std::cerr << "--noise-model debe ser 'none', 'simple', 'pcm' o 'reram'.\n";
+        a.noiseModel != "pcm" && a.noiseModel != "reram" && a.noiseModel != "reramcmo") {
+        std::cerr << "--noise-model debe ser 'none', 'simple', 'pcm', 'reram' o 'reramcmo'.\n";
         return 1;
     }
     if ((a.weightIndex < 0) == (a.weight < 0.0)) {
@@ -184,6 +230,12 @@ int main(int argc, char* argv[]) {
         tInference = parseDoubles(a.tInferenceArg);
     } else if (a.noiseModel == "reram") {
         tInference = {1.0, 86400.0, 172800.0};
+    } else if (a.noiseModel == "reramcmo") {
+        // t_inference==0 es un bypass TOTAL en este modelo (ni deriva ni
+        // ruido de lectura, ver memristor_noise.hpp) — 1s como default para
+        // que el barrido de intensidad por defecto sí ejercite los tres
+        // mecanismos, no solo programación.
+        tInference = {1.0};
     }
 
     std::vector<int> positions;
@@ -197,7 +249,45 @@ int main(int argc, char* argv[]) {
 
     const auto seeds = parseInts(a.seedsArg);
 
-    std::cout << "seed,chip,read,t_inference,mode,noise_model,weight,reward_shaped,reward_original\n";
+    // --noise-scale escala la intensidad de cada modelo (1.0 = valores por
+    // defecto del header, ajustados por IBM/literatura; 0.0 = sin ruido;
+    // 2.0 = el doble). --prog-noise-scale/--read-noise-scale/--drift-scale
+    // (si se pasan) la desglosan por mecanismo, para ablación uno-a-la-vez —
+    // si no se pasan, caen en --noise-scale (comportamiento de siempre).
+    // ReRAM no distingue programación de deriva/lectura en su modelo (ver
+    // memristor_noise.hpp): usa un solo progScale para las tres.
+    const double progScale  = (a.progNoiseScale >= 0.0) ? a.progNoiseScale : a.noiseScale;
+    const double readScale  = (a.readNoiseScale >= 0.0) ? a.readNoiseScale : a.noiseScale;
+    const double driftScale = (a.driftScaleArg  >= 0.0) ? a.driftScaleArg  : a.noiseScale;
+
+    memnoise::DeviceModel dmSimple;
+    dmSimple.c0 *= progScale;
+    dmSimple.c1 *= progScale;
+    dmSimple.c2 *= progScale;
+    dmSimple.r0 *= readScale;
+    dmSimple.n_levels = a.nLevels;
+
+    memnoise::PCMDeviceModel dmPcm;
+    dmPcm.prog_noise_scale = progScale;
+    dmPcm.read_noise_scale = readScale;
+    dmPcm.drift_scale      = driftScale;
+    dmPcm.n_levels         = a.nLevels;
+
+    memnoise::ReRamWan2022DeviceModel dmReram;
+    dmReram.noise_scale = progScale;
+    dmReram.n_levels    = a.nLevels;
+
+    memnoise::ReRamCMODeviceModel dmReramCmo;
+    dmReramCmo.g_max = a.reramcmoGMax;
+    dmReramCmo.g_min = a.reramcmoGMin;
+    dmReramCmo.prog_noise_scale = progScale;
+    dmReramCmo.read_noise_scale = readScale;
+    dmReramCmo.drift_scale      = driftScale;
+    dmReramCmo.n_levels         = a.nLevels;
+
+    std::cout << "seed,chip,read,t_inference,mode,noise_model,weight,"
+                 "prog_noise_scale,read_noise_scale,drift_scale,weight_rmse,"
+                 "reward_shaped,reward_original\n";
     std::cout << std::scientific;
 
     for (int seed : seeds) {
@@ -208,13 +298,14 @@ int main(int argc, char* argv[]) {
             std::mt19937_64 rng(static_cast<uint64_t>(seed) * 1000003ULL +
                                  static_cast<uint64_t>(chip));
 
-            // Los tres crossbars se construyen siempre (barato: solo arma
+            // Los cuatro crossbars se construyen siempre (barato: solo arma
             // vectores, no consume RNG) pero solo el del modelo elegido llega
             // a usarse (program()/read_weights()) — así no hay que repetir el
-            // bucle de lectura cuatro veces, uno por modelo.
-            memnoise::NoisyCrossbar             simple(baseWeights, wMax, memnoise::DeviceModel{});
-            memnoise::PCMNoisyCrossbar           pcm(baseWeights, wMax, memnoise::PCMDeviceModel{});
-            memnoise::ReRamWan2022NoisyCrossbar  reram(baseWeights, wMax, memnoise::ReRamWan2022DeviceModel{});
+            // bucle de lectura cinco veces, uno por modelo.
+            memnoise::NoisyCrossbar             simple(baseWeights, wMax, dmSimple);
+            memnoise::PCMNoisyCrossbar           pcm(baseWeights, wMax, dmPcm);
+            memnoise::ReRamWan2022NoisyCrossbar  reram(baseWeights, wMax, dmReram);
+            memnoise::ReRamCMONoisyCrossbar      reramcmo(baseWeights, wMax, dmReramCmo);
 
             // readFn(t_inference) -> ruido de LECTURA fresco (nuevo cada
             // llamada); el ruido de ESCRITURA/los coeficientes de deriva se
@@ -241,6 +332,13 @@ int main(int argc, char* argv[]) {
                     reram.read_weights(rng, t, out);
                     return out;
                 };
+            } else if (a.noiseModel == "reramcmo") {
+                reramcmo.program(rng);
+                readFn = [&](double t) {
+                    std::vector<double> out;
+                    reramcmo.read_weights(rng, t, out);
+                    return out;
+                };
             } else {  // "none": sin ruido, chequeo de regresión contra evalEpisodes()
                 readFn = [&](double) { return baseWeights; };
             }
@@ -256,6 +354,19 @@ int main(int argc, char* argv[]) {
                         static_cast<long long>(read) * 100LL;
 
                     const std::vector<double> noisy = readFn(t);
+
+                    // Métrica común entre modelos: RMSE de los pesos
+                    // realizados vs. los nominales, normalizado por w_max —
+                    // a diferencia de noise_scale (que no es la misma unidad
+                    // en simple/pcm/reram), esto sí es directamente
+                    // comparable entre los tres.
+                    double sqErrSum = 0.0;
+                    for (size_t k = 0; k < noisy.size(); ++k) {
+                        const double err = noisy[k] - baseWeights[k];
+                        sqErrSum += err * err;
+                    }
+                    const double weightRmse =
+                        std::sqrt(sqErrSum / static_cast<double>(noisy.size())) / wMax;
 
                     double rewardShaped, rewardOriginal;
                     if (a.mode == "shared") {
@@ -273,6 +384,8 @@ int main(int argc, char* argv[]) {
 
                     std::cout << seed << ',' << chip << ',' << read << ',' << t << ','
                                << a.mode << ',' << a.noiseModel << ',' << weightVal << ','
+                               << progScale << ',' << readScale << ',' << driftScale << ','
+                               << weightRmse << ','
                                << rewardShaped << ',' << rewardOriginal << '\n';
                 }
             }

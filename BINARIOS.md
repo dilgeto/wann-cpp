@@ -12,6 +12,10 @@ Convenciones comunes:
 - El paralelismo sobre individuos usa OpenMP: `OMP_NUM_THREADS=N ./wann_car ...`.
 - "Peso" = uno de los `alg_nVals` valores del peso compartido
   (`WEIGHT_VALS = {0.5, 1, 2, 3, 5, 8}`). `.wi` guarda el índice ganador.
+- Cualquier gráfico/figura se genera con un script de Python (matplotlib, mismo
+  estilo que `graph.py`/`generate_graphs.sh`, salida a `graficos/<Tarea>/`) —
+  nunca como página HTML/Artifact — salvo que se pida explícitamente lo
+  contrario (ver `CLAUDE.md`).
 
 Terminología: "Mountain Car" a secas = discreto (`disc_mc`, `MountainCar-v0`).
 El continuo es `mountain_car` (siempre "continuous Mountain Car").
@@ -160,6 +164,19 @@ un CSV con una fila por seed. Lo orquesta `eval_results/eval_p3_weights.py`.
 | `--episode-detail` | En vez del promedio por (seed, peso), imprime cada episodio individual (`seed,episode,reward`). Requiere `--weight-index` | off |
 | `--weight-index` | Índice de peso (≥ 0) para `--episode-detail` | — |
 | `--nreps` | Sobrescribe `alg_nReps` solo en memoria | del config |
+| `--ablate-inhibitory` | Ablación post-hoc: `w<0 → 0` (quita las sinapsis inhibitorias) | off |
+| `--flip-inhibitory` | `w<0 → +|w|` (inhibitorias pasan a excitatorias, misma topología) | off |
+| `--drop-random-exc K` | Quita K sinapsis excitatorias al azar (control de `--ablate-inhibitory` con K = nº de inhibitorias) | off |
+| `--force-neuron-type N` | Todas las neuronas (entradas, bias, ocultas, salidas) pasan al tipo N (1..6) | off |
+| `--shuffle-types` | Permuta los tipos entre neuronas (mismo histograma) | off |
+| `--ablate-seed S` | Semilla de los dos controles aleatorios | 0 |
+
+Las ablaciones solo transforman la red ya cargada (no tocan el archivo ni el
+entrenamiento) y escriben un resumen en stderr. Las orquesta
+`eval_results/ablation_study.py` (`check` / `run` / `analyze`): estudio de
+ablación de polaridad y tipo de neuron sobre la red ganadora del bootstrap de
+cada tarea, con las mismas seeds de episodio que el bootstrap (pareado).
+Salidas en `eval_results/ablation/` y `graficos/<Tarea>/<run_key>_ablation*.png`.
 
 ---
 
@@ -265,8 +282,9 @@ corridas los intervalos de correlación son muy anchos (los scripts avisan).
 **Solo evalúa, no entrena.** Mide qué tan robusta es una red `car` ya
 entrenada al ruido de memristores (escritura/programación del chip + lectura
 en cada inferencia), usando los modelos de `memristor_noise.hpp` (puertos
-literales de IBM `aihwkit`: PCM — Nandakumar et al., ICECS 2019 — y ReRAM —
-Wan et al., Nature 2022). Dos modos activables con `--mode`:
+literales de IBM `aihwkit`: PCM — Nandakumar et al., ICECS 2019 —, ReRAM —
+Wan et al., Nature 2022 — y ReRAM CMO/HfOx — Falcone et al., IBM Research
+Europa-Zúrich). Dos modos activables con `--mode`:
 
 - `shared`: un único valor ruidoso para **toda** la red (como ya evalúa
   `wann_eval_weights_car`/`evalEpisodes`, pero con el escalar perturbado por
@@ -280,9 +298,12 @@ Wan et al., Nature 2022). Dos modos activables con `--mode`:
 ```bash
 ./build/wann_car_noise -f red.out -d p/car_snn.json [-p overrides.json] \
     (--weight-index N | --weight VAL) \
-    [--mode shared|per-synapse] [--noise-model none|simple|pcm|reram] \
+    [--mode shared|per-synapse] [--noise-model none|simple|pcm|reram|reramcmo] \
     [--n-chips N] [--reads-per-chip N] [--t-inference t1,t2,...] \
-    [--w-max V] --seeds s0,s1,...
+    [--w-max V] [--noise-scale F] \
+    [--prog-noise-scale F] [--read-noise-scale F] [--drift-scale F] \
+    [--n-levels N] [--reramcmo-g-max V] [--reramcmo-g-min V] \
+    --seeds s0,s1,...
 ```
 
 | Flag | Significado | Default |
@@ -293,19 +314,25 @@ Wan et al., Nature 2022). Dos modos activables con `--mode`:
 | `--weight-index` / `--weight` | Uno de los dos, **obligatorio**: índice en `WEIGHT_VALS` (`0..5`) o un valor de peso directo | — |
 | `-p` | Overrides del config (archivo) | ninguno |
 | `--mode` | `shared` o `per-synapse` | `shared` |
-| `--noise-model` | `none` (sin ruido — chequeo de regresión), `simple` (placeholder de dos coeficientes), `pcm`, `reram` | `none` |
+| `--noise-model` | `none` (sin ruido — chequeo de regresión), `simple` (placeholder de dos coeficientes), `pcm`, `reram`, `reramcmo` | `none` |
 | `--n-chips` | Nº de instancias de "chip" simuladas (cada una re-sortea ruido de escritura) | `100` |
-| `--reads-per-chip` | Nº de lecturas (inferencias) por chip (ruido de lectura fresco en cada una) | `1` |
-| `--t-inference` | Segundos desde la programación, CSV. Solo importa para `pcm`/`reram` (deriva). `reram` exige que coincida exactamente con una clave de `ReRamWan2022DeviceModel::coeff_dic` | `0` (pcm); `1,86400,172800` (reram) |
+| `--reads-per-chip` | Nº de lecturas (inferencias) por chip (ruido de lectura fresco en cada una). Pasar > 1 es necesario para que `summarize_car_noise.py` pueda separar varianza entre-chips de varianza dentro-de-chip | `1` |
+| `--t-inference` | Segundos desde la programación, CSV. Solo importa para `pcm`/`reram`/`reramcmo` (deriva). `reram` exige que coincida exactamente con una clave de `ReRamWan2022DeviceModel::coeff_dic`; `reramcmo` acepta cualquier valor (deriva continua), pero `0` es un bypass total (sin deriva ni ruido de lectura) | `0` (pcm); `1,86400,172800` (reram); `1` (reramcmo) |
 | `--w-max` | Conductancia máxima del chip en unidades de peso lógico (mapea `|peso| = w_max` → `g_max`) | máximo de `WEIGHT_VALS` (`8.0`) |
+| `--noise-scale` | Multiplicador de intensidad sobre los tres mecanismos del modelo elegido a la vez (`0` = sin ruido, `1` = los valores por defecto del header, `2` = el doble). Sin efecto con `--noise-model none` | `1.0` |
+| `--prog-noise-scale` / `--read-noise-scale` / `--drift-scale` | Desglosan `--noise-scale` por mecanismo, para ablación uno-a-la-vez (p. ej. `--read-noise-scale 0 --drift-scale 0` mide SOLO ruido de programación/D2D). Si no se pasan, cada uno cae en `--noise-scale`. `reram` (Wan2022) no distingue programación de deriva/lectura en su modelo — un solo valor (`--prog-noise-scale`, o `--noise-scale` si no se da) cubre los tres; `reramcmo` sí los separa, como PCM | sin pasar → `--noise-scale` |
+| `--n-levels` | Cuantiza la conductancia a N niveles distinguibles al programar (par diferencial, cada rama por separado) — modela resolución de programación finita, no viene de ningún paper citado | `0` (continuo) |
+| `--reramcmo-g-max` / `--reramcmo-g-min` | Conductancia máx/mín (µS) del modelo ReRAM CMO/HfOx — **sin valor por defecto confiable en aihwkit** (su `__init__` exige pasarlos; acá los defaults son solo ilustrativos, no de Falcone et al.). `g_min > 0` por defecto: la rama "apagada" de cada par diferencial siempre queda flotando en al menos `g_min`, incluso sin ruido — es una propiedad física del modelo, no un bug (ver `memristor_noise.hpp`) | `25.0` / `1.0` |
 
-Salida: CSV a stdout, una fila por `(seed, chip, read, t_inference)` con el
-reward promediado sobre `alg_nReps` episodios —
-`seed,chip,read,t_inference,mode,noise_model,weight,reward_shaped,reward_original`
-(`weight` = el peso nominal usado, `--weight`/`WEIGHT_VALS[--weight-index]` —
-sirve para no perder esa información si concatenás corridas con distintos
-pesos). Sin agregación estadística en C++: usar
-`eval_results/summarize_car_noise.py` sobre el CSV resultante.
+Salida: CSV a stdout, una fila por `(seed, chip, read, t_inference, escalas)`
+con el reward promediado sobre `alg_nReps` episodios —
+`seed,chip,read,t_inference,mode,noise_model,weight,prog_noise_scale,read_noise_scale,drift_scale,weight_rmse,reward_shaped,reward_original`.
+`weight_rmse` es el RMSE entre el peso realmente realizado (tras el ruido) y
+el nominal, normalizado por `w_max` — a diferencia de `noise_scale`, es la
+**misma unidad en los cuatro modelos**, así que sirve de eje común para
+comparar `simple`/`pcm`/`reram`/`reramcmo` entre sí (ver `plot_car_noise_rmse.py`).
+Sin agregación estadística en C++: usar `eval_results/summarize_car_noise.py`
+sobre el CSV resultante.
 
 ```bash
 # chequeo de regresión: deben coincidir EXACTAMENTE (verificado al implementar)
@@ -314,18 +341,73 @@ pesos). Sin agregación estadística en C++: usar
 ./build/wann_car_noise -f red.out -d p/car_snn.json --weight-index 1 \
     --mode per-synapse --noise-model none --n-chips 1 --reads-per-chip 1 --seeds 0
 
-# robustez real: 100 chips × 3 lecturas con el modelo PCM, modo per-sinapsis.
-# Guardar también un baseline sin ruido (mismo mode/weight) para comparar.
+# ablación: SOLO ruido de programación/D2D (lectura y deriva apagadas)
 ./build/wann_car_noise -f red.out -d p/car_snn.json --weight-index 1 \
-    --mode per-synapse --noise-model none --n-chips 1 --reads-per-chip 1 \
-    --seeds 0,1,2,3,4 > log/car_noise_none.csv
-./build/wann_car_noise -f red.out -d p/car_snn.json --weight-index 1 \
-    --mode per-synapse --noise-model pcm --n-chips 100 --reads-per-chip 3 \
-    --t-inference 0,3600,86400 --seeds 0,1,2,3,4 > log/car_noise_pcm.csv
+    --mode per-synapse --noise-model pcm \
+    --prog-noise-scale 1 --read-noise-scale 0 --drift-scale 0 \
+    --n-chips 30 --reads-per-chip 3 --seeds 0,1 > log/car_noise_prog_only.csv
 
-# resumen (media/std/sem entre chips y caída de reward vs. el baseline sin ruido)
-python eval_results/summarize_car_noise.py --csv log/car_noise_none.csv log/car_noise_pcm.csv
+# resolución de programación finita: solo 8 niveles de conductancia distinguibles
+./build/wann_car_noise -f red.out -d p/car_snn.json --weight-index 1 \
+    --mode per-synapse --noise-model pcm --n-levels 8 \
+    --n-chips 30 --reads-per-chip 1 --seeds 0,1 > log/car_noise_8levels.csv
+
+# resumen: media, std TOTAL, std entre-chips, std dentro-de-chip, percentiles
+# 10/50/90, IC 95% por bootstrap (remuestreando chips) y fracción de chips
+# por encima de un umbral
+python eval_results/summarize_car_noise.py --csv log/car_noise_prog_only.csv \
+    --success-threshold 500
+
+# las figuras de una sola vez (barrido de --noise-scale, de --t-inference, y
+# opcionalmente la grilla 2D completa), orquestando wann_car_noise por vos —
+# ver eval_results/run_car_noise_sweeps.py
+python eval_results/run_car_noise_sweeps.py \
+    --net log/full_p3_car_ttfs_first_spike/ttfs_first_spike_pruned.out \
+    --weight-index 5 --reads-per-chip 3 --prefix car_ttfs_first_spike --jobs 4
+
+# eje común entre modelos (RMSE efectivo) — no necesita --grid
+python eval_results/plot_car_noise_rmse.py --csv log/car_ttfs_first_spike_noise_sweep.csv \
+    --out "graficos/Racing Car/car_ttfs_first_spike_rmse_robustness.png"
 ```
+
+`run_car_noise_sweeps.py` corre varios barridos y genera las figuras
+correspondientes en una sola invocación:
+
+- **Intensidad** (`--noise-scales`, default `0,0.5,...,5.0`): una llamada a
+  `wann_car_noise` por `(noise_model, noise_scale)` — `--noise-scale` es un
+  escalar, no admite lista — con `t_inference` fijo (`0` para simple/pcm, `1`
+  para reram/reramcmo). Resultado: `<prefix>_noise_sweep.csv` +
+  `eval_results/plot_car_noise.py` → `<prefix>_noise_robustness.png`.
+- **Tiempo** (`--time-points-pcm`/`--time-points-reram`/`--time-points-reramcmo`):
+  acá sí una sola llamada por modelo (`--t-inference` sí admite lista), con
+  `noise_scale` fijo en `1.0`. El modelo "simple" queda afuera (no depende del
+  tiempo). `--time-points-pcm`/`--time-points-reramcmo` por defecto son una
+  grilla log de 60 s a 1 año más el 0 como referencia "recién programado"
+  (`0,60,300,3600,21600,86400,604800,2592000,31536000` — convención de Le
+  Gallo et al. 2023 para evaluar drift con aihwkit). `--time-points-reram`
+  queda fijo en sus 3 únicas claves medidas. Resultado: `<prefix>_time_sweep.csv`
+  + `eval_results/plot_car_noise_time.py` → `<prefix>_time_robustness.png`.
+- **Grilla 2D** (`--grid`): combina los dos ejes — una llamada por
+  `(noise_model, noise_scale)` con la lista COMPLETA de tiempos de ese
+  modelo (pcm/reram/reramcmo, no "simple"). Resultado: `<prefix>_grid_sweep.csv`
+  + `eval_results/plot_car_noise_heatmap.py` (uno por modelo) →
+  `<prefix>_heatmap_{pcm,reram,reramcmo}.png` — muestra interacciones que las
+  dos curvas 1D no pueden (p. ej. si la deriva solo importa cuando el ruido de
+  programación ya es alto).
+
+`--weight-indices 1,3,5` (en vez de `--weight-index`) repite cualquiera de
+los barridos de arriba para cada peso compartido de la lista, concatenados
+en el mismo CSV (la columna `weight` los distingue) — la premisa de WANN es
+desempeño estable a través de pesos; esto permite ver si eso se sostiene
+también bajo ruido. `--jobs N` corre invocaciones de `wann_car_noise` en
+paralelo (son procesos independientes, no usan OpenMP internamente).
+`--dry-run` solo imprime los comandos; `--skip-plots` genera únicamente los
+CSV.
+
+Cualquier gráfico/figura sobre estos resultados se genera con un script de
+Python (`eval_results/plot_car_noise{,_time,_rmse,_heatmap}.py`,
+`eval_results/run_car_noise_sweeps.py`, o uno nuevo del mismo estilo), nunca
+como página HTML/Artifact — ver la nota en la cabecera de este documento.
 
 ---
 
