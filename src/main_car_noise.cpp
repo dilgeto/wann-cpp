@@ -1,4 +1,4 @@
-// wann_car_noise – evalúa la robustez de una red car ya entrenada a ruido de
+// wann_car_noise / wann_acrobot_noise / wann_disc_mc_noise – evalúan la robustez de una red ya entrenada a ruido de
 // memristores (escritura/programación + lectura), en dos modos activables:
 //
 //   --mode shared       : un único valor ruidoso (muestreado del modelo de
@@ -52,7 +52,21 @@
 
 #include "../include/wann/Hyperparams.h"
 #include "../include/wann/Ind.h"
+// La tarea se fija en tiempo de compilación (por defecto car; NOISE_TASK_ACROBOT /
+// NOISE_TASK_DISC_MC para los otros dos binarios) por la misma razón que
+// main_eval_weights.cpp: dos SnnXxxTask.cpp en un mismo binario chocan por
+// símbolos no-inline de rl-tools. Todo lo demás (modelos de ruido, protocolo,
+// CSV) es independiente de la tarea.
+#if defined(NOISE_TASK_ACROBOT)
+#include "../include/wann/SnnAcrobotTask.h"
+using NoiseTask = wann::SnnAcrobotTask;
+#elif defined(NOISE_TASK_DISC_MC)
+#include "../include/wann/SnnDiscMCTask.h"
+using NoiseTask = wann::SnnDiscMCTask;
+#else
 #include "../include/wann/SnnCarTask.h"
+using NoiseTask = wann::SnnCarTask;
+#endif
 #include "memristor_noise.hpp"
 
 #include <algorithm>
@@ -214,15 +228,15 @@ int main(int argc, char* argv[]) {
     }
 
     auto [wVec, aVec, wKey] = wann::importNet(a.netFile);
-    wann::SnnCarTask task(hyp);
+    NoiseTask task(hyp);
 
     const double weightVal = (a.weightIndex >= 0)
-        ? wann::SnnCarTask::WEIGHT_VALS[a.weightIndex]
+        ? NoiseTask::WEIGHT_VALS[a.weightIndex]
         : a.weight;
 
     const double wMaxDefault = *std::max_element(
-        wann::SnnCarTask::WEIGHT_VALS,
-        wann::SnnCarTask::WEIGHT_VALS + wann::SnnCarTask::N_WEIGHTS);
+        NoiseTask::WEIGHT_VALS,
+        NoiseTask::WEIGHT_VALS + NoiseTask::N_WEIGHTS);
     const double wMax = (a.wMax > 0.0) ? a.wMax : wMaxDefault;
 
     std::vector<double> tInference = {0.0};

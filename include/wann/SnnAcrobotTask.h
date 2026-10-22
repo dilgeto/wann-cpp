@@ -70,6 +70,18 @@ public:
                  double weight, int nEpisodes,
                  int baseSeed) const;
 
+    // Como evalEpisodes(), pero cada conexión habilitada recibe su propia
+    // magnitud desde synapseMagnitudes (mismo layout N×N disperso que wVec,
+    // posición i*N+j) en vez de un escalar compartido — para el análisis de
+    // robustez a ruido de memristores (memristor_noise.hpp / main_car_noise.cpp
+    // compilado con NOISE_TASK_*). El signo lo sigue dando wVec; de
+    // synapseMagnitudes solo se usa el valor absoluto.
+    std::pair<std::vector<double>,std::vector<double>>
+    evalEpisodesPerSynapse(const std::vector<double>& wVec,
+                           const std::vector<int>&    aVec,
+                           const std::vector<double>& synapseMagnitudes,
+                           int nEpisodes, int baseSeed) const;
+
     // Columns: step,cos_th1,sin_th1,cos_th2,sin_th2,dth1,dth2,action,reward
     // bestWi: index into WEIGHT_VALS used for the logged episode.
     // evalSeed: training evaluate() seed (directSeed=false) or direct episode seed (directSeed=true).
@@ -93,10 +105,18 @@ private:
 
     static NeuronType wannActToNeuronType(int actId);
 
+    // synapseMagnitudes (opcional): layout N×N disperso igual a wVec; si no es
+    // null, fija además net.setSynapseWeight(sid, fabs(synapseMagnitudes[i*N+j]))
+    // por cada sinapsis creada (ver evalEpisodesPerSynapse()).
     Network buildNetwork(const std::vector<double>& wVec,
-                         const std::vector<int>&    aVec) const;
+                         const std::vector<int>&    aVec,
+                         const std::vector<double>* synapseMagnitudes = nullptr) const;
 
-    std::pair<double,double> runEpisode(Network& net, double sharedWeight, long long episodeSeed) const;
+    // perSynapseWeights: si true, usa net.step() (pesos por sinapsis ya fijados
+    // por buildNetwork(..., synapseMagnitudes)) en vez de net.step(sharedWeight)
+    // — sharedWeight se ignora en ese caso.
+    std::pair<double,double> runEpisode(Network& net, double sharedWeight, long long episodeSeed,
+                                        bool perSynapseWeights = false) const;
 };
 
 } // namespace wann

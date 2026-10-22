@@ -411,6 +411,50 @@ como página HTML/Artifact — ver la nota en la cabecera de este documento.
 
 ---
 
+### 4d-bis. WANN vs. gradientes surrogados bajo ruido — `run_noise_compare.py`
+
+Compara el mejor modelo WANN de cada tarea con checkpoints de
+`../surrogate-gradient-rl` (`scripts/noise_eval.py`; mismos modelos de ruido,
+mismo generador por (semilla, chip), mismo entorno) en una sola pasada y en
+paralelo. Solo evalúa. Las tres tareas:
+
+| Tarea | WANN (binario) | Mejor modelo (mayor `reward` revalidado) | SGRL |
+|---|---|---|---|
+| `car` | `wann_car_noise` | `car_ttfs_first_spike_discrete` | `carrace-f2` |
+| `disc_mc` (Mountain Car discreto) | `wann_disc_mc_noise` | mejor de `disc_mc_*_discrete` | `mountaincar-f2` |
+| `acrobot` | `wann_acrobot_noise` | mejor de `acrobot_*` (búsqueda original) | `acrobot-f2` |
+
+`wann_acrobot_noise` y `wann_disc_mc_noise` son el mismo `main_car_noise.cpp` con la tarea
+fijada en compilación (`NOISE_TASK_ACROBOT`/`NOISE_TASK_DISC_MC`; mismo motivo que
+`wann_eval_weights_<tarea>`) y requieren `evalEpisodesPerSynapse` de `SnnAcrobotTask`/
+`SnnDiscMCTask`. Chequeo de regresión hecho: con `--noise-model none`, `--mode per-synapse`
+da exactamente lo mismo que `--mode shared` en ambas tareas.
+
+Cada trabajo es una celda (modelo, escala, t, mecanismo) de una semilla de un modelo; el
+planificador (uno solo para todas las tareas) mantiene `--jobs` procesos vivos y como mucho
+`--jobs-sgrl` de Python/torch (~0.5 GB cada uno). Es reanudable (`parts/` atómico) y un trabajo
+fallido no aborta el resto.
+
+```bash
+python eval_results/run_noise_compare.py --dry-run                      # plan, modelos elegidos y estimación
+python eval_results/run_noise_compare.py --jobs 500 --jobs-sgrl 250     # las tres tareas
+python eval_results/run_noise_compare.py --task acrobot --sg-top 1      # una sola tarea
+python eval_results/plot_noise_compare.py --data-dir eval_results/acrobot_wann_vs_sgrl   # solo figuras
+```
+
+Por defecto: la red ganadora con los 6 pesos compartidos y las 5 mejores semillas del mejor
+trial de SGRL; 30 chips × 2 semillas × 3 lecturas; `--episodes` = `alg_nReps` (6). Salida en
+`eval_results/<tarea>_wann_vs_sgrl/` (`sweep_all.csv`, `models.csv`, `aggregated.csv`,
+`protocol.json`) y figuras `graficos/<Tarea>/<tarea>_wann_vs_sgrl_*.png` (intensidad, tiempo,
+RMSE, heatmaps y ablación por dispositivo).
+
+La comparación justa es la *retención*: `(retorno − piso)/(retorno sin ruido − piso)`, con
+piso = recompensa del peor desenlace (car 0; Mountain Car discreto −200; Acrobot −500; las dos
+últimas dan −1 por paso). Se usa la recompensa *original* (la shaped difiere en acrobot y
+disc_mc). Diferencia que no se puede igualar: en WANN cada sinapsis vale ±(peso compartido) y
+`w_max` es el mayor `WEIGHT_VALS` de la tarea (el valor por defecto de `--w-max`), mientras que
+SGRL usa pesos entrenados con `w_max = max|W|` por capa, así que el ruido relativo cae distinto.
+
 ## 5. Exportar a ODIN — `wann_car_odin_export`
 
 Convierte una red car ya evolucionada a un JSON de configuración para el core

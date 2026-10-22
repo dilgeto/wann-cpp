@@ -332,6 +332,27 @@ target_link_libraries(wann_car_noise PRIVATE
     rl_tools_iface
     OpenMP::OpenMP_CXX)
 
+# Mismo main que wann_car_noise, con la tarea fijada en compilación (ver el
+# comentario en main_car_noise.cpp): una binaria por tarea.
+foreach(NOISE_TASK acrobot disc_mc)
+    string(TOUPPER ${NOISE_TASK} NOISE_TASK_UC)
+    if(NOISE_TASK STREQUAL "acrobot")
+        set(NOISE_TASK_SRC src/SnnAcrobotTask.cpp)
+    else()
+        set(NOISE_TASK_SRC src/SnnDiscMCTask.cpp)
+    endif()
+    add_executable(wann_${NOISE_TASK}_noise src/main_car_noise.cpp ${NOISE_TASK_SRC})
+    target_compile_definitions(wann_${NOISE_TASK}_noise PRIVATE NOISE_TASK_${NOISE_TASK_UC})
+    target_include_directories(wann_${NOISE_TASK}_noise PRIVATE include ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(wann_${NOISE_TASK}_noise PRIVATE
+        wann_lib
+        snn_engine_imp
+        snn_encoding_imp
+        snn_core_imp
+        rl_tools_iface
+        OpenMP::OpenMP_CXX)
+endforeach()
+
 # ---------------------------------------------------------------------------
 # Executable: wann_car_odin_export – convierte una red car ya entrenada
 # (.out/.wi) a una configuración para el core neuromórfico ODIN (mapeo de

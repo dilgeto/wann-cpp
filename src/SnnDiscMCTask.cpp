@@ -133,7 +133,8 @@ Network SnnDiscMCTask::buildNetwork(const Ind& ind) const
 }
 
 Network SnnDiscMCTask::buildNetwork(const std::vector<double>& wVec,
-                                    const std::vector<int>&    aVec) const
+                                    const std::vector<int>&    aVec,
+                                    const std::vector<double>* synapseMagnitudes) const
 {
     const int N = static_cast<int>(std::sqrt(static_cast<double>(wVec.size())));
     Network net(1.0, true);
@@ -151,15 +152,19 @@ Network SnnDiscMCTask::buildNetwork(const std::vector<double>& wVec,
         if (snn_id[i] < 0) continue;
         for (int j = 0; j < N; ++j) {
             if (snn_id[j] < 0 || i == j) continue;
-            if (wVec[i * N + j] != 0.0)
-                net.addSynapse(snn_id[i], snn_id[j], wVec[i * N + j] > 0.0);
+            if (wVec[i * N + j] != 0.0) {
+                const int sid = net.addSynapse(snn_id[i], snn_id[j], wVec[i * N + j] > 0.0);
+                if (synapseMagnitudes)
+                    net.setSynapseWeight(sid, std::fabs((*synapseMagnitudes)[i * N + j]));
+            }
         }
     }
 
     return net;
 }
 
-std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, long long episodeSeed) const
+std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWeight, long long episodeSeed,
+                                                   bool perSynapseWeights) const
 {
     DEVICE device;
     Env env;
@@ -213,7 +218,7 @@ std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWe
 
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
-                net.step(sharedWeight);
+                if (perSynapseWeights) net.step(); else net.step(sharedWeight);
                 const auto& outs = net.getOutputSpikes();
                 for (int a = 0; a < N_ACTIONS; ++a)
                     if ((int)outs.size() > a && outs[a])
@@ -240,7 +245,7 @@ std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWe
 
             for (int t = 0; t < window_steps; ++t) {
                 net.setInputCurrents(currents);
-                net.step(sharedWeight);
+                if (perSynapseWeights) net.step(); else net.step(sharedWeight);
                 const auto& outs = net.getOutputSpikes();
                 for (int a = 0; a < N_ACTIONS; ++a)
                     if ((int)outs.size() > a && outs[a])
@@ -338,6 +343,22 @@ std::pair<std::vector<double>,std::vector<double>> SnnDiscMCTask::evalEpisodes(
     std::vector<double> shaped(nEpisodes), original(nEpisodes);
     for (int i = 0; i < nEpisodes; ++i) {
         auto [s, o] = runEpisode(net, weight, baseSeed + i);
+        shaped[i]   = s;
+        original[i] = o;
+    }
+    return {shaped, original};
+}
+
+std::pair<std::vector<double>,std::vector<double>> SnnDiscMCTask::evalEpisodesPerSynapse(
+        const std::vector<double>& wVec,
+        const std::vector<int>&    aVec,
+        const std::vector<double>& synapseMagnitudes,
+        int nEpisodes, int baseSeed) const
+{
+    Network net = buildNetwork(wVec, aVec, &synapseMagnitudes);
+    std::vector<double> shaped(nEpisodes), original(nEpisodes);
+    for (int i = 0; i < nEpisodes; ++i) {
+        auto [s, o] = runEpisode(net, 0.0, baseSeed + i, /*perSynapseWeights=*/true);
         shaped[i]   = s;
         original[i] = o;
     }

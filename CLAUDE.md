@@ -488,11 +488,17 @@ Left deliberately unimplemented, pick up if it becomes the priority:
    blocked: implementing the hook is agent-doable, but evaluating whether it
    changes evolved topologies needs a real training campaign, which the agent
    cannot run.
-5. **Other tasks.** The whole harness (`SnnCarTask::evalEpisodesPerSynapse`,
-   `wann_car_noise`, the `eval_results/*_car_noise*.py` scripts) is `car`-only.
-   Porting to another task repeats the same `buildNetwork`/`runEpisode` pattern
-   per `SnnXxxTask.cpp` — mechanical, but a real decision of which task matters
-   enough to justify the duplication.
+5. **Other tasks.** Done for Acrobot and (discrete) Mountain Car: `wann_acrobot_noise` /
+   `wann_disc_mc_noise` are the same `main_car_noise.cpp` compiled per task
+   (`NOISE_TASK_*`), each task's `SnnXxxTask` got the same
+   `evalEpisodesPerSynapse`/`buildNetwork(..., synapseMagnitudes)` pair as `SnnCarTask`
+   (verified: `--noise-model none` per-synapse == shared, exactly), and
+   `eval_results/run_noise_compare.py` compares the best WANN model of each task against
+   the surrogate-gradient (`../surrogate-gradient-rl`) checkpoints — see `BINARIOS.md`
+   §4d-bis. Still car-only: the `eval_results/*_car_noise*.py` scripts and
+   `wann_car_noise`'s ablation/summary tooling; continuous Mountain Car, L2F and
+   BipedalWalker have no per-synapse path. `w_max` (default of `--w-max`) is the max of the
+   task's `WEIGHT_VALS`, not the weight being evaluated.
 6. **Connections absent from the genome as real G_min devices.** Speculative (not
    from any source): a physical crossbar's "empty" mask positions are still real
    devices sitting at `G_min` with their own noise/leakage, which the current
