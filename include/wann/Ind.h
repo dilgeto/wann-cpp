@@ -53,7 +53,11 @@ public:
     std::vector<double> wMat;  // N×N weight matrix, row-major (NaN = no conn)
     std::vector<double> wVec;  // wMat flattened, NaN replaced by 0
     std::vector<int>    aVec;  // activation function per node (topo order)
-    int nConn  = 0;            // number of active connections
+    int nConn  = 0;            // legacy count driving the 1/nConn objective: it still
+                               // includes disabled hidden->hidden genes that
+                               // getNodeOrder() writes as +1 (kept so selection is
+                               // unchanged). Use nConnExpressed for the real count.
+    int nConnExpressed = 0;    // synapses actually present in wVec/wMat (after express())
     int nNodes = 0;            // total nodes in expressed network
 
     // --- Fitness (assigned externally by tell()) ---

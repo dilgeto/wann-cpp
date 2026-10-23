@@ -33,11 +33,12 @@ PopSnapshot loadPopSnapshot(const std::string& path);
 //   - "nan" entries become disabled connections; their polarity is lost, so
 //     they are assumed excitatory.
 //   - innovation numbers are re-assigned, node ids follow matrix position.
-//   - getNodeOrder() writes disabled hidden->hidden edges as +1 (it
+//   - Files written before Ind::express restored NaN for disabled
+//     hidden->hidden edges (2026-10-23) hold them as +1 (getNodeOrder
 //     binarises that block with copysign, and copysign(1, NaN) = +1), so
-//     those come back as enabled excitatory connections. The rebuilt genome
-//     is therefore the one the eval/replay tools simulate, which can differ
-//     from the genome training evaluated when such edges exist.
+//     those come back as enabled excitatory connections; such a file is NOT
+//     the network training evaluated and cannot be repaired. Files written
+//     since then keep them as NaN and round-trip exactly.
 Ind genomeFromNetFile(const std::string& outFile, int nInput, int nOutput);
 
 } // namespace wann

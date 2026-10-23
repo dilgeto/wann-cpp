@@ -286,22 +286,28 @@ errors in the code, remind them of these and pick this up again.
    `src/Neighborhood.cpp` mirrors this rule and must follow. Open question: whether the
    blocked moves are better than typical ones (a partial evaluation was started and
    interrupted, not analysed).
-2. **Disabled hidden→hidden connections come back enabled in the expressed network.**
-   `getNodeOrder` (`src/Ind.cpp`) binarises the hidden block with `copysign`, and
-   `copysign(1, NaN) = +1`, so a disabled hidden→hidden gene shows up as `+1` in
-   `wMat`/`wVec`, in `*_best.out`, and in everything built from it (eval, replay,
-   `eval_p3_weights.py`, bootstrap, ODIN export). Training is unaffected: every task's
-   `evalPop` uses `buildNetwork(const Ind&)`, which reads the genes. Disabled
-   input→hidden and hidden→output genes are kept as `nan`, so only the hidden block is
-   hit. On the `car_ttfs_*` elites (geometry: 9 inputs, 2 outputs), 45 of 66 nets had at
-   least one such revived edge (lower bound: only detected as a "pure relay bypass"), but
-   correcting them moved fitness by a median 0.04 seed-sd (none > 1 sd, symmetric), so
-   past results look safe. It matters before ODIN deployment (extra synapses) and for
-   consistency. Fix in `Ind::express`, not in `getNodeOrder` (`mutAddConn`'s layering
-   reads that block, so changing it alters the operator and can create cycles). Beware
-   `nConn` (drives the 1/nConn objective in `probMoo`): correcting the matrix lowers it
-   and slightly changes selection. `genomeFromNetFile` (`GenomeIO.h`) inherits the same
-   limitation.
+2. **Disabled hidden→hidden connections come back enabled in the expressed network.
+   FIXED 2026-10-23 in `Ind::express` for the expressed matrix; the `nConn` objective is
+   deliberately left as it was.** `getNodeOrder` (`src/Ind.cpp`) binarises the hidden
+   block with `copysign`, and `copysign(1, NaN) = +1`, so a disabled hidden→hidden gene
+   used to show up as `+1` in `wMat`/`wVec`, in `*_best.out`, and in everything built
+   from it (eval, replay, `eval_p3_weights.py`, bootstrap, ODIN export). Training was
+   never affected (every task's `evalPop` uses `buildNetwork(const Ind&)`, which reads
+   the genes), so the exported file was simply a different network from the one
+   evaluated. `express()` now writes NaN back for those entries (hidden→hidden only;
+   `getNodeOrder` itself is untouched because `mutAddConn`/`Neighborhood` read its
+   hidden block for layering). `Ind::nConn` (drives `1/nConn` in `probMoo`) still
+   counts the pre-correction matrix, so selection and `stats.out` for a fixed seed are
+   unchanged; `Ind::nConnExpressed` is the true synapse count. Consequence worth
+   knowing: **`*_best.out` / `*_best/NNNN.out` written before this fix are not the
+   networks training evaluated and cannot be repaired** (the disabled/enabled
+   distinction is lost). Measured on `log/log/bip_popvec_*` (BipedalWalker, 147 hidden
+   nodes): logged 36 / peak 202 vs. 1.7 / ~14 re-evaluated from the file; snapshots up
+   to gen 300 (≤9 hidden→hidden edges) still matched, from gen 500 they diverged. The
+   earlier car estimate (median 0.04 seed-sd, 45/66 nets affected) was a lower bound and
+   does not transfer to deeper nets. Verified on a real net with 10 hidden→hidden genes
+   disabled: before the fix genes-path and wVec-path gave different fitness, after it
+   they agree exactly, and export → `importNet`/`genomeFromNetFile` round-trips.
 
 ## Stagnation diagnosis and candidate interventions (analysed, not implemented)
 

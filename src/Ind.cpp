@@ -44,16 +44,44 @@ bool Ind::express() {
     for (int i = 0; i < nNodes; ++i)
         aVec[i] = nodes[Q[i]].activation;
 
+    // nConn (the 1/nConn objective in Wann::probMoo) keeps counting what the matrix
+    // held before the correction below, so selection — and therefore every past and
+    // future training run — is unchanged. nConnExpressed is the true synapse count.
+    nConn = 0;
+    for (int i = 0; i < nNodes * nNodes; ++i)
+        if (!std::isnan(wMat[i]) && wMat[i] != 0.0) ++nConn;
+
+    // getNodeOrder() binarises the hidden->hidden block with copysign(1, w), and
+    // copysign(1, NaN) = +1: a DISABLED hidden->hidden gene would come back as an
+    // enabled excitatory synapse in wMat/wVec (and so in *_best.out, eval, replay,
+    // ODIN export...), while training itself evaluates the genes. Restore NaN for
+    // those entries here rather than in getNodeOrder, because mutAddConn/Neighborhood
+    // read getNodeOrder's hidden block for layering and must keep seeing it as is.
+    {
+        std::unordered_map<int,int> idxOfId;
+        idxOfId.reserve(nodes.size());
+        for (int i = 0; i < nNodes; ++i) idxOfId[nodes[i].id] = i;
+        std::vector<int> posOfIdx(nNodes);
+        for (int pos = 0; pos < nNodes; ++pos) posOfIdx[Q[pos]] = pos;
+        for (const auto& c : conns) {
+            if (c.enabled) continue;
+            const int si = idxOfId.at(c.src), di = idxOfId.at(c.dst);
+            if (nodes[si].type == 3 && nodes[di].type == 3)
+                wMat[posOfIdx[si] * nNodes + posOfIdx[di]] =
+                    std::numeric_limits<double>::quiet_NaN();
+        }
+    }
+
     // Build wVec: NaN → 0, count non-zero connections.
     wVec.resize(nNodes * nNodes);
-    nConn = 0;
+    nConnExpressed = 0;
     for (int i = 0; i < nNodes * nNodes; ++i) {
         double w = wMat[i];
         if (std::isnan(w)) {
             wVec[i] = 0.0;
         } else {
             wVec[i] = w;
-            if (w != 0.0) ++nConn;
+            if (w != 0.0) ++nConnExpressed;
         }
     }
     return true;
