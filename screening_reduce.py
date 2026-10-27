@@ -260,7 +260,7 @@ INITIAL_SPACE: dict[str, tuple] = {
     "select_eliteRatio":     ("float", 0.05, 0.40),
     "select_tournSize":      ("int",   2,    16),
 
-    # --- SNN simulator microparameters (SnnCarTask only; ttfs + first_spike) ---
+    # --- SNN simulator microparameters (car, bipedal, disc_mc; see SNN_MICRO_TASKS) ---
     # Do NOT add "dt" or "snn_ttfs_tmax_ratio" here — both are collinear with
     # snn_window_ms (see Hyperparams.h comments) and are kept fixed instead.
     # snn_window_ms is "int", not "float": with dt=1ms fixed, a fractional
@@ -273,6 +273,30 @@ INITIAL_SPACE: dict[str, tuple] = {
     "snn_tau_inh":           ("float", 4.0,   30.0),
     "snn_ttfs_threshold":    ("float", 0.01,  0.30),
 }
+
+# SNN microparameters only take effect in some Snn<Task>Task.cpp — sampling
+# them for any other task just adds dimensions that cannot change fitness
+# (pure noise for the reduction statistics, and a reported "best window" that
+# was never actually run). car/bipedal always honour them; disc_mc only when
+# snn_micro_active=true, which the screening scripts then set (see
+# SNN_MICRO_NEEDS_FLAG). Add a task here when wiring them into its C++ task.
+SNN_MICRO_KEYS  = ("snn_window_ms", "snn_tau_exc", "snn_tau_inh", "snn_ttfs_threshold")
+SNN_MICRO_TASKS = {"car", "bipedal", "disc_mc"}
+SNN_MICRO_NEEDS_FLAG = {"disc_mc"}
+
+
+def space_for_task(space: dict[str, tuple], task: str) -> dict[str, tuple]:
+    """Drop the SNN microparameters from a search space for tasks whose C++
+    adapter ignores them."""
+    if task in SNN_MICRO_TASKS:
+        return dict(space)
+    return {k: v for k, v in space.items() if k not in SNN_MICRO_KEYS}
+
+
+def micro_flag_overrides(task: str) -> dict[str, Any]:
+    """Fixed override enabling the microparameters in tasks that need it."""
+    return {"snn_micro_active": True} if task in SNN_MICRO_NEEDS_FLAG else {}
+
 
 # ── Search space helpers ──────────────────────────────────────────────────────
 
@@ -675,6 +699,7 @@ def cmd_full(
         n_output = decoder_nOutput(decoder, TASK_DEFAULTS[task].get("n_actions", 2), npv)
         if n_output is not None:
             fixed_overrides["ann_nOutput"] = n_output
+    fixed_overrides.update(micro_flag_overrides(task))
 
     out_dir = Path("screening_reduce") / rkey
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -692,9 +717,10 @@ def cmd_full(
             print("Resuming: existing results.csv is empty or corrupt — starting fresh.")
 
     # Restore narrowed space from previous rounds if resuming
-    space = dict(INITIAL_SPACE)
+    space = space_for_task(INITIAL_SPACE, task)
     if space_override:
         space.update(space_override)
+        space = space_for_task(space, task)
         print(f"  Space override applied ({len(space_override)} params) — "
               f"scoped to run_key='{rkey}', INITIAL_SPACE unchanged for other runs.")
     if space_log.exists():

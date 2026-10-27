@@ -117,6 +117,12 @@ struct Hyperparams {
     // time that the integer-stepped simulation clock can never match, so the
     // spike is silently dropped (SnnCarTask rounds this defensively, but
     // don't rely on that — pass an integer in the first place).
+    // SnnDiscMCTask only: honour the four snn_* microparameters below. false
+    // (default) keeps its legacy fixed values (window 20, tau 5/10, TTFS
+    // threshold 1e-9) — configs from before they were wired there carry
+    // sampled values that training never used. Screening sets this to true
+    // for disc_mc. Ignored by SnnCarTask/SnnBipedalTask, which always honour them.
+    bool   snn_micro_active    = false;
     double snn_window_ms       = 40.0;
     // Izhikevich AMPA/GABA conductance decay time constants (ms). Govern how
     // long an input spike's effect survives before decaying — directly
@@ -230,6 +236,7 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.snn_neurons_per_var,    "snn_neurons_per_var");
     get(p.reward_shaping_scale,      "reward_shaping_scale");
     get(p.snn_reset_between_steps,   "snn_reset_between_steps");
+    get(p.snn_micro_active,          "snn_micro_active");
     get(p.snn_window_ms,             "snn_window_ms");
     get(p.snn_tau_exc,               "snn_tau_exc");
     get(p.snn_tau_inh,               "snn_tau_inh");

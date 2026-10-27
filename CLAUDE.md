@@ -214,9 +214,20 @@ fitness) — set it per JSON like any other hyperparameter. Currently only wired
 `snn_window_ms`/`snn_tau_exc`/`snn_tau_inh`/`snn_ttfs_threshold` are SNN-simulator
 microparameters (`ms` per env step given to the SNN before decoding an action; AMPA/
 GABA conductance decay time constants; TTFS no-spike cutoff) — **currently wired only
-into `SnnCarTask` and `SnnBipedalTask`** (`snn_window_ms` replaced what used to be the compile-time
-`WANN_CAR_SIM_WINDOW_MS` macro; the other `Snn<Task>Task.cpp` files still hardcode
-their own `SIM_WINDOW_MS` and never touch `tau_exc`/`tau_inh`/TTFS threshold at all).
+into `SnnCarTask`, `SnnBipedalTask` and (2026-10-26) `SnnDiscMCTask`** (`snn_window_ms` replaced
+what used to be the compile-time `WANN_CAR_SIM_WINDOW_MS` macro; the other `Snn<Task>Task.cpp`
+files — Acrobot, Pendulum, continuous Mountain Car — still hardcode their own `SIM_WINDOW_MS` and
+never touch `tau_exc`/`tau_inh`/TTFS threshold at all). `SnnDiscMCTask` honours them **only with
+`snn_micro_active=true`** (default false = legacy fixed 20 ms / tau 5,10 / threshold 1e-9):
+the 99 `screening_full/disc_mc_*/p3_configs` written before the wiring carry sampled
+`snn_*` values that training never used, and without the flag re-evaluating those networks
+would run them under a different window (verified: a saved net goes from ~-140 to -200 on every
+weight). Screening sets the flag automatically for `disc_mc` (`micro_flag_overrides` in
+`screening_reduce.py`), and `space_for_task()` drops the four `snn_*` dims from the search
+space for tasks that ignore them (acrobot, pendulum, continuous Mountain Car) — before this,
+screening sampled them for every task, so those dims were pure noise. Old `disc_mc`
+`screening_reduce` logs/results sampled them while ignored, so their window/tau "effects" are
+noise; re-run phase 1 for `disc_mc` for the window search to mean anything.
 Do not add `DT` to a search alongside `snn_window_ms` (the FIRST_SPIKE decoder's
 quantization step is `2*dt/window` — the two are collinear for that effect; `dt` stays
 a fixed `1.0` in `SnnCarTask.cpp`), and do not add TTFS's `t_max_ratio` alongside
@@ -501,7 +512,8 @@ Left deliberately unimplemented, pick up if it becomes the priority:
    (verified: `--noise-model none` per-synapse == shared, exactly), and
    `eval_results/run_noise_compare.py` compares the best WANN model of each task against
    the surrogate-gradient (`../surrogate-gradient-rl`) checkpoints — see `BINARIOS.md`
-   §4d-bis. Still car-only: the `eval_results/*_car_noise*.py` scripts and
+   §4d-bis (since 2026-10-26 also against the two SGRL variants sized like the WANN net —
+   same connections / same neurons —, best model only). Still car-only: the `eval_results/*_car_noise*.py` scripts and
    `wann_car_noise`'s ablation/summary tooling; continuous Mountain Car, L2F and
    BipedalWalker have no per-synapse path. `w_max` (default of `--w-max`) is the max of the
    task's `WEIGHT_VALS`, not the weight being evaluated.

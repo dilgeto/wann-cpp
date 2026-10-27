@@ -30,7 +30,9 @@ public:
     static constexpr int    N_WEIGHTS     = 6;
     static const     double WEIGHT_VALS[N_WEIGHTS];
     static constexpr double BIAS_CURRENT  = 50.0;
+    // Legacy fixed values, used when snn_micro_active=false (see ctor).
     static constexpr double SIM_WINDOW_MS = 20.0;
+    static constexpr double LEGACY_TTFS_THRESHOLD = 1e-9;
     static constexpr int    N_ACTIONS     = 3;
 
     explicit SnnDiscMCTask(const Hyperparams& hyp);
@@ -97,6 +99,11 @@ private:
     SnnDecoder decoder_;
     bool       resetBetweenSteps_;
     double     rewardShapingScale_;
+    bool       microActive_;    // snn_micro_active: honour the four fields below
+    double     windowMs_;       // ms per env step
+    double     tauExc_;         // Izhikevich AMPA conductance decay (ms)
+    double     tauInh_;         // Izhikevich GABA conductance decay (ms)
+    double     ttfsThreshold_;  // TTFS: observation values below this never spike
 
     static NeuronType wannActToNeuronType(int actId);
 

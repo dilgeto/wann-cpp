@@ -424,6 +424,17 @@ paralelo. Solo evalúa. Las tres tareas:
 | `disc_mc` (Mountain Car discreto) | `wann_disc_mc_noise` | mejor de `disc_mc_*_discrete` | `mountaincar-f2` |
 | `acrobot` | `wann_acrobot_noise` | mejor de `acrobot_*` (búsqueda original) | `acrobot-f2` |
 
+Además de SGRL 64×64 (`runs_default/`, 5 mejores semillas del mejor trial de Optuna), se comparan
+dos variantes de SGRL con la red del tamaño de la de WANN, solo su mejor modelo (`--sg-variants`,
+`--sgv-top`): `sgrl_con` (mismas **conexiones**: 35 en Car, 79 en Mountain Car, 44 en Acrobot;
+`runs/` + `screening/`) y `sgrl_neu` (mismas **neuronas**; `runs_neuronas/` + `screening_neuronas/`).
+"El mejor" = el rank de fase 3 con mayor media de validación (`p3_summary.json`) y, dentro de él,
+la semilla de mayor `final_eval`. Todos entrenados sin ruido. Los resultados de WANN y SGRL 64×64
+ya calculados en `eval_results/<tarea>_wann_vs_sgrl/` se reutilizan: relanzar solo simula lo nuevo
+(`--dry-run` muestra partes hechas/totales por modelo). Las figuras (`plot_noise_compare.py`) dibujan
+los 4 métodos y añaden `*_summary.png` (barras por dispositivo a escala 1 y 3); `--sources wann sgrl`
+reproduce las de 2 métodos.
+
 `wann_acrobot_noise` y `wann_disc_mc_noise` son el mismo `main_car_noise.cpp` con la tarea
 fijada en compilación (`NOISE_TASK_ACROBOT`/`NOISE_TASK_DISC_MC`; mismo motivo que
 `wann_eval_weights_<tarea>`) y requieren `evalEpisodesPerSynapse` de `SnnAcrobotTask`/

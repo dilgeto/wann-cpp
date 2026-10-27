@@ -8,6 +8,19 @@ ambos lados, y lo hace todo en paralelo (un solo planificador para las tareas).
 Solo evalúa, nunca entrena. Orquesta (1) los barridos, (2) la consolidación en
 un CSV normalizado por tarea y (3) las figuras de plot_noise_compare.py.
 
+Métodos que se comparan (todos entrenados SIN ruido)
+----------------------------------------------------
+  wann      la mejor red WANN de la tarea (con sus 6 pesos compartidos)
+  sgrl      SGRL 64×64 de la búsqueda Optuna original (runs_default/, 5 mejores semillas)
+  sgrl_con  SGRL con tantas CONEXIONES como la red WANN (runs/ + screening/), solo el mejor modelo
+  sgrl_neu  SGRL con tantas NEURONAS como la red WANN (runs_neuronas/ + screening_neuronas/), solo el mejor
+Para las dos variantes, "el mejor" = el rank de la fase 3 con mayor media de validación
+(screening*/<tarea>/p3_summary.json) y, dentro de él, la semilla de mayor final_eval
+(--sgv-top). --sg-variants controla cuáles se incluyen (def.: con neu; sin valores = ninguna).
+Los resultados ya existentes de wann/sgrl en --out-dir se reutilizan (partes reanudables): relanzar
+solo calcula los modelos nuevos. Si en el clúster faltan esas partes, el --dry-run lo muestra
+(columna "hechos") antes de gastar cómputo.
+
 Tareas y modelos (se eligen solos; ver --dry-run)
 -------------------------------------------------
   car      WANN: mejor modelo de car_ttfs_first_spike_discrete      SGRL: carrace-f2
@@ -59,7 +72,7 @@ consolidar lo hecho, el script sale con código 1 sin graficar (--plot-anyway).
 
 Uso:
   python eval_results/run_noise_compare.py --dry-run
-  python eval_results/run_noise_compare.py --jobs 500 --jobs-sgrl 250      # las 3 tareas
+  python eval_results/run_noise_compare.py --jobs 300                      # las 3 tareas, 4 métodos
   python eval_results/run_noise_compare.py --task acrobot --sg-top 1 --wann-weights 1
   python eval_results/run_noise_compare.py --skip-run                      # solo consolidar y graficar
 """
@@ -85,8 +98,18 @@ REAL_MODELS = ["pcm", "reram", "reramcmo"]
 INTENSITY_T = {"simple": 0.0, "pcm": 0.0, "reram": 1.0, "reramcmo": 1.0}
 ABLATION_MECHS = ("prog", "read", "drift")
 MECH_FLAG = {"prog": "--prog-noise-scale", "read": "--read-noise-scale", "drift": "--drift-scale"}
-# Costo aproximado por fila (s de CPU, una hebra), medido en car; solo para ordenar y estimar.
+# Costo aproximado por fila (s de CPU, una hebra); solo para ordenar y estimar. Medido: WANN en car;
+# SGRL 64x64 en car (16 pasos de simulación por paso de entorno); las variantes de car son ~8x más caras
+# por tener 43 pasos de simulación; en acrobot y Mountain Car el costo por fila es mínimo (~0.2-0.3 s).
 COST_PER_ROW = {"wann": 0.8, "sgrl": 3.2}
+
+
+def row_cost(kind: str, source: str, task: str) -> float:
+    if kind == "wann":
+        return COST_PER_ROW["wann"]
+    if task == "car":
+        return COST_PER_ROW["sgrl"] if source == "sgrl" else 7.5
+    return 0.3
 
 # ret_floor: recompensa del peor desenlace (fracaso total); la "retención" se mide entre este
 # piso y el retorno sin ruido del propio modelo. car: sin piso negativo (0 ⇒ retorno/base);
@@ -94,17 +117,29 @@ COST_PER_ROW = {"wann": 0.8, "sgrl": 3.2}
 TASKS = {
     "car": dict(
         label="CarTrack", binary="./build/wann_car_noise", base_config="p/car_snn.json",
-        sg_study="carrace-f2", ret_floor=0.0, graficos="Racing Car", prefix="car_wann_vs_sgrl",
+        sg_study="carrace-f2", sg_task="car", ret_floor=0.0, graficos="Racing Car", prefix="car_wann_vs_sgrl",
         eval_csvs=["eval_results/car_ttfs_first_spike_discrete/car_best.csv"]),
     "disc_mc": dict(
         label="Mountain Car (discrete)", binary="./build/wann_disc_mc_noise", base_config="p/disc_mc_snn.json",
-        sg_study="mountaincar-f2", ret_floor=-200.0, graficos="Mountain Car", prefix="disc_mc_wann_vs_sgrl",
+        sg_study="mountaincar-f2", sg_task="disc_mc", ret_floor=-200.0, graficos="Mountain Car", prefix="disc_mc_wann_vs_sgrl",
         eval_csvs=sorted(glob.glob("eval_results/disc_mc_*_discrete/mountain_car_best.csv"))),
     "acrobot": dict(
         label="Acrobot", binary="./build/wann_acrobot_noise", base_config="p/acrobot_snn.json",
-        sg_study="acrobot-f2", ret_floor=-500.0, graficos="Acrobot", prefix="acrobot_wann_vs_sgrl",
+        sg_study="acrobot-f2", sg_task="acrobot", ret_floor=-500.0, graficos="Acrobot", prefix="acrobot_wann_vs_sgrl",
         eval_csvs=["eval_results/eval_p3_weights/acrobot_best.csv"]),
 }
+
+# Variantes de SGRL con la red del tamaño de la de WANN: carpeta de corridas y de screening (relativas a --sg-repo).
+VARIANTS = {
+    "con": dict(runs="runs", screening="screening", what="mismas conexiones"),
+    "neu": dict(runs="runs_neuronas", screening="screening_neuronas", what="mismas neuronas"),
+}
+
+
+def kind_of(source: str) -> str:
+    """'wann' o 'sgrl' (cualquier variante de SGRL): determina costo, ejecutable y tope --jobs-sgrl."""
+    return "sgrl" if source.startswith("sgrl") else "wann"
+
 
 NORMALIZED_COLS = ["source", "model_id", "noise_model", "mechanism", "scale", "t_inference", "seed",
                    "chip", "read", "weight_rmse", "ret", "prog_noise_scale", "read_noise_scale",
@@ -203,14 +238,24 @@ def pick_wann_best(task: str, spec: dict, a) -> dict:
                 reward_std=float(best.reward_std))
 
 
+def hidden_of(run_dir: Path) -> str:
+    """Capas ocultas del actor (p. ej. '64x64') leídas del config.json de la corrida."""
+    try:
+        return "x".join(str(h) for h in json.loads((run_dir / "config.json").read_text())["args"]["hidden"])
+    except (OSError, KeyError, json.JSONDecodeError):
+        return "?"
+
+
 def select_sgrl(task: str, spec: dict, a) -> list[dict]:
     repo = Path(a.sg_repo).resolve()
+    default_dir = a.sg_default_dir or ("runs_default" if (repo / "runs_default").is_dir() else "runs")
+    runs_dir = repo / default_dir
     ckpt_name = f"{a.sg_ckpt}.pt"
     study = a.sg_study or spec["sg_study"]
     if a.sg_runs:
         dirs = [Path(d).resolve() for d in a.sg_runs]
     else:
-        val_path = repo / "runs" / f"{study}-validation.json"
+        val_path = runs_dir / f"{study}-validation.json"
         if not val_path.is_file():
             sys.exit(f"Error [{task}]: no existe {val_path}. Pasá --sg-study o --sg-runs.")
         val = json.loads(val_path.read_text())
@@ -218,12 +263,12 @@ def select_sgrl(task: str, spec: dict, a) -> list[dict]:
         if trial not in val:
             sys.exit(f"Error [{task}]: el trial {trial} no está en {val_path.name} (hay: {sorted(val, key=int)}).")
         scored = []
-        for d in sorted((repo / "runs").glob(f"{study}-t{trial}-s*")):
+        for d in sorted(runs_dir.glob(f"{study}-t{trial}-s*")):
             fe = d / "final_eval.json"
             if fe.is_file():
                 scored.append((json.loads(fe.read_text())["return_mean"], d))
         if not scored:
-            sys.exit(f"Error [{task}]: sin corridas con final_eval.json para {study}-t{trial} en {repo / 'runs'}.")
+            sys.exit(f"Error [{task}]: sin corridas con final_eval.json para {study}-t{trial} en {runs_dir}.")
         scored.sort(key=lambda x: -x[0])
         dirs = [d for _, d in scored[:a.sg_top]]
     out = []
@@ -234,7 +279,36 @@ def select_sgrl(task: str, spec: dict, a) -> list[dict]:
         fe = d / "final_eval.json"
         ret = json.loads(fe.read_text())["return_mean"] if fe.is_file() else float("nan")
         out.append(dict(model_id=f"sgrl_{d.name}", source="sgrl", label=f"SGRL {d.name}", path=str(ck),
-                        train_return=ret, weight_index=""))
+                        train_return=ret, weight_index="", hidden=hidden_of(d)))
+    return out
+
+
+def select_sgrl_variant(task: str, spec: dict, a, variant: str) -> list[dict]:
+    """Mejor(es) modelo(s) de una variante de SGRL con la red del tamaño de la de WANN: el rank de la
+    fase 3 con mayor media de validación y, dentro de él, las semillas de mayor final_eval."""
+    v = VARIANTS[variant]
+    repo = Path(a.sg_repo).resolve()
+    sg_task = spec["sg_task"]
+    summ = repo / getattr(a, f"sg_{variant}_screening") / sg_task / "p3_summary.json"
+    runs = repo / getattr(a, f"sg_{variant}_runs")
+    if not summ.is_file():
+        sys.exit(f"Error [{task}]: no existe {summ} (variante {variant}: {v['what']}). Revisá --sg-{variant}-screening.")
+    val = json.loads(summ.read_text())
+    rank = max(val, key=lambda k: val[k]["mean"])
+    scored = []
+    for d in sorted(runs.glob(f"{sg_task}-p3-rank{rank}-s*")):
+        fe = d / "final_eval.json"
+        if fe.is_file() and (d / f"{a.sg_ckpt}.pt").is_file():
+            scored.append((json.loads(fe.read_text())["return_mean"], d))
+    if not scored:
+        sys.exit(f"Error [{task}]: sin corridas {sg_task}-p3-rank{rank}-s* con {a.sg_ckpt}.pt en {runs}.")
+    scored.sort(key=lambda x: -x[0])
+    out = []
+    for ret, d in scored[:a.sgv_top]:
+        out.append(dict(model_id=f"sgrl_{variant}_{d.name}", source=f"sgrl_{variant}",
+                        label=f"SGRL {v['what']} {d.name}", path=str(d / f"{a.sg_ckpt}.pt"),
+                        train_return=ret, weight_index="", hidden=hidden_of(d),
+                        rank=int(rank), val_mean=float(val[rank]["mean"]), val_std=float(val[rank].get("std", float("nan")))))
     return out
 
 
@@ -258,14 +332,19 @@ class TaskCtx:
         self.models = [dict(model_id=f"wann_w{wi}", source="wann", label=f"{wlabel} (w idx {wi})",
                             path=w["net"], train_return=w["reward"], weight_index=wi)
                        for wi in a.wann_weights] + select_sgrl(task, spec, a)
+        for variant in a.sg_variants:
+            self.models += select_sgrl_variant(task, spec, a, variant)
 
     def describe(self):
         w = self.wann
-        sg = [m for m in self.models if m["source"] == "sgrl"]
         print(f"[{self.name}] WANN: {w['run_key']} rank{w['rank']:02d} seed{w['seed_idx']:02d}, peso idx "
               f"{w['weight_index']} (reward revalidado {w['reward']:.1f} ± {w['reward_std']:.1f}); "
-              f"SGRL: {len(sg)} checkpoints ({', '.join(Path(m['path']).parent.name for m in sg)}); "
               f"{self.episodes} episodios por fila.")
+        for src in sorted({m["source"] for m in self.models if m["source"] != "wann"}):
+            sg = [m for m in self.models if m["source"] == src]
+            extra = f", rank {sg[0]['rank']} (validación {sg[0]['val_mean']:.1f})" if "rank" in sg[0] else ""
+            print(f"    {src:9s} {len(sg)} checkpoint(s), oculta {sg[0]['hidden']}{extra}: "
+                  f"{', '.join(Path(m['path']).parent.name for m in sg)}")
 
 
 # --------------------------------------------------------------------------------------------
@@ -274,10 +353,11 @@ class TaskCtx:
 class Job:
     def __init__(self, ctx, model, cell, seed, cmd, part, rows):
         self.ctx, self.source, self.model, self.cell, self.seed = ctx, model["source"], model, cell, seed
+        self.kind = kind_of(self.source)
         self.cmd, self.part, self.rows = cmd, part, rows
         self.tmp = part.with_suffix(".csv.tmp")
         self.err = part.with_suffix(".err")
-        self.cost = rows * COST_PER_ROW[self.source]
+        self.cost = rows * row_cost(self.kind, self.source, ctx.name)
 
     @property
     def label(self):
@@ -390,12 +470,12 @@ def run_jobs(jobs: list[Job], a) -> list[tuple[Job, str]]:
     try:
         while todo or running:
             while todo and len(running) < a.jobs:
-                idx = next((i for i, j in enumerate(todo) if j.source != "sgrl" or n_sgrl < a.jobs_sgrl), None)
+                idx = next((i for i, j in enumerate(todo) if j.kind != "sgrl" or n_sgrl < a.jobs_sgrl), None)
                 if idx is None:
                     break
                 job = todo.pop(idx)
                 running[launch(job, env)] = (job, time.time())
-                n_sgrl += job.source == "sgrl"
+                n_sgrl += job.kind == "sgrl"
             time.sleep(0.25)
             for p in list(running):
                 job, start = running[p]
@@ -409,7 +489,7 @@ def run_jobs(jobs: list[Job], a) -> list[tuple[Job, str]]:
                 else:
                     why = None
                 del running[p]
-                n_sgrl -= job.source == "sgrl"
+                n_sgrl -= job.kind == "sgrl"
                 done += 1
                 if why is None and rc == 0:
                     why = finish_ok(job)
@@ -463,13 +543,81 @@ def consolidate(ctx: TaskCtx, jobs: list[Job], a) -> int:
     pick = wm[wm.weight_index == ctx.wann["weight_index"]]
     if len(wm):
         mf.loc[(pick.index[0] if len(pick) else wm.index[0]), "main"] = 1
-    sm = mf[mf.source == "sgrl"]
-    if len(sm):
-        mf.loc[sm.index[0], "main"] = 1
+    for src in mf.source.unique():      # cada variante de SGRL: su primer modelo (el mejor) es el principal
+        if src != "wann":
+            mf.loc[mf[mf.source == src].index[0], "main"] = 1
     mf.to_csv(ctx.out_dir / "models.csv", index=False)
     print(f"[{ctx.name}] consolidado: {ctx.out_dir / 'sweep_all.csv'} ({len(df)} filas, {len(frames)} partes, "
           f"{missing} faltantes) y models.csv")
     return missing
+
+
+def input_files(ctx: TaskCtx, a) -> list[tuple[str, Path]]:
+    """Todos los archivos que deciden QUÉ se evalúa, como (etiqueta, ruta). Las rutas de SGRL se rotulan
+    'sgrl:<ruta relativa a --sg-repo>' para que la etiqueta sea la misma en cualquier máquina."""
+    sg_repo = Path(a.sg_repo).resolve()
+    files = [("wann:" + str(ctx.wann["net"]), Path(ctx.wann["net"])), ("wann:" + ctx.base_config, Path(ctx.base_config))]
+    if ctx.wann["override"]:
+        files.append(("wann:" + str(ctx.wann["override"]), Path(ctx.wann["override"])))
+    files += [("wann:" + c, Path(c)) for c in ctx.spec["eval_csvs"]]       # deciden cuál es "el mejor"
+    default_dir = a.sg_default_dir or ("runs_default" if (sg_repo / "runs_default").is_dir() else "runs")
+    study = a.sg_study or ctx.spec["sg_study"]
+    sel = [sg_repo / default_dir / f"{study}-validation.json"]                   # decide el trial de 64x64
+    for v in a.sg_variants:                                                      # deciden el rank de cada variante
+        sel.append(sg_repo / getattr(a, f"sg_{v}_screening") / ctx.spec["sg_task"] / "p3_summary.json")
+    for m in ctx.models:
+        if m["source"] != "wann":
+            d = Path(m["path"]).parent
+            sel += [Path(m["path"]), d / "config.json", d / "final_eval.json"]
+    for f in sel:
+        try:
+            rel = f.resolve().relative_to(sg_repo)
+        except ValueError:
+            rel = f
+        files.append((f"sgrl:{rel}", f))
+    return files
+
+
+def write_manifest(ctxs, a, out: Path):
+    """Estilo sha256sum: '<sha256>  <bytes>  <etiqueta>'. Corré lo mismo en el PC y en el clúster y compará con diff."""
+    import hashlib
+    lines = []
+    for ctx in ctxs:
+        lines.append(f"# tarea {ctx.name}")
+        for label, f in input_files(ctx, a):
+            if f.is_file():
+                lines.append(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.stat().st_size:>9d}  {label}")
+            else:
+                lines.append(f"{'FALTA':64s}  {'-':>9s}  {label}")
+    out.write_text("\n".join(lines) + "\n")
+    miss = sum(l.startswith("FALTA") for l in lines)
+    print(f"Manifiesto: {out} ({len(lines) - len(ctxs)} archivos, {miss} faltantes)")
+
+
+def check_protocol(ctx: TaskCtx, a):
+    """Las partes se nombran por (modelo, celda, semilla), NO por n_chips/lecturas/episodios ni por la
+    red: relanzar con otro protocolo sobre la misma carpeta mezclaría resultados incompatibles."""
+    p = ctx.out_dir / "protocol.json"
+    if not p.is_file() or a.rerun:
+        return
+    old = json.loads(p.read_text())
+    diffs = []
+    for k in ("n_chips", "reads_per_chip", "n_levels", "reramcmo_g_max", "reramcmo_g_min"):
+        if str(getattr(a, k)) != old.get("args", {}).get(k):
+            diffs.append(f"{k}: {old.get('args', {}).get(k)} -> {getattr(a, k)}")
+    if old.get("episodes") != ctx.episodes:
+        diffs.append(f"episodes: {old.get('episodes')} -> {ctx.episodes}")
+    if old.get("wann", {}).get("net") != ctx.wann["net"]:
+        diffs.append(f"red WANN: {old.get('wann', {}).get('net')} -> {ctx.wann['net']}")
+    # Se compara "<corrida>/<archivo>" y no la ruta completa: mover runs/ a runs_default/ no cambia el modelo.
+    tail = lambda path: "/".join(Path(path).parts[-2:])
+    old_paths = {m["model_id"]: m["path"] for m in old.get("models", [])}
+    for m in ctx.models:
+        if m["model_id"] in old_paths and tail(old_paths[m["model_id"]]) != tail(m["path"]):
+            diffs.append(f"{m['model_id']}: {old_paths[m['model_id']]} -> {m['path']}")
+    if diffs:
+        sys.exit(f"[{ctx.name}] {ctx.out_dir} ya tiene resultados con otro protocolo:\n  " + "\n  ".join(diffs) +
+                 "\nUsá otra --out-dir (recomendado) o --rerun para rehacerlo todo; si no, se mezclarían partes incompatibles.")
 
 
 # --------------------------------------------------------------------------------------------
@@ -493,6 +641,16 @@ def main():
     g.add_argument("--sg-ckpt", choices=["final", "best"], default="final")
     g.add_argument("--sg-runs", nargs="+", default=None, help="carpetas de corrida explícitas (solo con una tarea)")
     g.add_argument("--sg-device", default="cpu")
+    g.add_argument("--sg-default-dir", default=None,
+                   help="carpeta (dentro de --sg-repo) de las corridas 64×64 originales; def.: runs_default si existe, si no runs")
+    g.add_argument("--sg-variants", nargs="*", choices=list(VARIANTS), default=list(VARIANTS),
+                   help="variantes con la red del tamaño de la de WANN: con (mismas conexiones), neu (mismas neuronas); "
+                        "sin valores = ninguna (def.: las dos)")
+    g.add_argument("--sgv-top", type=int, default=1, help="semillas por variante (def.: 1 = solo el mejor modelo)")
+    g.add_argument("--sg-con-runs", default="runs", help="corridas de la variante por conexiones")
+    g.add_argument("--sg-con-screening", default="screening")
+    g.add_argument("--sg-neu-runs", default="runs_neuronas", help="corridas de la variante por neuronas")
+    g.add_argument("--sg-neu-screening", default="screening_neuronas")
     g = ap.add_argument_group("Protocolo de ruido (igual en ambos lados)")
     g.add_argument("--seeds", type=int, nargs="+", default=[0, 1])
     g.add_argument("--n-chips", type=int, default=30)
@@ -520,6 +678,9 @@ def main():
     g.add_argument("--skip-plots", action="store_true")
     g.add_argument("--plot-anyway", action="store_true", help="graficar aunque haya trabajos fallidos")
     g.add_argument("--dry-run", action="store_true", help="solo imprimir el plan y la estimación")
+    g.add_argument("--manifest", type=Path, default=None,
+                   help="escribe la lista (con sha256) de los archivos que deciden qué modelos se evalúan, y sale; "
+                        "corrélo en el PC y en el clúster y compará con diff")
     a = ap.parse_args()
 
     if len(a.task) > 1 and (a.wann_net or a.sg_runs or a.sg_study or a.graficos_dir):
@@ -542,21 +703,37 @@ def main():
         ctx.describe()
         jobs += build_jobs(a, ctx, cells)
 
+    if a.manifest:
+        write_manifest(ctxs, a, a.manifest)
+        return
+
     rows = a.n_chips * a.reads_per_chip
-    cpu = {s: sum(j.cost for j in jobs if j.source == s) for s in COST_PER_ROW}
+    todo = [j for j in jobs if a.rerun or not j.part.is_file()]
+    cpu = {k: sum(j.cost for j in todo if j.kind == k) for k in COST_PER_ROW}
     print(f"\nPlan: {len(ctxs)} tareas × {len(ctxs[0].models)} modelos × {len(cells)} celdas × {len(a.seeds)} semillas "
-          f"= {len(jobs)} trabajos de {rows} filas.")
-    print(f"CPU estimada (cota superior): WANN {cpu['wann'] / 3600:.1f} h + SGRL {cpu['sgrl'] / 3600:.1f} h; con "
-          f"{a.jobs} procesos ≈ {sum(cpu.values()) / a.jobs / 60:.0f} min de pared (el trabajo más largo ≈ "
-          f"{max(j.cost for j in jobs) / 60:.1f} min).")
+          f"= {len(jobs)} trabajos de {rows} filas; {len(jobs) - len(todo)} ya hechos, {len(todo)} por correr.")
+    print("Por modelo (partes hechas / totales):")
+    for ctx in ctxs:
+        for m in ctx.models:
+            mine = [j for j in jobs if j.ctx is ctx and j.model is m]
+            print(f"  [{ctx.name}] {m['model_id']:42s} {sum(j.part.is_file() for j in mine):4d}/{len(mine)}")
+    # pared ≥ máx(total/jobs, SGRL/jobs_sgrl, trabajo más largo): el tope de SGRL deja hebras ociosas
+    # cuando WANN (la parte barata) ya terminó, así que cuenta como cota inferior propia.
+    longest = max((j.cost for j in todo), default=0.0)
+    wall = max(sum(cpu.values()) / a.jobs, cpu["sgrl"] / min(a.jobs, a.jobs_sgrl), longest)
+    print(f"CPU pendiente estimada (cota superior): WANN {cpu['wann'] / 3600:.1f} h + SGRL {cpu['sgrl'] / 3600:.1f} h; con "
+          f"{a.jobs} procesos ({min(a.jobs, a.jobs_sgrl)} de SGRL) ≈ {wall / 60:.0f} min de pared (el trabajo más "
+          f"largo ≈ {longest / 60:.1f} min).")
     print(f"Memoria máxima aprox. de SGRL: {min(a.jobs, a.jobs_sgrl)} procesos × ~0.5 GB "
           f"= {min(a.jobs, a.jobs_sgrl) * 0.5:.0f} GB.")
     if a.dry_run:
         for ctx in ctxs:
-            for j in [j for j in jobs if j.ctx is ctx][:1] + [j for j in jobs if j.ctx is ctx and j.source == "sgrl"][:1]:
+            for j in [j for j in jobs if j.ctx is ctx][:1] + [j for j in jobs if j.ctx is ctx and j.source == "sgrl_con"][:1]:
                 print(f"[dry-run] {j.label}\n   $ {' '.join(j.cmd)}")
         return
 
+    for ctx in ctxs:
+        check_protocol(ctx, a)
     for ctx in ctxs:
         ctx.out_dir.mkdir(parents=True, exist_ok=True)
         (ctx.out_dir / "protocol.json").write_text(json.dumps(

@@ -78,6 +78,8 @@ except ImportError:
 
 from screening_reduce import (
     INITIAL_SPACE,
+    space_for_task,
+    micro_flag_overrides,
     TASK_DEFAULTS,
     VALID_ENCODERS,
     VALID_DECODERS,
@@ -115,7 +117,7 @@ def _read_best_weight_peak(path: Path) -> float | None:
 
 # ── Load reduced space ────────────────────────────────────────────────────────
 
-def load_reduced_space(run_key: str) -> tuple[dict[str, tuple], str]:
+def load_reduced_space(run_key: str, task: str) -> tuple[dict[str, tuple], str]:
     """
     Load the final reduced space from screening_reduce results.
     run_key is '{task}' or '{task}_{encoder}_{decoder}'.
@@ -124,7 +126,7 @@ def load_reduced_space(run_key: str) -> tuple[dict[str, tuple], str]:
     """
     space_log = Path("screening_reduce") / run_key / "space_log.jsonl"
     if not space_log.exists():
-        return dict(INITIAL_SPACE), "INITIAL_SPACE (no reduction log found)"
+        return space_for_task(INITIAL_SPACE, task), "INITIAL_SPACE (no reduction log found)"
 
     last_entry = None
     with open(space_log) as f:
@@ -133,9 +135,9 @@ def load_reduced_space(run_key: str) -> tuple[dict[str, tuple], str]:
                 last_entry = json.loads(line)
 
     if last_entry is None:
-        return dict(INITIAL_SPACE), "INITIAL_SPACE (empty reduction log)"
+        return space_for_task(INITIAL_SPACE, task), "INITIAL_SPACE (empty reduction log)"
 
-    space = {p: tuple(v) for p, v in last_entry["space"].items()}
+    space = space_for_task({p: tuple(v) for p, v in last_entry["space"].items()}, task)
     source = (f"screening_reduce/{run_key}/space_log.jsonl "
               f"(round {last_entry['round']})")
     return space, source
@@ -778,6 +780,7 @@ def main() -> None:
                   f"main_car.cpp — no-op for --task {args.task}.",
                   file=sys.stderr)
         fixed_overrides["early_stop_patience"] = args.early_stop_patience
+    fixed_overrides.update(micro_flag_overrides(args.task))
 
     if args.mode == "analyse":
         cmd_analyse(rkey, args.top_analyse)
@@ -792,7 +795,7 @@ def main() -> None:
         sys.exit(1)
 
     # Load reduced space from matching screening_reduce run
-    space, source = load_reduced_space(rkey)
+    space, source = load_reduced_space(rkey, args.task)
     print(f"\n{'='*66}")
     print(f"  Task: {args.task}   run key: {rkey}   mode: {args.mode}")
     print(f"  Executable: {executable}")

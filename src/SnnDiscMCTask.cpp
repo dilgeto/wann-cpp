@@ -57,7 +57,7 @@ const double SnnDiscMCTask::WEIGHT_VALS[N_WEIGHTS] = {
     0.5, 1.0, 2.0, 3.0, 5.0, 8.0
 };
 
-static std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed) {
+static std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed, double ttfsThreshold) {
     constexpr double MAX_RATE   = 100.0;
     constexpr double REF_PERIOD = 2.0;
     switch (type) {
@@ -72,9 +72,9 @@ static std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed
             return e;
         }
         case wann::SnnEncoder::TTFS:
-            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LINEAR, 1e-9);
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LINEAR, ttfsThreshold);
         case wann::SnnEncoder::TTFS_LOG:
-            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LOGARITHMIC, 1e-9);
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LOGARITHMIC, ttfsThreshold);
         case wann::SnnEncoder::SMALL:
         case wann::SnnEncoder::LARGE:
         default:
@@ -88,6 +88,16 @@ SnnDiscMCTask::SnnDiscMCTask(const Hyperparams& hyp)
     , decoder_(parseDecoder(hyp.snn_decoder))
     , resetBetweenSteps_(hyp.snn_reset_between_steps)
     , rewardShapingScale_(hyp.reward_shaping_scale)
+    // snn_* microparameters are honoured only with snn_micro_active=true.
+    // Configs written before they were wired here (screening_full/disc_mc_*/
+    // p3_configs) carry sampled-but-never-used snn_window_ms/tau values;
+    // without the flag they keep the fixed legacy values the networks were
+    // actually trained with. Window rounded: see SnnCarTask.cpp.
+    , microActive_(hyp.snn_micro_active)
+    , windowMs_(hyp.snn_micro_active ? std::round(hyp.snn_window_ms) : SIM_WINDOW_MS)
+    , tauExc_(hyp.snn_tau_exc)
+    , tauInh_(hyp.snn_tau_inh)
+    , ttfsThreshold_(hyp.snn_micro_active ? hyp.snn_ttfs_threshold : LEGACY_TTFS_THRESHOLD)
 {}
 
 NeuronType SnnDiscMCTask::wannActToNeuronType(int actId) {
@@ -129,6 +139,7 @@ Network SnnDiscMCTask::buildNetwork(const Ind& ind) const
         net.addSynapse(it_src->second, it_dst->second, cg.excitatory);
     }
 
+    if (microActive_) net.setTimeConstants(tauExc_, tauInh_);
     return net;
 }
 
@@ -160,6 +171,7 @@ Network SnnDiscMCTask::buildNetwork(const std::vector<double>& wVec,
         }
     }
 
+    if (microActive_) net.setTimeConstants(tauExc_, tauInh_);
     return net;
 }
 
@@ -180,16 +192,16 @@ std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWe
     Env::State state, next_state;
     rlt::sample_initial_state(device, env, params, state, rng);
 
-    const int window_steps = static_cast<int>(SIM_WINDOW_MS);
+    const int window_steps = static_cast<int>(windowMs_);
     const int n_channels   = nInput_ + 1;
     constexpr double DT    = 1.0;
 
-    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu, ttfsThreshold_);
 
     const RLDecoder::DecodingType disc_type = (decoder_ == SnnDecoder::VOTING)
         ? RLDecoder::DecodingType::VOTING
         : RLDecoder::DecodingType::WINNER_TAKES_ALL;
-    RLDecoder disc_decoder(disc_type, SIM_WINDOW_MS, 5);
+    RLDecoder disc_decoder(disc_type, windowMs_, 5);
 
     double total_shaped   = 0.0;
     double total_original = 0.0;
@@ -214,7 +226,7 @@ std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWe
 
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch)
-                spike_trains[ch] = enc->encode(std::clamp(norm[ch], 0.0, 1.0), SIM_WINDOW_MS, DT);
+                spike_trains[ch] = enc->encode(std::clamp(norm[ch], 0.0, 1.0), windowMs_, DT);
 
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
@@ -256,7 +268,7 @@ std::pair<double,double> SnnDiscMCTask::runEpisode(Network& net, double sharedWe
         int winner;
         if (decoder_ == SnnDecoder::FIRST_SPIKE) {
             winner = N_ACTIONS / 2;
-            double earliest = SIM_WINDOW_MS + 1.0;
+            double earliest = windowMs_ + 1.0;
             for (int a = 0; a < N_ACTIONS; ++a)
                 if (!multi_spikes[a].empty() && multi_spikes[a][0] < earliest) {
                     earliest = multi_spikes[a][0];
@@ -404,16 +416,16 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
     Env::State state, next_state;
     rlt::sample_initial_state(device, env, params, state, rng);
 
-    const int window_steps = static_cast<int>(SIM_WINDOW_MS);
+    const int window_steps = static_cast<int>(windowMs_);
     const int n_channels   = nInput_ + 1;
     constexpr double DT    = 1.0;
 
-    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu, ttfsThreshold_);
 
     const RLDecoder::DecodingType disc_type = (decoder_ == SnnDecoder::VOTING)
         ? RLDecoder::DecodingType::VOTING
         : RLDecoder::DecodingType::WINNER_TAKES_ALL;
-    RLDecoder disc_decoder(disc_type, SIM_WINDOW_MS, 5);
+    RLDecoder disc_decoder(disc_type, windowMs_, 5);
 
     for (int step = 0; step < EPISODE_STEPS; ++step) {
         rlt::observe(device, env, params, state, obs_type, obs_mat, rng);
@@ -434,7 +446,7 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
 
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch)
-                spike_trains[ch] = enc->encode(std::clamp(norm[ch], 0.0, 1.0), SIM_WINDOW_MS, DT);
+                spike_trains[ch] = enc->encode(std::clamp(norm[ch], 0.0, 1.0), windowMs_, DT);
 
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
@@ -475,7 +487,7 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
         int winner;
         if (decoder_ == SnnDecoder::FIRST_SPIKE) {
             winner = N_ACTIONS / 2;
-            double earliest = SIM_WINDOW_MS + 1.0;
+            double earliest = windowMs_ + 1.0;
             for (int a = 0; a < N_ACTIONS; ++a)
                 if (!multi_spikes[a].empty() && multi_spikes[a][0] < earliest) {
                     earliest = multi_spikes[a][0];
