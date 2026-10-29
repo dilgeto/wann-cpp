@@ -11,8 +11,10 @@
 // ODIN sólo admite un signo por neurona presináptica y el export ya separa
 // los nodos de signo mixto — como los signos no se tocan, la cuenta de
 // neuronas del export tampoco cambia). Nivel 0 = sinapsis desconectada.
-// El peso simulado del nivel L es L * w_max / (levels-1): la inversa de
-// quantizeMagnitude3bit() de main_odin_export.cpp (w_max = 8, 7 pasos).
+// El peso simulado del nivel L es L * w_max / (levels-1); con el w_max por
+// defecto (levels-1 = 7) el peso simulado es el propio nivel entero 0..7.
+// OJO: wann_car_odin_export usa otra escala (quantizeMagnitude3bit divide por 8
+// y multiplica por 7), así que sus niveles no coinciden con los de aquí.
 //
 // Punto de partida: todas las sinapsis en el nivel de quantizeMagnitude3bit()
 // del peso compartido ganador — la red que hoy exporta wann_car_odin_export.
@@ -36,7 +38,7 @@
 // Uso:
 //   ./wann_car_odin_finetune -f log/.../rank00_seed00_best.out -d p/car_snn.json \
 //       [-p overrides.json] [-w weight_index] [-o prefix] [--levels 8] \
-//       [--w-max 8] [--init-level L] [--iters 200] [--lambda 16] [--max-mut 3] \
+//       [--w-max 7] [--init-level L] [--iters 200] [--lambda 16] [--max-mut 3] \
 //       [--screen-eps N] [--confirm-eps 10] [--confirm-top 2] [--alpha 0.05] \
 //       [--min-effect 0.002] [--patience 50] [--holdout-eps 50] \
 //       [--seed-offset S] [--rng-seed S]
@@ -225,7 +227,7 @@ struct Args {
     std::string netFile, configFile, overrideFile, prefix;
     int    weightIndex = -1;
     int    levels = 8;
-    double wMax = -1.0;       // -1 = max(WEIGHT_VALS)
+    double wMax = -1.0;       // -1 = levels-1 (peso simulado = nivel)
     int    initLevel = -1;    // -1 = nivel del peso compartido ganador
     int    iters = 200;
     int    lambda = 16;
@@ -334,15 +336,13 @@ int main(int argc, char* argv[]) {
     }
     const double sharedWeight = SnnCarTask::WEIGHT_VALS[wi];
 
-    const Quant q{a.levels,
-                  (a.wMax > 0.0) ? a.wMax
-                                 : *std::max_element(SnnCarTask::WEIGHT_VALS,
-                                                     SnnCarTask::WEIGHT_VALS + SnnCarTask::N_WEIGHTS)};
+    // Por defecto el peso simulado ES el nivel entero (0,1,...,7): w_max = levels-1.
+    const Quant q{a.levels, (a.wMax > 0.0) ? a.wMax : static_cast<double>(a.levels - 1)};
 
     int initLevel = (a.initLevel >= 0) ? a.initLevel : q.levelOf(sharedWeight);
     if (initLevel < 1 && a.initLevel < 0) {
-        // 0.5 con w_max=8 cuantiza a 0: la red exportada hoy con wi=0 queda con todas
-        // las sinapsis apagadas. Partir de ahí no tiene sentido; se avisa y se usa 1.
+        // Un peso compartido < 0.5 cuantiza a nivel 0 (todas las sinapsis apagadas).
+        // Partir de ahí no tiene sentido; se avisa y se usa 1.
         std::cout << "AVISO: el peso compartido " << sharedWeight << " cuantiza a nivel 0 "
                      "(red muerta); parto del nivel 1 (usa --init-level para fijarlo).\n";
         initLevel = 1;
