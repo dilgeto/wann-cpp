@@ -332,6 +332,26 @@ target_link_libraries(wann_car_noise PRIVATE
     rl_tools_iface
     OpenMP::OpenMP_CXX)
 
+# ---------------------------------------------------------------------------
+# Executable: wann_car_odin_finetune – ajuste fino post-entrenamiento de una
+# red car ya entrenada con pesos de 3 bits por sinapsis (niveles 0..7 de
+# ODIN), por búsqueda local pareada con confirmación. No toca el algoritmo
+# evolutivo; sólo simula con SnnCarTask::evalEpisodesPerSynapse.
+# ---------------------------------------------------------------------------
+add_executable(wann_car_odin_finetune
+    src/main_car_odin_finetune.cpp
+    src/SnnCarTask.cpp)
+
+target_include_directories(wann_car_odin_finetune PRIVATE include)
+
+target_link_libraries(wann_car_odin_finetune PRIVATE
+    wann_lib
+    snn_engine_imp
+    snn_encoding_imp
+    snn_core_imp
+    rl_tools_iface
+    OpenMP::OpenMP_CXX)
+
 # Mismo main que wann_car_noise, con la tarea fijada en compilación (ver el
 # comentario en main_car_noise.cpp): una binaria por tarea.
 foreach(NOISE_TASK acrobot disc_mc)

@@ -150,8 +150,10 @@ std::array<double, 4> decodeActions(const std::vector<std::vector<double>>& outS
 
 namespace wann {
 
+// The last value is 7.0 (not 8.0 as in the other tasks): that is the table the
+// cluster trained and evaluated BipedalWalker with, so a saved `.wi` of 5 means 7.0.
 const double SnnBipedalTask::WEIGHT_VALS[N_WEIGHTS] = {
-    0.5, 1.0, 2.0, 3.0, 5.0, 8.0
+    0.5, 1.0, 2.0, 3.0, 5.0, 7.0
 };
 
 SnnBipedalTask::SnnBipedalTask(const Hyperparams& hyp)

@@ -312,13 +312,37 @@ errors in the code, remind them of these and pick this up again.
    unchanged; `Ind::nConnExpressed` is the true synapse count. Consequence worth
    knowing: **`*_best.out` / `*_best/NNNN.out` written before this fix are not the
    networks training evaluated and cannot be repaired** (the disabled/enabled
-   distinction is lost). Measured on `log/log/bip_popvec_*` (BipedalWalker, 147 hidden
-   nodes): logged 36 / peak 202 vs. 1.7 / ~14 re-evaluated from the file; snapshots up
-   to gen 300 (≤9 hidden→hidden edges) still matched, from gen 500 they diverged. The
-   earlier car estimate (median 0.04 seed-sd, 45/66 nets affected) was a lower bound and
-   does not transfer to deeper nets. Verified on a real net with 10 hidden→hidden genes
-   disabled: before the fix genes-path and wVec-path gave different fitness, after it
-   they agree exactly, and export → `importNet`/`genomeFromNetFile` round-trips.
+   distinction is lost). The bug is real but small on `log/log/bip_popvec_*` (147 hidden
+   nodes): 195 hidden→hidden entries before the fix, 180 real + 15 phantom after. **It
+   does NOT explain the BipedalWalker mismatch** that first exposed it (see below).
+   Verified: on a real net with 10 hidden→hidden genes disabled, genes-path and wVec-path
+   fitness differed before the fix and agree exactly after; on 8 real `car` genomes
+   (21-29 hidden) the genes path reproduces the logged training reward exactly (0 diff)
+   and equals the wVec path; export → `importNet`/`genomeFromNetFile` round-trips. The
+   earlier car estimate (median 0.04 seed-sd, 45/66 nets affected) was a lower bound.
+
+   **Resolved (2026-10-27): the `bip_popvec` mismatch was a different `WEIGHT_VALS`
+   table on the cluster, not the export bug.** The cluster build trained and evaluated
+   `SnnBipedalTask` with a 6th shared weight of **7.0**; the repo (all of git history
+   until 2026-10-27) had `{0.5, 1, 2, 3, 5, 8}`. User confirmed the cluster table is
+   `{0.5, 1, 2, 3, 5, 7}` and `SnnBipedalTask::WEIGHT_VALS` now matches it (bipedal
+   only — the other tasks keep 8.0). Evidence: `wann_eval_weights_bipedal` on the cluster gave
+   w0..w4 bit-identical to the notebook and only w5 differed (67..159 vs -1); locally
+   passing `--weights 0.5,1,2,3,5,7` reproduces the cluster's w5 to every printed digit
+   on 4 seeds (67.1589, 139.3058, 138.1610, 159.4552), while 8.0 gives the notebook's
+   -1.33. With 7.0 the saved net evaluates to w5 = 128 (sd 34, range 50-172 over 24
+   seeds) and 23.4 mean over the 6 weights (logged 202 peak / 36 mean are
+   running-best values, i.e. inflated by selection). Lessons: (a) the earlier
+   "numerically fragile / platform" hypotheses were wrong — the cluster and the
+   notebook agree bit-for-bit once the table matches; (b) any net trained with that
+   cluster build before this alignment used 7.0 at index 5 — with the aligned table the
+   plain `wann_eval_weights_bipedal` call now reproduces the cluster output exactly
+   (verified on seeds 6000-6003, all six columns); (c) `.wi=5` means 7.0 for bipedal, so
+   neurofest-game's presets now use 7.0 too (2026-10-27; per-model `<name>.json` sidecars
+   there carry encoder/decoder/window for nets like `bip_popvec_best`, verified bit-exact
+   against `SnnBipedalTask` on 600 steps); (d) the cluster's `p/bipedal_snn.json` differs from the repo's (window 40,
+   `alg_probMoo` 0.5, `alg_nReps` 6, small/rate, non-hardcore), so evaluate cluster
+   runs with the cluster JSON, not the repo one.
 
 ## Stagnation diagnosis and candidate interventions (analysed, not implemented)
 
