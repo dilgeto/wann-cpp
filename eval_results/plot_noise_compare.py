@@ -60,6 +60,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
 
 from plot_style import TIME_TICK_LABELS, setup_publication_style
 
@@ -71,9 +72,16 @@ METHODS = {
     "sgrl":     dict(color="#E69F00", marker="s", name="SGRL"),
     "sgrl_con": dict(color="#009E73", marker="^", name="SGRL"),
     "sgrl_neu": dict(color="#CC79A7", marker="D", name="SGRL"),
+    # versiones cuantizadas (PTQ): mismo color/marcador que su contraparte en float; se dibujan en un grupo aparte
+    "sgrlq":     dict(color="#E69F00", marker="s", name="SGRL (quantized)"),
+    "sgrlq_con": dict(color="#009E73", marker="^", name="SGRL (quantized)"),
+    "sgrlq_neu": dict(color="#CC79A7", marker="D", name="SGRL (quantized)"),
 }
+FLOAT_OF = {"sgrlq": "sgrl", "sgrlq_con": "sgrl_con", "sgrlq_neu": "sgrl_neu"}
+DEFAULT_SOURCES = ["wann", "sgrl", "sgrl_con", "sgrl_neu"]     # sin cuantizar; los cuantizados van con --sources
 COLORS = {k: v["color"] for k, v in METHODS.items()}
-SG_WHAT = {"sgrl": "", "sgrl_con": ", same connections as WANN", "sgrl_neu": ", same neurons as WANN"}
+SG_WHAT = {"sgrl": "", "sgrl_con": ", same connections as WANN", "sgrl_neu": ", same neurons as WANN",
+           "sgrlq": "", "sgrlq_con": ", same connections as WANN", "sgrlq_neu": ", same neurons as WANN"}
 SHORT = {"simple": "Simple (placeholder)", "pcm": "PCM", "reram": "ReRAM (Wan 2022)",
          "reramcmo": "ReRAM CMO/HfOx"}
 MARKERS = {"simple": "D", "pcm": "o", "reram": "s", "reramcmo": "^"}
@@ -128,8 +136,9 @@ def curve(agg, model_id, noise_model, mechanism, xcol, **fixed) -> pd.DataFrame:
 class Series:
     """Qué modelos dibujar: uno principal por método y el resto como líneas finas."""
 
-    def __init__(self, models: pd.DataFrame, present: set, sources=None):
-        self.models = models[models.model_id.isin(present)]
+    def __init__(self, models: pd.DataFrame, present: set, sources=None, float_ref: bool = True):
+        all_models = models[models.model_id.isin(present)]
+        self.models = all_models
         if sources:
             self.models = self.models[self.models.source.isin(sources)]
         self.main = {s: g[g.main == 1].model_id.tolist()[0] for s, g in self.models.groupby("source")
@@ -137,6 +146,15 @@ class Series:
         self.others = {s: [m for m in g.model_id if m != self.main.get(s)]
                        for s, g in self.models.groupby("source")}
         self.order = [s for s in METHODS if s in self.main]     # orden fijo: WANN, SGRL, con, neu
+        # cada método cuantizado lleva como referencia punteada a su contraparte en float (mismo modelo, sin redondear)
+        self.float_ref = {}
+        if float_ref:
+            for q, f in FLOAT_OF.items():
+                if q in self.main:
+                    ref = all_models[(all_models.source == f) & (all_models.main == 1)].model_id.tolist()
+                    if ref:
+                        self.float_ref[q] = ref[0]
+                        self.others[q] = self.others.get(q, []) + ref
 
     def hidden(self, source: str) -> str:
         row = self.models[self.models.model_id == self.main[source]].iloc[0]
@@ -148,10 +166,15 @@ class Series:
         if source == "wann":
             return f"WANN, winner (shared weight idx {int(row.weight_index)})"
         h = self.hidden(source)
+        if source in FLOAT_OF:
+            bits = int(row.quant_bits) if "quant_bits" in row.index and pd.notna(row.quant_bits) else "?"
+            return f"SGRL {h}{SG_WHAT[source]}, {bits}-bit weights".replace("SGRL ,", "SGRL,")
         suffix = ", best seed" if source == "sgrl" else ", best model"
         return f"SGRL {h}{SG_WHAT[source]}{suffix}".replace("SGRL ,", "SGRL,")
 
     def other_label(self, source: str) -> str | None:
+        if source in self.float_ref:
+            return f"SGRL {self.hidden(source)}, float32 (unquantized)"
         n = len(self.others.get(source, []))
         if n == 0:
             return None
@@ -331,8 +354,9 @@ def annotate(ax, z, signed, dark_fn):
             ax.text(k, i, txt, ha="center", va="center", fontsize=8.5, color="white" if dark_fn(v) else "0.15")
 
 
-def fig_heatmap(agg, ser, m, out, note):
-    """Fila 1: retención escala×tiempo de cada método. Fila 2: método − WANN (puntos porcentuales)."""
+def fig_heatmap(agg, ser, m, out, note, stats=None):
+    """Fila 1: retención escala×tiempo de cada método. Fila 2: método − WANN (puntos porcentuales).
+    Con `stats` (stats_vs_wann.csv de stats_noise_compare.py) las celdas NO significativas (BH-FDR) se atenúan."""
     if "wann" not in ser.main or len(ser.order) < 2:
         return print(f"Heatmap {m}: hacen falta WANN y al menos un SGRL.")
     d = agg[(agg.noise_model == m) & (agg.mechanism == "all")]
@@ -362,6 +386,14 @@ def fig_heatmap(agg, ser, m, out, note):
         im_diff = ax2.imshow(np.ma.masked_invalid(diffs[s]), origin="lower", aspect="auto", cmap=DIFF_CMAP,
                              vmin=-dmax, vmax=dmax)
         annotate(ax2, diffs[s], True, lambda v: abs(v) > 0.6 * dmax)
+        if stats is not None:
+            st = stats[(stats.noise_model == m) & (stats.mechanism == "all") & (stats.method == s)]
+            for i, sc in enumerate(scales):
+                for k, tt in enumerate(times):
+                    r = st[np.isclose(st.scale, sc) & np.isclose(st.t_inference, tt)]
+                    if len(r) and not bool(r.sig.iloc[0]):
+                        ax2.add_patch(Rectangle((k - 0.5, i - 0.5), 1, 1, facecolor="white", alpha=0.62,
+                                                edgecolor="none", zorder=5))
         ax2.set_title(f"SGRL {ser.hidden(s)}{' (conn.)' if s == 'sgrl_con' else ' (neur.)' if s == 'sgrl_neu' else ''} − WANN",
                       fontsize=12)
     for row in (0, 1):
@@ -387,6 +419,8 @@ def fig_heatmap(agg, ser, m, out, note):
         fig.colorbar(im_diff, cax=cax, label="Method − WANN (pp); orange: method better")
     if m == "reramcmo":
         note += " t = 0 is a total noise bypass in this model."
+    if stats is not None:
+        note += " Faded cells: difference not significant (Welch t, Benjamini-Hochberg FDR 5%)."
     fig.text(0.5, -0.01, note, ha="center", va="top", fontsize=10, color="0.35")
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out)
@@ -477,7 +511,8 @@ def main():
     ap.add_argument("--time-scale", type=float, default=1.0, help="escala de ruido fija de la figura de tiempo")
     ap.add_argument("--boot", type=int, default=2000, help="remuestreos bootstrap por celda")
     ap.add_argument("--sources", nargs="+", choices=list(METHODS), default=None,
-                    help="métodos a dibujar (def.: todos los que haya en models.csv)")
+                    help="métodos a dibujar (def.: wann, sgrl, sgrl_con, sgrl_neu; los cuantizados sgrlq* se piden aquí)")
+    ap.add_argument("--no-stats", action="store_true", help="no atenuar celdas no significativas aunque exista stats_vs_wann.csv")
     ap.add_argument("--summary-scales", default="1,3", help="escalas de ruido de las barras de la figura summary")
     ap.add_argument("--env-label", default=None, help="def.: task_label de protocol.json")
     ap.add_argument("--floor", type=float, default=None, help="piso de la retención; def.: ret_floor de protocol.json")
@@ -499,10 +534,12 @@ def main():
     agg = aggregate(df, a.boot, floor)
     agg.to_csv(a.data_dir / "aggregated.csv", index=False)
     print(f"Agregado: {a.data_dir / 'aggregated.csv'} ({len(agg)} celdas × modelo)")
-    ser = Series(models, set(agg.model_id), a.sources)
+    present_sources = set(models.source)
+    sources = a.sources or [s for s in DEFAULT_SOURCES if s in present_sources] or None
+    ser = Series(models, set(agg.model_id), sources)
     if not ser.main:
         sys.exit("Error: models.csv no marca ningún modelo principal.")
-    if len(ser.order) < len(set(models.source) & set(METHODS)) and not a.sources:
+    if len(ser.order) < len(set(models.source) & set(DEFAULT_SOURCES)) and not a.sources:
         print("  (aviso: hay métodos en models.csv sin resultados completos; se omiten)")
     for s in ser.order:
         mid = ser.main[s]
@@ -510,6 +547,10 @@ def main():
         print(f"  {s}: modelo principal {mid}, retorno sin ruido = {b['mean'].iloc[0]:.1f}" if len(b)
               else f"  {s}: modelo principal {mid} SIN línea base sin ruido")
 
+    stats = None
+    if (a.data_dir / "stats_vs_wann.csv").is_file() and not a.no_stats:
+        stats = pd.read_csv(a.data_dir / "stats_vs_wann.csv")
+        print(f"  heatmaps: atenuando celdas no significativas según {a.data_dir / 'stats_vs_wann.csv'}")
     n_chips = int(agg.n_chips.max())
     note_ret = ("Retention is relative to each model's own noise-free return" +
                 (f" (floor {floor:g} = failure)." if floor else "."))
@@ -526,7 +567,7 @@ def main():
     if "heatmap" in which:
         for m in ("pcm", "reram", "reramcmo"):
             if m in present:
-                fig_heatmap(agg, ser, m, out / f"{a.prefix}_heatmap_{m}.png", f"{label}. " + note_ret)
+                fig_heatmap(agg, ser, m, out / f"{a.prefix}_heatmap_{m}.png", f"{label}. " + note_ret, stats)
     if "ablation" in which:
         for m in ("pcm", "reramcmo"):
             if m in present:

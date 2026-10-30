@@ -14,12 +14,38 @@ Métodos que se comparan (todos entrenados SIN ruido)
   sgrl      SGRL 64×64 de la búsqueda Optuna original (runs_default/, 5 mejores semillas)
   sgrl_con  SGRL con tantas CONEXIONES como la red WANN (runs/ + screening/), solo el mejor modelo
   sgrl_neu  SGRL con tantas NEURONAS como la red WANN (runs_neuronas/ + screening_neuronas/), solo el mejor
+Con --sg-quant-bits B se añaden las versiones CUANTIZADAS (PTQ por redondeo de los pesos, esquema `odin`:
+B bits de magnitud + signo, ver sgrl/quantize.py) de esos tres modelos principales: sgrlq, sgrlq_con, sgrlq_neu.
+Los checkpoints cuantizados son los que escribe ../surrogate-gradient-rl/scripts/quantize_eval.py en
+runs_quant/<esquema>/<carpeta de runs>/<corrida>/w<B>/ (primero cuantiza, DESPUÉS se inyecta el ruido; los
+sesgos quedan en float, como en el modelo de ruido). WANN no se cuantiza: todas sus sinapsis valen ±w (una
+sola magnitud), así que ya es representable con un nivel. Las figuras de este grupo se escriben aparte
+(<tarea>_wann_vs_sgrlq<B>_*.png) con la versión sin cuantizar como referencia punteada.
 Para las dos variantes, "el mejor" = el rank de la fase 3 con mayor media de validación
 (screening*/<tarea>/p3_summary.json) y, dentro de él, la semilla de mayor final_eval
 (--sgv-top). --sg-variants controla cuáles se incluyen (def.: con neu; sin valores = ninguna).
 Los resultados ya existentes de wann/sgrl en --out-dir se reutilizan (partes reanudables): relanzar
 solo calcula los modelos nuevos. Si en el clúster faltan esas partes, el --dry-run lo muestra
 (columna "hechos") antes de gastar cómputo.
+
+Modo --replicas: TODAS las semillas de revalidación (11) de la configuración elegida de cada método
+---------------------------------------------------------------------------------------------------
+El modo normal evalúa un modelo "principal" por método (el mejor, con el sesgo de selección que eso trae).
+Con --replicas se evalúan las 11 redes entrenadas de cada método —WANN (cada semilla con SU mejor peso
+compartido, el de la revalidación), SGRL 64×64, SGRL por conexiones y por neuronas— y, con --sg-quant-bits,
+también todas sus versiones cuantizadas. Con 11 redes por método hay réplica real: se puede contrastar
+MÉTODOS (unidad = red) y no solo modelos concretos. Un protocolo reducido hace viable el costo: por defecto
+30 chips × 1 lectura × 1 semilla por celda y 27 celdas (intensidad 1/2/3/5, deriva a 1 h/1 día/1 año,
+ablación a escala 3; --replica-cells full usa las 191 celdas de siempre). De WANN se evalúan los 6 pesos
+compartidos de cada red. Por defecto (--replica-wann-weights odin) son los niveles ENTEROS 1..7, los únicos pesos
+que ODIN puede guardar (el signo lo da la sinapsis excitadora/inhibidora; peso simulado = nivel, w_max = 7, igual
+que wann_car_odin_finetune), y NO los de WEIGHT_VALS (0.5, 1.5, 2.5 y 8 no son representables). El análisis
+principal usa, por semilla, el nivel de mejor desempeño SIN ruido medido con episodios independientes (celda
+`none` con la semilla 999, que no se usa en ninguna otra celda); se puede ver también el promedio de los niveles
+(--wann-view mean). Salida aparte en
+eval_results/<tarea>_replicas/ (otro protocolo: no se mezcla con lo anterior) y sus propias figuras y
+contrastes (plot_noise_replicas.py, stats_noise_replicas.py). Uso:
+  python eval_results/run_noise_compare.py --replicas --sg-quant-bits 3 --jobs 300
 
 Tareas y modelos (se eligen solos; ver --dry-run)
 -------------------------------------------------
@@ -108,7 +134,7 @@ def row_cost(kind: str, source: str, task: str) -> float:
     if kind == "wann":
         return COST_PER_ROW["wann"]
     if task == "car":
-        return COST_PER_ROW["sgrl"] if source == "sgrl" else 7.5
+        return COST_PER_ROW["sgrl"] if source in ("sgrl", "sgrlq") else 7.5
     return 0.3
 
 # ret_floor: recompensa del peor desenlace (fracaso total); la "retención" se mide entre este
@@ -158,7 +184,27 @@ def csv_floats(s: str) -> list[float]:
 # --------------------------------------------------------------------------------------------
 # Celdas del experimento
 # --------------------------------------------------------------------------------------------
+def replica_cells(a) -> list[tuple]:
+    """Celdas del protocolo reducido de --replicas (27): sin ruido; intensidad a escalas 1/2/3/5 por dispositivo
+    (t por defecto); deriva a escala 1 (PCM y CMO a 1 h/1 día/1 año, ReRAM a 1 día); ablación a escala 3
+    (PCM a ablation_t, CMO a 1 s) y la escala 0 de CMO (efecto del piso g_min)."""
+    cells = {("none", 0.0, 0.0, "all"), ("reramcmo", 0.0, 1.0, "all")}
+    for m in REAL_MODELS:
+        for sc in (1.0, 2.0, 3.0, 5.0):
+            cells.add((m, sc, INTENSITY_T[m], "all"))
+    for m in ("pcm", "reramcmo"):
+        for t in (3600.0, 86400.0, 31536000.0):
+            cells.add((m, 1.0, t, "all"))
+    cells.add(("reram", 1.0, 86400.0, "all"))
+    for m, t in (("pcm", a.ablation_t), ("reramcmo", 1.0)):
+        for mech in ABLATION_MECHS:
+            cells.add((m, 3.0, t, mech))
+    return sorted(cells)
+
+
 def build_cells(a) -> list[tuple]:
+    if a.replicas and a.replica_cells == "reduced":
+        return replica_cells(a)
     """Celdas únicas (noise_model, scale, t, mechanism). mechanism='all' = los tres mecanismos
     siguen a `scale`; 'prog'/'read'/'drift' = solo ese vale `scale` y los otros dos 0."""
     cells = {("none", 0.0, 0.0, "all")}
@@ -312,6 +358,73 @@ def select_sgrl_variant(task: str, spec: dict, a, variant: str) -> list[dict]:
     return out
 
 
+QUANT_OF = {"sgrl": "sgrlq", "sgrl_con": "sgrlq_con", "sgrl_neu": "sgrlq_neu"}
+
+
+def replica_seed_of(name: str) -> int | None:
+    import re
+    m = re.search(r"-s(\d+)$", name)
+    return int(m.group(1)) if m else None
+
+
+def select_wann_replicas(task: str, spec: dict, a, best: dict) -> list[dict]:
+    """Las 11 semillas de revalidación de la configuración (run_key, rank) ganadora; cada red con SU mejor peso."""
+    if best["rank"] < 0:
+        sys.exit("Error: --replicas necesita que la red WANN se elija sola (sin --wann-net).")
+    df = pd.concat([pd.read_csv(c) for c in spec["eval_csvs"] if Path(c).is_file()], ignore_index=True)
+    if "reward_type" in df.columns and (df.reward_type == "original").any():
+        df = df[df.reward_type == "original"]
+    df = df[(df.run_key == best["run_key"]) & (df["rank"] == best["rank"])].sort_values("seed_idx")
+    n_w = int(json.loads(Path(spec["base_config"]).read_text()).get("alg_nVals", 6))
+    levels = [int(x) for x in a.odin_levels.split(",") if x.strip()]
+    out = []
+    for r in df.itertuples():
+        net = f"log/full_p3_{r.run_key}/rank{int(r.rank):02d}_seed{int(r.seed_idx):02d}_best.out"
+        ov = f"screening_full/{r.run_key}/p3_configs/rank{int(r.rank):02d}_seed{int(r.seed_idx):02d}.json"
+        for f in (net, ov):
+            if not Path(f).is_file():
+                sys.exit(f"Error [{task}]: no existe {f}")
+        # el peso "mejor" es el de la revalidación SIN ruido (fijado antes de ver el ruido); con
+        # --replica-wann-weights all se evalúan además los demás pesos compartidos de cada red
+        if a.replica_wann_weights == "odin":
+            for L in levels:
+                out.append(dict(model_id=f"wann_s{int(r.seed_idx):02d}_L{L}", source="wann",
+                                label=f"WANN {r.run_key} rank{int(r.rank):02d}-seed{int(r.seed_idx):02d} (ODIN level {L})",
+                                path=net, net=net, override=ov, weight_value=float(L), w_max=a.wann_wmax,
+                                train_return=float(r.reward), replica_seed=int(r.seed_idx)))
+            continue
+        for wi in (range(n_w) if a.replica_wann_weights == "original" else [int(r.weight_index)]):
+            out.append(dict(model_id=f"wann_s{int(r.seed_idx):02d}_w{wi}", source="wann",
+                            label=f"WANN {r.run_key} rank{int(r.rank):02d}-seed{int(r.seed_idx):02d} (w idx {wi})",
+                            path=net, net=net, override=ov, weight_index=wi,
+                            is_best_weight=int(wi == int(r.weight_index)),
+                            train_return=float(r.reward), replica_seed=int(r.seed_idx)))
+    return out
+
+
+def select_sgrl_quant(task: str, a, models: list[dict], all_models: bool = False) -> list[dict]:
+    """Versión cuantizada del modelo principal (el primero) de cada fuente SGRL ya elegida; con all_models, de TODOS."""
+    repo = Path(a.sg_repo).resolve()
+    out = []
+    bases = [(src, qsrc, base) for src, qsrc in QUANT_OF.items()
+             for base in ([b for b in models if b["source"] == src] if all_models
+                          else [next((b for b in models if b["source"] == src), None)]) if base is not None]
+    for src, qsrc, base in bases:
+        ck = Path(base["path"])
+        run, runs_dir = ck.parent.name, ck.parent.parent.name        # <carpeta de runs>/<corrida>/final.pt
+        qdir = repo / a.sg_quant_dir / a.sg_quant_scheme / runs_dir / run / f"w{a.sg_quant_bits}"
+        for f in (f"{a.sg_ckpt}.pt", "config.json"):
+            if not (qdir / f).is_file():
+                sys.exit(f"Error [{task}]: falta {qdir / f}. Generalo con scripts/quantize_eval.py de {repo.name} "
+                         f"(--scheme {a.sg_quant_scheme} --bits {a.sg_quant_bits}) o revisá --sg-quant-dir.")
+        out.append(dict(model_id=f"{qsrc}_w{a.sg_quant_bits}_{run}", source=qsrc,
+                        label=f"{base['label']} ({a.sg_quant_bits}-bit {a.sg_quant_scheme})",
+                        path=str(qdir / f"{a.sg_ckpt}.pt"), train_return=float("nan"), weight_index="",
+                        hidden=base.get("hidden", ""), quant_bits=a.sg_quant_bits, quant_scheme=a.sg_quant_scheme,
+                        ref_model_id=base["model_id"], replica_seed=base.get("replica_seed")))
+    return out
+
+
 class TaskCtx:
     """Todo lo que depende de la tarea: modelos elegidos, rutas de salida, binario, episodios."""
 
@@ -324,16 +437,28 @@ class TaskCtx:
         if not Path(self.binary).is_file() and not a.skip_run:
             sys.exit(f"Error [{task}]: no existe {self.binary}. Compilar primero: ./build.sh")
         self.episodes = a.episodes or read_alg_nreps(Path(self.base_config), self.wann["override"]) or 6
-        self.out_dir = Path(a.out_dir) / f"{task}_wann_vs_sgrl" if a.out_dir else Path("eval_results") / f"{task}_wann_vs_sgrl"
+        suffix = "replicas" if a.replicas else "wann_vs_sgrl"
+        self.out_dir = Path(a.out_dir) / f"{task}_{suffix}" if a.out_dir else Path("eval_results") / f"{task}_{suffix}"
         self.graficos = a.graficos_dir or f"graficos/{spec['graficos']}"
         self.prefix = spec["prefix"]
         w = self.wann
         wlabel = f"WANN {w['run_key']} rank{w['rank']:02d}-seed{w['seed_idx']:02d}" if w["rank"] >= 0 else "WANN (manual)"
-        self.models = [dict(model_id=f"wann_w{wi}", source="wann", label=f"{wlabel} (w idx {wi})",
-                            path=w["net"], train_return=w["reward"], weight_index=wi)
-                       for wi in a.wann_weights] + select_sgrl(task, spec, a)
+        if a.replicas:
+            a.sg_top = a.sgv_top = 999            # todas las semillas del trial/rank elegido
+        if a.replicas:
+            self.models = select_wann_replicas(task, spec, a, w) + select_sgrl(task, spec, a)
+        else:
+            self.models = [dict(model_id=f"wann_w{wi}", source="wann", label=f"{wlabel} (w idx {wi})",
+                                path=w["net"], train_return=w["reward"], weight_index=wi)
+                           for wi in a.wann_weights] + select_sgrl(task, spec, a)
         for variant in a.sg_variants:
             self.models += select_sgrl_variant(task, spec, a, variant)
+        if a.replicas:   # réplica = el nº de semilla de entrenamiento de cada red SGRL
+            for m in self.models:
+                if m["source"] != "wann":
+                    m["replica_seed"] = replica_seed_of(Path(m["path"]).parent.name)
+        if a.sg_quant_bits:
+            self.models += select_sgrl_quant(task, a, self.models, all_models=a.replicas)
 
     def describe(self):
         w = self.wann
@@ -342,9 +467,11 @@ class TaskCtx:
               f"{self.episodes} episodios por fila.")
         for src in sorted({m["source"] for m in self.models if m["source"] != "wann"}):
             sg = [m for m in self.models if m["source"] == src]
-            extra = f", rank {sg[0]['rank']} (validación {sg[0]['val_mean']:.1f})" if "rank" in sg[0] else ""
-            print(f"    {src:9s} {len(sg)} checkpoint(s), oculta {sg[0]['hidden']}{extra}: "
-                  f"{', '.join(Path(m['path']).parent.name for m in sg)}")
+            extra = (f", rank {sg[0]['rank']} (validación {sg[0]['val_mean']:.1f})" if "rank" in sg[0]
+                     else f", {sg[0]['quant_bits']}-bit {sg[0]['quant_scheme']}" if "quant_bits" in sg[0] else "")
+            names = [Path(m["path"]).parent.name for m in sg]
+            shown = ", ".join(names) if len(names) <= 5 else f"{names[0]} … {names[-1]}"
+            print(f"    {src:9s} {len(sg)} checkpoint(s), oculta {sg[0]['hidden']}{extra}: {shown}")
 
 
 # --------------------------------------------------------------------------------------------
@@ -357,12 +484,21 @@ class Job:
         self.cmd, self.part, self.rows = cmd, part, rows
         self.tmp = part.with_suffix(".csv.tmp")
         self.err = part.with_suffix(".err")
-        self.cost = rows * row_cost(self.kind, self.source, ctx.name)
+        self.cost = rows * row_cost(self.kind, self.source, ctx.name) + (3.0 if self.kind == "sgrl" else 0.2)  # + arranque
 
     @property
     def label(self):
         m, s, t, mech = self.cell
         return f"[{self.ctx.name}] {self.model['model_id']} {m}/{mech} scale={fmt(s)} t={fmt(t)} seed={self.seed}"
+
+
+SELECT_SEED = 999      # semilla de chips/episodios SOLO para elegir el mejor nivel de WANN sin ruido (celda `none`)
+
+
+def seeds_for(a, model, cell) -> list[int]:
+    if a.replicas and a.replica_wann_weights == "odin" and model["source"] == "wann" and cell[0] == "none":
+        return list(a.seeds) + [SELECT_SEED]
+    return list(a.seeds)
 
 
 def cell_stem(cell, seed) -> str:
@@ -373,10 +509,13 @@ def cell_stem(cell, seed) -> str:
 def wann_cmd(a, ctx, model, cell, seed) -> list[str]:
     m, s, t, _ = cell
     w = ctx.wann
-    cmd = [ctx.binary, "-f", w["net"], "-d", ctx.base_config]
-    if w["override"]:
-        cmd += ["-p", w["override"]]
-    cmd += ["--weight-index", str(model["weight_index"]), "--mode", "per-synapse", "--noise-model", m,
+    net, override = model.get("net", w["net"]), model.get("override", w["override"])
+    cmd = [ctx.binary, "-f", net, "-d", ctx.base_config]
+    if override:
+        cmd += ["-p", override]
+    weight = ["--weight", fmt(model["weight_value"]), "--w-max", fmt(model["w_max"])] if "weight_value" in model \
+        and pd.notna(model.get("weight_value")) else ["--weight-index", str(model["weight_index"])]
+    cmd += weight + ["--mode", "per-synapse", "--noise-model", m,
             "--n-chips", str(a.n_chips), "--reads-per-chip", str(a.reads_per_chip),
             "--t-inference", fmt(t), "--n-levels", str(a.n_levels),
             "--reramcmo-g-max", fmt(a.reramcmo_g_max), "--reramcmo-g-min", fmt(a.reramcmo_g_min),
@@ -401,7 +540,7 @@ def build_jobs(a, ctx: TaskCtx, cells: list[tuple]) -> list[Job]:
     for model in ctx.models:
         mdir = ctx.out_dir / "parts" / model["model_id"]
         for cell in cells:
-            for seed in a.seeds:
+            for seed in seeds_for(a, model, cell):
                 part = mdir / f"{cell_stem(cell, seed)}.csv"
                 if model["source"] == "wann":
                     cmd = wann_cmd(a, ctx, model, cell, seed)
@@ -543,7 +682,9 @@ def consolidate(ctx: TaskCtx, jobs: list[Job], a) -> int:
     pick = wm[wm.weight_index == ctx.wann["weight_index"]]
     if len(wm):
         mf.loc[(pick.index[0] if len(pick) else wm.index[0]), "main"] = 1
-    for src in mf.source.unique():      # cada variante de SGRL: su primer modelo (el mejor) es el principal
+    if a.replicas:
+        mf["main"] = 1                  # réplicas: no hay modelo principal, todas las redes cuentan
+    for src in ([] if a.replicas else mf.source.unique()):   # cada variante de SGRL: su primer modelo es el principal
         if src != "wann":
             mf.loc[mf[mf.source == src].index[0], "main"] = 1
     mf.to_csv(ctx.out_dir / "models.csv", index=False)
@@ -559,6 +700,9 @@ def input_files(ctx: TaskCtx, a) -> list[tuple[str, Path]]:
     files = [("wann:" + str(ctx.wann["net"]), Path(ctx.wann["net"])), ("wann:" + ctx.base_config, Path(ctx.base_config))]
     if ctx.wann["override"]:
         files.append(("wann:" + str(ctx.wann["override"]), Path(ctx.wann["override"])))
+    for m in ctx.models:                      # --replicas: cada semilla de WANN trae su propia red y override
+        if m["source"] == "wann" and "net" in m:
+            files += [("wann:" + m["net"], Path(m["net"])), ("wann:" + m["override"], Path(m["override"]))]
     files += [("wann:" + c, Path(c)) for c in ctx.spec["eval_csvs"]]       # deciden cuál es "el mejor"
     default_dir = a.sg_default_dir or ("runs_default" if (sg_repo / "runs_default").is_dir() else "runs")
     study = a.sg_study or ctx.spec["sg_study"]
@@ -568,7 +712,8 @@ def input_files(ctx: TaskCtx, a) -> list[tuple[str, Path]]:
     for m in ctx.models:
         if m["source"] != "wann":
             d = Path(m["path"]).parent
-            sel += [Path(m["path"]), d / "config.json", d / "final_eval.json"]
+            sel += [Path(m["path"]), d / "config.json"]
+            sel += [d / f for f in ("final_eval.json", "quant.json") if (d / f).is_file()]
     for f in sel:
         try:
             rel = f.resolve().relative_to(sg_repo)
@@ -647,14 +792,28 @@ def main():
                    help="variantes con la red del tamaño de la de WANN: con (mismas conexiones), neu (mismas neuronas); "
                         "sin valores = ninguna (def.: las dos)")
     g.add_argument("--sgv-top", type=int, default=1, help="semillas por variante (def.: 1 = solo el mejor modelo)")
+    g.add_argument("--sg-quant-bits", type=int, default=0,
+                   help="si > 0, añade las versiones cuantizadas (B bits) de los modelos principales de SGRL; 0 = no (def.)")
+    g.add_argument("--sg-quant-scheme", default="odin", choices=["odin", "symmetric"])
+    g.add_argument("--sg-quant-dir", default="runs_quant", help="carpeta (en --sg-repo) con los checkpoints de quantize_eval.py")
     g.add_argument("--sg-con-runs", default="runs", help="corridas de la variante por conexiones")
     g.add_argument("--sg-con-screening", default="screening")
     g.add_argument("--sg-neu-runs", default="runs_neuronas", help="corridas de la variante por neuronas")
     g.add_argument("--sg-neu-screening", default="screening_neuronas")
     g = ap.add_argument_group("Protocolo de ruido (igual en ambos lados)")
-    g.add_argument("--seeds", type=int, nargs="+", default=[0, 1])
-    g.add_argument("--n-chips", type=int, default=30)
-    g.add_argument("--reads-per-chip", type=int, default=3)
+    g.add_argument("--replicas", action="store_true",
+                   help="evaluar las 11 semillas de cada método (ver el docstring); salida en <tarea>_replicas/")
+    g.add_argument("--replica-wann-weights", choices=["odin", "original", "best"], default="odin",
+                   help="--replicas: pesos compartidos de WANN por red. odin (def.) = niveles ENTEROS 1..7, los únicos que "
+                        "ODIN puede guardar (peso simulado = nivel, w_max = 7); original = los 6 de WEIGHT_VALS (0.5..8, "
+                        "algunos no representables en ODIN); best = solo el mejor de la revalidación original")
+    g.add_argument("--odin-levels", default="1,2,3,4,5,6,7", help="niveles de magnitud de WANN con --replica-wann-weights odin")
+    g.add_argument("--wann-wmax", type=float, default=7.0, help="w_max de WANN con pesos odin (nivel 7 = g_max)")
+    g.add_argument("--replica-cells", choices=["reduced", "full"], default="reduced",
+                   help="celdas del modo --replicas: reduced = 27 (def.), full = las 191 de siempre")
+    g.add_argument("--seeds", type=int, nargs="+", default=None, help="def.: 0 1 (0 con --replicas)")
+    g.add_argument("--n-chips", type=int, default=None, help="def.: 30")
+    g.add_argument("--reads-per-chip", type=int, default=None, help="def.: 3 (1 con --replicas)")
     g.add_argument("--episodes", type=int, default=None, help="def.: alg_nReps del config de WANN")
     g.add_argument("--n-levels", type=int, default=0)
     g.add_argument("--noise-scales", default="0,0.5,1,2,3,4,5")
@@ -686,6 +845,9 @@ def main():
     if len(a.task) > 1 and (a.wann_net or a.sg_runs or a.sg_study or a.graficos_dir):
         sys.exit("Error: --wann-net/--sg-runs/--sg-study/--graficos-dir valen para UNA tarea (--task X).")
     a.wann_weights = [int(x) for x in a.wann_weights.split(",") if x.strip()]
+    a.n_chips = a.n_chips or 30
+    a.reads_per_chip = a.reads_per_chip or (1 if a.replicas else 3)
+    a.seeds = a.seeds or ([0] if a.replicas else [0, 1])
     a.noise_scales = csv_floats(a.noise_scales)
     for k in ("time_points_pcm", "time_points_reram", "time_points_reramcmo"):
         setattr(a, k, csv_floats(getattr(a, k)))
@@ -761,8 +923,22 @@ def main():
             print(f"[{ctx.name}] {missing} trabajos sin resultado: no se grafica (usá --plot-anyway para forzar).")
             bad = True
             continue
+        if a.replicas:
+            for view in ("best", "mean"):
+                subprocess.run([sys.executable, "eval_results/stats_noise_replicas.py", "--data-dir", str(ctx.out_dir),
+                                "--wann-view", view], check=True)
+            for grp in ("float",) + (("quant",) if a.sg_quant_bits else ()):
+                subprocess.run([sys.executable, "eval_results/plot_noise_replicas.py", "--data-dir", str(ctx.out_dir),
+                                "--out-dir", ctx.graficos, "--prefix", f"{ctx.name}_replicas", "--group", grp], check=True)
+            continue
+        subprocess.run([sys.executable, "eval_results/stats_noise_compare.py", "--task", ctx.name,
+                        "--base-dir", str(ctx.out_dir.parent)], check=True)
         subprocess.run([sys.executable, "eval_results/plot_noise_compare.py", "--data-dir", str(ctx.out_dir),
                         "--out-dir", ctx.graficos, "--prefix", ctx.prefix], check=True)
+        if a.sg_quant_bits:
+            subprocess.run([sys.executable, "eval_results/plot_noise_compare.py", "--data-dir", str(ctx.out_dir),
+                            "--out-dir", ctx.graficos, "--prefix", f"{ctx.prefix}q{a.sg_quant_bits}",
+                            "--sources", "wann", "sgrlq", "sgrlq_con", "sgrlq_neu"], check=True)
     if failures or bad:
         sys.exit(1)
 

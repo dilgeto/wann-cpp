@@ -435,6 +435,16 @@ ya calculados en `eval_results/<tarea>_wann_vs_sgrl/` se reutilizan: relanzar so
 los 4 métodos y añaden `*_summary.png` (barras por dispositivo a escala 1 y 3); `--sources wann sgrl`
 reproduce las de 2 métodos.
 
+**Variantes cuantizadas** (`--sg-quant-bits B`): añade `sgrlq`, `sgrlq_con` y `sgrlq_neu`, las versiones
+con los pesos redondeados (PTQ, esquema `odin`: B bits de magnitud + signo; los sesgos quedan en float) de
+los tres modelos principales de SGRL. Primero se cuantiza y DESPUÉS se inyecta el ruido. Usa los
+checkpoints que escribe `../surrogate-gradient-rl/scripts/quantize_eval.py` en
+`runs_quant/<esquema>/<carpeta>/<corrida>/w<B>/`, que son checkpoints normales. WANN no se cuantiza: todas
+sus sinapsis valen ±w (una sola magnitud). Las figuras de este grupo se escriben aparte
+(`<tarea>_wann_vs_sgrlq<B>_*.png`), con la versión sin cuantizar como referencia punteada, y
+`stats_noise_compare.py` añade `stats_quant_vs_float.csv` (efecto de cuantizar, pareado por chip).
+`python eval_results/run_noise_compare.py --sg-quant-bits 3 --jobs 300`.
+
 `wann_acrobot_noise` y `wann_disc_mc_noise` son el mismo `main_car_noise.cpp` con la tarea
 fijada en compilación (`NOISE_TASK_ACROBOT`/`NOISE_TASK_DISC_MC`; mismo motivo que
 `wann_eval_weights_<tarea>`) y requieren `evalEpisodesPerSynapse` de `SnnAcrobotTask`/
