@@ -45,14 +45,16 @@ from plot_noise_compare import METHODS, SHORT, INTENSITY_T, MECH_TITLE
 from plot_style import TIME_TICK_LABELS, setup_publication_style
 from stats_noise_replicas import FLOAT_OF, network_table
 
-GROUPS = {"float": ["wann", "sgrl", "sgrl_con", "sgrl_neu"], "quant": ["wann", "sgrlq", "sgrlq_con", "sgrlq_neu"]}
+GROUPS = {"float": ["wann", "wann_fs", "sgrl", "sgrl_con", "sgrl_neu"],
+          "quant": ["wann", "wann_fs", "sgrlq", "sgrlq_con", "sgrlq_neu"]}
 DEVICES = ("pcm", "reram", "reramcmo")
 STAR = [(0.001, "***"), (0.01, "**"), (0.05, "*")]
 
 
 class Data:
-    def __init__(self, data_dir: Path, group: str, wann_view: str = "best"):
+    def __init__(self, data_dir: Path, group: str, wann_view: str = "best", star_ref: str = "wann"):
         self.wann_view = wann_view
+        self.star_ref = star_ref
         self.net, self.base, self.floor = network_table(data_dir, wann_view)
         self.models = pd.read_csv(data_dir / "models.csv")
         self.sources = [s for s in GROUPS[group] if s in set(self.models.source)]
@@ -65,10 +67,14 @@ class Data:
     def label(self, src: str) -> str:
         m = self.models[self.models.source == src]
         n = int(m.replica_seed.nunique()) if "replica_seed" in m else len(m)
-        if src == "wann":
+        if src in ("wann", "wann_fs"):
             odin = "weight_value" in m and m.weight_value.notna().any()
             how = (("best ODIN level (noise-free pick) each" if odin else "best shared weight each")
                    if self.wann_view == "best" else ("mean over ODIN levels 1-7" if odin else "mean over shared weights"))
+            if src == "wann_fs":
+                return f"WANN, full-scale mapping ({n} seeds, {how})"
+            if "wann_fs" in set(self.models.source):
+                return f"WANN, ODIN level as-is (w_max = 7) ({n} seeds, {how})"
             return f"WANN ({n} seeds, {how})"
         h = str(m.hidden.iloc[0]).replace("x", "×") if "hidden" in m and pd.notna(m.hidden.iloc[0]) else ""
         what = {"": "", "con": ", same connections", "neu": ", same neurons"}[src.split("_")[1] if "_" in src else ""]
@@ -86,10 +92,13 @@ class Data:
         return g[["model_id", "replica_seed", "ret_abs"]]
 
     def star(self, src, nm, mech, scale, t):
-        if self.stats is None or src == "wann":
+        if self.stats is None or src in ("wann", "wann_fs"):
             return ""
-        r = self.stats[(self.stats.method == src) & (self.stats.noise_model == nm) & (self.stats.mechanism == mech)
-                       & np.isclose(self.stats.scale, scale) & np.isclose(self.stats.t_inference, t)]
+        st = self.stats
+        if "wann_source" in st.columns:                    # contraste contra el escenario de WANN elegido
+            st = st[st.wann_source == self.star_ref]
+        r = st[(st.method == src) & (st.noise_model == nm) & (st.mechanism == mech)
+               & np.isclose(st.scale, scale) & np.isclose(st.t_inference, t)]
         if r.empty:
             return ""
         q = float(r.q_bh.iloc[0])
@@ -216,7 +225,8 @@ def fig_boxplots(d: Data, out: Path, note):
     axes[0][0].set_ylabel("Retained performance (% of noise-free), one point per network")
     handles = [Line2D([], [], color=METHODS[s]["color"], lw=6, alpha=0.6, label=d.label(s)) for s in d.sources]
     fig.tight_layout(rect=[0, 0.2, 1, 1])
-    save(fig, out, handles, note + " Stars: SGRL vs WANN, Mann-Whitney U (BH-FDR): * q<.05, ** q<.01, *** q<.001, ns.", ncol=2)
+    ref = "WANN full-scale" if d.star_ref == "wann_fs" else ("WANN (ODIN level as-is)" if "wann_fs" in set(d.models.source) else "WANN")
+    save(fig, out, handles, note + f" Stars: SGRL vs {ref}, Mann-Whitney U (BH-FDR): * q<.05, ** q<.01, *** q<.001, ns.", ncol=2)
 
 
 def fig_drift(d: Data, out: Path, note, rng):
@@ -327,14 +337,17 @@ def main():
     ap.add_argument("--group", choices=list(GROUPS), default="float")
     ap.add_argument("--wann-view", choices=["best", "mean"], default="best",
                     help="WANN: un peso por red elegido sin ruido (def.) o el promedio de sus pesos")
+    ap.add_argument("--star-ref", choices=["wann", "wann_fs"], default="wann",
+                    help="escenario de WANN contra el que se calculan las estrellas de significancia de las cajas")
     ap.add_argument("--env-label", default=None)
     a = ap.parse_args()
     proto = json.loads((a.data_dir / "protocol.json").read_text()) if (a.data_dir / "protocol.json").is_file() else {}
     label = a.env_label or proto.get("task_label", a.data_dir.name)
-    prefix = (a.prefix or a.data_dir.name) + ("q" if a.group == "quant" else "") + ("" if a.wann_view == "best" else f"_{a.wann_view}")
+    prefix = (a.prefix or a.data_dir.name) + ("q" if a.group == "quant" else "") + ("" if a.wann_view == "best" else f"_{a.wann_view}") \
+        + ("" if a.star_ref == "wann" else "_vs_fs")
     out = Path(a.out_dir or "graficos")
     setup_publication_style()
-    d = Data(a.data_dir, a.group, a.wann_view)
+    d = Data(a.data_dir, a.group, a.wann_view, a.star_ref)
     if len(d.sources) < 2:
         sys.exit(f"Error: el grupo {a.group} no tiene métodos suficientes en {a.data_dir / 'models.csv'}.")
     nets = {s: int(d.models[d.models.source == s].replica_seed.nunique()) for s in d.sources}

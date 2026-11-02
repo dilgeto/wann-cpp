@@ -72,6 +72,8 @@ METHODS = {
     "sgrl":     dict(color="#E69F00", marker="s", name="SGRL"),
     "sgrl_con": dict(color="#009E73", marker="^", name="SGRL"),
     "sgrl_neu": dict(color="#CC79A7", marker="D", name="SGRL"),
+    # WANN con el peso guardado en fondo de escala (ganancia de la neurona compensada); solo en el modo réplicas
+    "wann_fs":  dict(color="#56B4E9", marker="v", name="WANN (full-scale)"),
     # versiones cuantizadas (PTQ): mismo color/marcador que su contraparte en float; se dibujan en un grupo aparte
     "sgrlq":     dict(color="#E69F00", marker="s", name="SGRL (quantized)"),
     "sgrlq_con": dict(color="#009E73", marker="^", name="SGRL (quantized)"),

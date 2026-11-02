@@ -37,6 +37,7 @@ from scipy import stats
 CELL = ["noise_model", "mechanism", "scale", "t_inference"]
 SELECT_SEED = 999      # semilla reservada para elegir el mejor nivel ODIN de WANN sin ruido (ver run_noise_compare.py)
 METHODS = ("sgrl", "sgrl_con", "sgrl_neu", "sgrlq", "sgrlq_con", "sgrlq_neu")
+WANN_SRC = ("wann", "wann_fs")     # wann: nivel ODIN tal cual (w_max = 7); wann_fs: el mismo peso en fondo de escala (w_max = nivel)
 FLOAT_OF = {"sgrlq": "sgrl", "sgrlq_con": "sgrl_con", "sgrlq_neu": "sgrl_neu"}
 
 
@@ -64,7 +65,7 @@ def network_table(data_dir: Path, wann_view: str = "best"):
     net["ret_pct"] = np.where(net.base > floor, (net.ret_abs - floor) / (net.base - floor) * 100.0, np.nan)
     net = net.merge(models[["model_id"] + [c for c in ("replica_seed", "ref_model_id", "is_best_weight", "weight_value")
                                            if c in models.columns]], on="model_id", how="left")
-    is_w = net.source == "wann"
+    is_w = net.source.isin(WANN_SRC)
     odin = "weight_value" in net.columns and net.loc[is_w, "weight_value"].notna().any()
     multi = odin or ("is_best_weight" in net.columns and net.loc[is_w, "is_best_weight"].notna().any())
     if multi:
@@ -74,18 +75,21 @@ def network_table(data_dir: Path, wann_view: str = "best"):
                 raise ValueError("no hay celdas `none` con la semilla 999 para elegir el nivel ODIN de WANN")
             pick = (pd.DataFrame({"model_id": sel.index, "sel": sel.values}).merge(models[["model_id", "replica_seed"]])
                     .sort_values("sel", ascending=False).drop_duplicates("replica_seed"))
-            chosen = set(pick.model_id)
-            net = net[~w | net.model_id.isin(chosen)]
-            net.attrs["wann_levels"] = {int(r.replica_seed): float(models.set_index("model_id").weight_value[r.model_id])
-                                        for r in pick.itertuples()}
+            levels = {int(r.replica_seed): float(models.set_index("model_id").weight_value[r.model_id])
+                      for r in pick.itertuples()}
+            # wann_fs usa el MISMO nivel que wann en cada semilla (la red y su desempeño sin ruido son idénticos:
+            # el mapeo solo importa con ruido), así que la elección se hace una vez con las celdas `none` de wann
+            keep = [(int(rs) in levels and float(wv) == levels[int(rs)]) if pd.notna(rs) else False
+                    for rs, wv in zip(net.replica_seed, net.weight_value)]
+            net = net[~w | pd.Series(keep, index=net.index)]
+            net.attrs["wann_levels"] = levels
         elif wann_view == "best":
             net = net[~w | (net.is_best_weight == 1)]
         elif wann_view == "mean":
-            agg = (net[w].groupby(["replica_seed"] + CELL, sort=False)
+            agg = (net[w].groupby(["source", "replica_seed"] + CELL, sort=False)
                    .agg(ret_abs=("ret_abs", "mean"), base=("base", "mean"), ret_pct=("ret_pct", "mean"),
                         n_chips=("n_chips", "first")).reset_index())
-            agg["source"] = "wann"
-            agg["model_id"] = agg.replica_seed.map(lambda k: f"wann_s{int(k):02d}_mean")
+            agg["model_id"] = [f"{src}_s{int(k):02d}_mean" for src, k in zip(agg.source, agg.replica_seed)]
             net = pd.concat([net[~w], agg], ignore_index=True)
         else:
             raise ValueError("wann_view: best | mean")
@@ -105,22 +109,23 @@ def methods_vs_wann(task, net, a) -> pd.DataFrame:
     for cell in net[CELL].drop_duplicates().itertuples(index=False, name=None):
         if cell[2] == 0 and cell[0] in ("pcm", "reram"):
             continue
-        x = groups.get(("wann",) + cell)
-        if x is None or len(x) < 3:
-            continue
-        for src in METHODS:
-            y = groups.get((src,) + cell)
-            if y is None or len(y) < 3:
+        for wsrc in WANN_SRC:                          # cada método contra cada escenario de WANN
+            x = groups.get((wsrc,) + cell)
+            if x is None or len(x) < 3:
                 continue
-            u = stats.mannwhitneyu(y, x, alternative="two-sided")
-            pw = stats.ttest_ind(y, x, equal_var=False).pvalue if (x.std() > 0 or y.std() > 0) else 1.0
-            lo, hi = boot_mean_diff(x, y, rng, a.boot)
-            rows.append(dict(task=task, noise_model=cell[0], mechanism=cell[1], scale=cell[2], t_inference=cell[3],
-                             method=src, n_wann=len(x), n_method=len(y), median_wann=np.median(x),
-                             median_method=np.median(y), mean_wann=x.mean(), mean_method=y.mean(),
-                             diff_median_pp=np.median(y) - np.median(x), diff_mean_pp=y.mean() - x.mean(),
-                             ci_lo=lo, ci_hi=hi, prob_superiority=u.statistic / (len(x) * len(y)),
-                             p_mwu=u.pvalue, p_welch=pw))
+            for src in METHODS:
+                y = groups.get((src,) + cell)
+                if y is None or len(y) < 3:
+                    continue
+                u = stats.mannwhitneyu(y, x, alternative="two-sided")
+                pw = stats.ttest_ind(y, x, equal_var=False).pvalue if (x.std() > 0 or y.std() > 0) else 1.0
+                lo, hi = boot_mean_diff(x, y, rng, a.boot)
+                rows.append(dict(task=task, noise_model=cell[0], mechanism=cell[1], scale=cell[2], t_inference=cell[3],
+                                 wann_source=wsrc, method=src, n_wann=len(x), n_method=len(y),
+                                 median_wann=np.median(x), median_method=np.median(y), mean_wann=x.mean(),
+                                 mean_method=y.mean(), diff_median_pp=np.median(y) - np.median(x),
+                                 diff_mean_pp=y.mean() - x.mean(), ci_lo=lo, ci_hi=hi,
+                                 prob_superiority=u.statistic / (len(x) * len(y)), p_mwu=u.pvalue, p_welch=pw))
     out = pd.DataFrame(rows)
     if out.empty:
         sys.exit(f"Error [{task}]: ninguna celda con >= 3 redes por método.")
@@ -128,6 +133,35 @@ def methods_vs_wann(task, net, a) -> pd.DataFrame:
     out["sig"] = out.q_bh < a.alpha
     out["relevant"] = out.sig & (out.diff_mean_pp.abs() >= a.min_effect)
     out["direction"] = np.where(~out.sig, "n.s.", np.where(out.diff_mean_pp > 0, "method > WANN", "WANN > method"))
+    return out
+
+
+def mapping_effect(task, net, a) -> pd.DataFrame | None:
+    """Efecto del supuesto de mapeo sobre WANN: la MISMA red (semilla) y el mismo nivel, en fondo de escala (wann_fs)
+    frente a nivel ODIN tal cual (wann). Wilcoxon de rangos con signo pareado por semilla (n = 11) + BH."""
+    if not {"wann", "wann_fs"} <= set(net.source):
+        return None
+    pv = net[net.source.isin(WANN_SRC)].pivot_table(index=["replica_seed"] + CELL, columns="source", values="ret_pct")
+    pv = pv.dropna()
+    rows = []
+    for cell, g in pv.groupby(level=list(range(1, 1 + len(CELL)))):
+        if cell[2] == 0 and cell[0] in ("pcm", "reram"):
+            continue
+        d = (g["wann_fs"] - g["wann"]).to_numpy()
+        if len(d) < 3:
+            continue
+        try:
+            p = stats.wilcoxon(d).pvalue if (d != 0).any() else 1.0
+        except ValueError:
+            p = 1.0
+        rows.append(dict(task=task, noise_model=cell[0], mechanism=cell[1], scale=cell[2], t_inference=cell[3], n=len(d),
+                         median_wann=float(np.median(g["wann"])), median_fullscale=float(np.median(g["wann_fs"])),
+                         mean_diff_pp=float(d.mean()), n_better=int((d > 0).sum()), p_wilcoxon=p))
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return None
+    out["q_bh"] = stats.false_discovery_control(out.p_wilcoxon.to_numpy(), method="bh")
+    out["sig"] = out.q_bh < a.alpha
     return out
 
 
@@ -180,11 +214,17 @@ def main():
         out = methods_vs_wann(task, net, a)
         out.to_csv(d / f"stats_replicas_vs_wann{suf}.csv", index=False)
         print(f"\n=== {task} (WANN: {a.wann_view}): {len(out)} contrastes de red (n=11 vs 11), {out.sig.mean() * 100:.0f} % significativos (BH {a.alpha})")
-        t = out.groupby(["noise_model", "method"]).apply(lambda g: pd.Series({
+        t = out.groupby(["wann_source", "noise_model", "method"]).apply(lambda g: pd.Series({
             "celdas": len(g), "WANN>método": int((g.direction == "WANN > method").sum()),
             "método>WANN": int((g.direction == "method > WANN").sum()), "n.s.": int((g.direction == "n.s.").sum()),
             "relevantes": int(g.relevant.sum())}), include_groups=False)
         print(t.to_string())
+        me = mapping_effect(task, net, a)
+        if me is not None and a.wann_view == "best":
+            me.to_csv(d / "stats_replicas_mapping.csv", index=False)
+            print(f"    efecto del mapeo en WANN (fondo de escala vs nivel ODIN, Wilcoxon pareado): "
+                  f"{int(me.sig.sum())}/{len(me)} celdas significativas, media de la mejora "
+                  f"{me.mean_diff_pp.mean():+.1f} pp")
         qe = quant_effect(task, net, base, a)
         if qe is not None:
             if a.wann_view == "best":

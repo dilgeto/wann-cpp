@@ -47,6 +47,17 @@ eval_results/<tarea>_replicas/ (otro protocolo: no se mezcla con lo anterior) y 
 contrastes (plot_noise_replicas.py, stats_noise_replicas.py). Uso:
   python eval_results/run_noise_compare.py --replicas --sg-quant-bits 3 --jobs 300
 
+Dos supuestos de mapeo para WANN (--wann-mappings; modo --replicas con niveles ODIN)
+------------------------------------------------------------------------------------
+El ruido es físico (µS) y casi independiente del valor del peso, así que lo que importa es QUÉ FRACCIÓN de g_max
+ocupa el peso: la robustez de WANN depende de ese supuesto de hardware (ver wmax_check_car.py).
+  odin       (fuente `wann`)     peso = nivel L (1..7), w_max = 7: el nivel L ocupa L/7 de g_max, sin compensar nada.
+  fullscale  (fuente `wann_fs`)  la misma red y el mismo peso L, pero guardado en fondo de escala (w_max = L): supone
+                                 que la ganancia/umbral de la neurona compensa la escala (no verificado en el chip).
+SGRL no cambia (su mapeo se calibra solo: w_max = max|W| de cada capa). Los resultados ya calculados se reutilizan:
+añadir `fullscale` solo calcula las redes nuevas. --only-methods wann wann_fs limita lo que se SIMULA a esas fuentes
+(la consolidación usa todo lo que haya en parts/).
+
 Tareas y modelos (se eligen solos; ver --dry-run)
 -------------------------------------------------
   car      WANN: mejor modelo de car_ttfs_first_spike_discrete      SGRL: carrace-f2
@@ -388,10 +399,16 @@ def select_wann_replicas(task: str, spec: dict, a, best: dict) -> list[dict]:
         # --replica-wann-weights all se evalúan además los demás pesos compartidos de cada red
         if a.replica_wann_weights == "odin":
             for L in levels:
-                out.append(dict(model_id=f"wann_s{int(r.seed_idx):02d}_L{L}", source="wann",
-                                label=f"WANN {r.run_key} rank{int(r.rank):02d}-seed{int(r.seed_idx):02d} (ODIN level {L})",
-                                path=net, net=net, override=ov, weight_value=float(L), w_max=a.wann_wmax,
-                                train_return=float(r.reward), replica_seed=int(r.seed_idx)))
+                if "odin" in a.wann_mappings:
+                    out.append(dict(model_id=f"wann_s{int(r.seed_idx):02d}_L{L}", source="wann",
+                                    label=f"WANN {r.run_key} rank{int(r.rank):02d}-seed{int(r.seed_idx):02d} (ODIN level {L})",
+                                    path=net, net=net, override=ov, weight_value=float(L), w_max=a.wann_wmax,
+                                    train_return=float(r.reward), replica_seed=int(r.seed_idx)))
+                if "fullscale" in a.wann_mappings:     # misma red y peso, guardado en fondo de escala (w_max = L)
+                    out.append(dict(model_id=f"wann_fs_s{int(r.seed_idx):02d}_L{L}", source="wann_fs",
+                                    label=f"WANN {r.run_key} rank{int(r.rank):02d}-seed{int(r.seed_idx):02d} (level {L}, full-scale)",
+                                    path=net, net=net, override=ov, weight_value=float(L), w_max=float(L),
+                                    train_return=float(r.reward), replica_seed=int(r.seed_idx)))
             continue
         for wi in (range(n_w) if a.replica_wann_weights == "original" else [int(r.weight_index)]):
             out.append(dict(model_id=f"wann_s{int(r.seed_idx):02d}_w{wi}", source="wann",
@@ -455,7 +472,7 @@ class TaskCtx:
             self.models += select_sgrl_variant(task, spec, a, variant)
         if a.replicas:   # réplica = el nº de semilla de entrenamiento de cada red SGRL
             for m in self.models:
-                if m["source"] != "wann":
+                if m["source"].startswith("sgrl"):
                     m["replica_seed"] = replica_seed_of(Path(m["path"]).parent.name)
         if a.sg_quant_bits:
             self.models += select_sgrl_quant(task, a, self.models, all_models=a.replicas)
@@ -467,6 +484,9 @@ class TaskCtx:
               f"{self.episodes} episodios por fila.")
         for src in sorted({m["source"] for m in self.models if m["source"] != "wann"}):
             sg = [m for m in self.models if m["source"] == src]
+            if src == "wann_fs":
+                print(f"    wann_fs   {len(sg)} redes×nivel de WANN en fondo de escala (w_max = nivel)")
+                continue
             extra = (f", rank {sg[0]['rank']} (validación {sg[0]['val_mean']:.1f})" if "rank" in sg[0]
                      else f", {sg[0]['quant_bits']}-bit {sg[0]['quant_scheme']}" if "quant_bits" in sg[0] else "")
             names = [Path(m["path"]).parent.name for m in sg]
@@ -542,7 +562,7 @@ def build_jobs(a, ctx: TaskCtx, cells: list[tuple]) -> list[Job]:
         for cell in cells:
             for seed in seeds_for(a, model, cell):
                 part = mdir / f"{cell_stem(cell, seed)}.csv"
-                if model["source"] == "wann":
+                if kind_of(model["source"]) == "wann":
                     cmd = wann_cmd(a, ctx, model, cell, seed)
                 else:
                     cmd = sgrl_cmd(a, ctx, model, cell, seed, part.with_suffix(".csv.tmp"))
@@ -563,7 +583,7 @@ def child_env() -> dict:
 def launch(job: Job, env) -> subprocess.Popen:
     job.part.parent.mkdir(parents=True, exist_ok=True)
     err = open(job.err, "w")
-    if job.source == "wann":
+    if job.kind == "wann":
         out = open(job.tmp, "w")           # wann_*_noise escribe el CSV por stdout
     else:
         out = subprocess.DEVNULL           # noise_eval.py escribe su --out (job.tmp)
@@ -589,7 +609,7 @@ def finish_ok(job: Job) -> str | None:
 
 
 def run_jobs(jobs: list[Job], a) -> list[tuple[Job, str]]:
-    todo = [j for j in jobs if a.rerun or not j.part.is_file()]
+    todo = [j for j in jobs if (a.rerun or not j.part.is_file()) and (not a.only_methods or j.source in a.only_methods)]
     skipped = len(jobs) - len(todo)
     for j in todo:
         j.tmp.unlink(missing_ok=True)
@@ -655,7 +675,7 @@ def run_jobs(jobs: list[Job], a) -> list[tuple[Job, str]]:
 # --------------------------------------------------------------------------------------------
 def load_part(job: Job) -> pd.DataFrame:
     df = pd.read_csv(job.part)
-    ret = df["reward_original"] if job.source == "wann" else df["return_mean"]
+    ret = df["reward_original"] if job.kind == "wann" else df["return_mean"]
     m, s, t, mech = job.cell
     out = pd.DataFrame({
         "source": job.source, "model_id": job.model["model_id"], "noise_model": m, "mechanism": mech,
@@ -701,7 +721,7 @@ def input_files(ctx: TaskCtx, a) -> list[tuple[str, Path]]:
     if ctx.wann["override"]:
         files.append(("wann:" + str(ctx.wann["override"]), Path(ctx.wann["override"])))
     for m in ctx.models:                      # --replicas: cada semilla de WANN trae su propia red y override
-        if m["source"] == "wann" and "net" in m:
+        if m["source"] in ("wann", "wann_fs") and "net" in m:
             files += [("wann:" + m["net"], Path(m["net"])), ("wann:" + m["override"], Path(m["override"]))]
     files += [("wann:" + c, Path(c)) for c in ctx.spec["eval_csvs"]]       # deciden cuál es "el mejor"
     default_dir = a.sg_default_dir or ("runs_default" if (sg_repo / "runs_default").is_dir() else "runs")
@@ -710,7 +730,7 @@ def input_files(ctx: TaskCtx, a) -> list[tuple[str, Path]]:
     for v in a.sg_variants:                                                      # deciden el rank de cada variante
         sel.append(sg_repo / getattr(a, f"sg_{v}_screening") / ctx.spec["sg_task"] / "p3_summary.json")
     for m in ctx.models:
-        if m["source"] != "wann":
+        if m["source"].startswith("sgrl"):
             d = Path(m["path"]).parent
             sel += [Path(m["path"]), d / "config.json"]
             sel += [d / f for f in ("final_eval.json", "quant.json") if (d / f).is_file()]
@@ -809,6 +829,10 @@ def main():
                         "algunos no representables en ODIN); best = solo el mejor de la revalidación original")
     g.add_argument("--odin-levels", default="1,2,3,4,5,6,7", help="niveles de magnitud de WANN con --replica-wann-weights odin")
     g.add_argument("--wann-wmax", type=float, default=7.0, help="w_max de WANN con pesos odin (nivel 7 = g_max)")
+    g.add_argument("--wann-mappings", nargs="+", choices=["odin", "fullscale"], default=["odin", "fullscale"],
+                   help="--replicas con niveles odin: supuestos de mapeo de WANN a evaluar (ver el docstring); def.: los dos")
+    g.add_argument("--only-methods", nargs="+", default=None,
+                   help="simular solo las fuentes dadas (p. ej. wann_fs); la consolidación usa todo lo que haya en parts/")
     g.add_argument("--replica-cells", choices=["reduced", "full"], default="reduced",
                    help="celdas del modo --replicas: reduced = 27 (def.), full = las 191 de siempre")
     g.add_argument("--seeds", type=int, nargs="+", default=None, help="def.: 0 1 (0 con --replicas)")
@@ -833,6 +857,8 @@ def main():
     g.add_argument("--out-dir", default=None, help="carpeta base (def.: eval_results); cada tarea va a <base>/<tarea>_wann_vs_sgrl")
     g.add_argument("--graficos-dir", default=None, help="def.: graficos/<Tarea> (Racing Car / Mountain Car / Acrobot)")
     g.add_argument("--rerun", action="store_true", help="rehacer también las partes ya existentes")
+    g.add_argument("--plot-tag", default="", help="--replicas: sufijo del prefijo de las figuras (p. ej. _fs → <tarea>_replicas_fs_*.png) "
+                   "para no sobrescribir las que ya tengas")
     g.add_argument("--skip-run", action="store_true", help="no correr nada: solo consolidar y graficar")
     g.add_argument("--skip-plots", action="store_true")
     g.add_argument("--plot-anyway", action="store_true", help="graficar aunque haya trabajos fallidos")
@@ -870,7 +896,7 @@ def main():
         return
 
     rows = a.n_chips * a.reads_per_chip
-    todo = [j for j in jobs if a.rerun or not j.part.is_file()]
+    todo = [j for j in jobs if (a.rerun or not j.part.is_file()) and (not a.only_methods or j.source in a.only_methods)]
     cpu = {k: sum(j.cost for j in todo if j.kind == k) for k in COST_PER_ROW}
     print(f"\nPlan: {len(ctxs)} tareas × {len(ctxs[0].models)} modelos × {len(cells)} celdas × {len(a.seeds)} semillas "
           f"= {len(jobs)} trabajos de {rows} filas; {len(jobs) - len(todo)} ya hechos, {len(todo)} por correr.")
@@ -929,7 +955,7 @@ def main():
                                 "--wann-view", view], check=True)
             for grp in ("float",) + (("quant",) if a.sg_quant_bits else ()):
                 subprocess.run([sys.executable, "eval_results/plot_noise_replicas.py", "--data-dir", str(ctx.out_dir),
-                                "--out-dir", ctx.graficos, "--prefix", f"{ctx.name}_replicas", "--group", grp], check=True)
+                                "--out-dir", ctx.graficos, "--prefix", f"{ctx.name}_replicas{a.plot_tag}", "--group", grp], check=True)
             continue
         subprocess.run([sys.executable, "eval_results/stats_noise_compare.py", "--task", ctx.name,
                         "--base-dir", str(ctx.out_dir.parent)], check=True)
