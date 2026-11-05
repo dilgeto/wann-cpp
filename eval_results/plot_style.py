@@ -7,6 +7,9 @@ daltonismo (Okabe & Ito, 2008; la misma referencia estándar que usan la
 mayoría de las guías de gráficos científicos). No corre nada ni lee datos —
 solo constantes y una función que ajusta `plt.rcParams`.
 """
+import re
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 
 # "simple" queda gris a propósito: es el placeholder sin calibrar, no un
@@ -52,3 +55,18 @@ def setup_publication_style() -> None:
         "axes.spines.top": False,
         "axes.spines.right": False,
     })
+
+
+_TASK_PREFIX = re.compile(r"^(car|disc_mc|acrobot)_")
+
+
+def figure_tag(prefix: str) -> str:
+    """Tag de un prefijo de figura: el prefijo sin el nombre de la tarea (car_replicas_fs -> replicas_fs)."""
+    return _TASK_PREFIX.sub("", prefix)
+
+
+def tagged_dir(out_dir, prefix: str, flat: bool = False) -> Path:
+    """<out_dir>/ruido/<tag>/ para las figuras de ruido de memristores (graficos/<Tarea>/ruido/<tag>/); con
+    flat=True devuelve out_dir tal cual (organización antigua, todo en una carpeta)."""
+    out = Path(out_dir)
+    return out if flat else out / "ruido" / figure_tag(prefix)

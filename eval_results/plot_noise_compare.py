@@ -62,7 +62,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
 
-from plot_style import TIME_TICK_LABELS, setup_publication_style
+from plot_style import TIME_TICK_LABELS, setup_publication_style, tagged_dir
 
 # Color = método (Okabe-Ito, separable con daltonismo) y marcador distinto por método, para que no
 # dependa solo del color. No son los colores por dispositivo de plot_style.MODEL_COLORS: aquí cada
@@ -508,6 +508,7 @@ def main():
     ap.add_argument("--data-dir", type=Path, default=Path("eval_results/car_wann_vs_sgrl"))
     ap.add_argument("--out-dir", default="graficos/Racing Car")
     ap.add_argument("--prefix", default="car_wann_vs_sgrl")
+    ap.add_argument("--flat", action="store_true", help="no crear la subcarpeta ruido/<tag>/ (organización antigua)")
     ap.add_argument("--only", default="noise,time,rmse,heatmap,ablation,summary",
                     help="subconjunto de figuras, separado por comas")
     ap.add_argument("--time-scale", type=float, default=1.0, help="escala de ruido fija de la figura de tiempo")
@@ -557,7 +558,7 @@ def main():
     note_ret = ("Retention is relative to each model's own noise-free return" +
                 (f" (floor {floor:g} = failure)." if floor else "."))
     note = f"{label}. Bands: 95% bootstrap CI over chips (n≈{n_chips}). " + note_ret
-    out = Path(a.out_dir)
+    out = tagged_dir(a.out_dir, a.prefix, a.flat)
     which = set(a.only.split(","))
     present = set(agg.noise_model.unique()) - {"none"}
     if "noise" in which:

@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
 
-from plot_style import TIME_TICK_LABELS, setup_publication_style
+from plot_style import TIME_TICK_LABELS, setup_publication_style, tagged_dir
 
 YEAR = 31536000.0
 SHORT = {"pcm": "PCM", "reramcmo": "ReRAM CMO/HfOx"}
@@ -144,6 +144,7 @@ def main():
     ap.add_argument("--data-dir", type=Path, default=Path("eval_results/car_wmax_check"))
     ap.add_argument("--out-dir", default="graficos/Racing Car")
     ap.add_argument("--prefix", default="car_wmax_check")
+    ap.add_argument("--flat", action="store_true", help="no crear la subcarpeta ruido/<tag>/ (organización antigua)")
     a = ap.parse_args()
     if not (a.data_dir / "summary.csv").is_file():
         sys.exit(f"Error: no existe {a.data_dir / 'summary.csv'}. Corré wmax_check_car.py primero.")
@@ -151,7 +152,7 @@ def main():
     wmaxs = sorted(res.wmax.unique(), reverse=True)           # 8, 4, 2, 1: ocupación creciente
     setup_publication_style()
     ag, mains = sgrl_refs()
-    out = Path(a.out_dir)
+    out = tagged_dir(a.out_dir, a.prefix, a.flat)
     fig_time(res, ag, mains, out / f"{a.prefix}_time.png", wmaxs)
     fig_occupancy(res, out / f"{a.prefix}_occupancy.png", wmaxs)
 

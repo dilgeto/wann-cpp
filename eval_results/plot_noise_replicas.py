@@ -42,7 +42,7 @@ import pandas as pd
 from matplotlib.lines import Line2D
 
 from plot_noise_compare import METHODS, SHORT, INTENSITY_T, MECH_TITLE
-from plot_style import TIME_TICK_LABELS, setup_publication_style
+from plot_style import TIME_TICK_LABELS, setup_publication_style, tagged_dir
 from stats_noise_replicas import FLOAT_OF, network_table
 
 GROUPS = {"float": ["wann", "wann_fs", "sgrl", "sgrl_con", "sgrl_neu"],
@@ -194,12 +194,37 @@ def fig_intensity(d: Data, out: Path, note, rng):
     save(fig, out, legend_handles(d, refs), note)
 
 
+Y_CAP = 150.0   # tope del eje y de las cajas: un valor atípico (p.ej. 527 %) no debe estirar la figura
+
+
+def box_ylim(vals):
+    """(abajo, arriba) del eje compartido: hasta el máximo observado, con tope Y_CAP, y sitio para las estrellas."""
+    hi = max([112.0] + [min(float(np.max(v)), Y_CAP) for v in vals if len(v)])
+    lo = min([0.0] + [float(np.min(v)) for v in vals if len(v)])
+    return lo - 3, hi + 12
+
+
+def star_and_clip(ax, x, v, st, color, top):
+    """Estrella sobre la caja; si hay puntos fuera de rango los marca con un triángulo y su valor."""
+    over = v[v > top]
+    if len(over):
+        ax.scatter([x] * len(over), [top - 1.5] * len(over), marker="^", s=26, color=color, edgecolor="white",
+                   linewidths=0.4, zorder=5, clip_on=False)
+        ax.text(x, top - 4, ", ".join(f"{o:.0f}" for o in sorted(over)), ha="center", va="top", fontsize=7, color=color)
+    if st:
+        y = min(max(v[v <= top].max() if (v <= top).any() else 0, 0) + 3, top - 11 if len(over) else top - 4)
+        ax.text(x, y, st, ha="center", va="bottom", fontsize=10 if st != "ns" else 8,
+                color="0.25" if st != "ns" else "0.55")
+
+
 def fig_boxplots(d: Data, out: Path, note):
     scales = (1.0, 3.0)
     fig, axes = plt.subplots(1, 2, figsize=(15.5, 5.8), sharey=True, squeeze=False)
     n = len(d.sources)
     w = 0.8 / n
     rng = np.random.default_rng(1)
+    ylo, top = box_ylim([d.cell(s_, dev, "all", sc, INTENSITY_T[dev]).ret_pct.to_numpy()
+                         for s_ in d.sources for dev in DEVICES for sc in scales])
     for k, sc in enumerate(scales):
         ax = axes[0][k]
         for i, src in enumerate(d.sources):
@@ -213,15 +238,12 @@ def fig_boxplots(d: Data, out: Path, note):
                 bp["boxes"][0].set(facecolor=METHODS[src]["color"], alpha=0.45, edgecolor=METHODS[src]["color"])
                 ax.scatter(x + rng.uniform(-w * 0.28, w * 0.28, len(v)), v, s=16, color=METHODS[src]["color"],
                            edgecolor="white", linewidths=0.4, zorder=4)
-                st = d.star(src, dev, "all", sc, INTENSITY_T[dev])
-                if st:
-                    ax.text(x, max(v.max(), 0) + 3, st, ha="center", va="bottom", fontsize=10 if st != "ns" else 8,
-                            color="0.25" if st != "ns" else "0.55")
+                star_and_clip(ax, x, v, d.star(src, dev, "all", sc, INTENSITY_T[dev]), METHODS[src]["color"], top)
         ax.set_xticks(range(len(DEVICES)))
         ax.set_xticklabels([SHORT[x] for x in DEVICES])
         ax.axhline(100, color="0.5", lw=1, ls=":")
         ax.set_title(f"Noise scale {sc:g}", fontsize=14)
-        ax.set_ylim(bottom=min(0.0, ax.get_ylim()[0]), top=max(112, ax.get_ylim()[1]))
+        ax.set_ylim(ylo, top)
     axes[0][0].set_ylabel("Retained performance (% of noise-free), one point per network")
     handles = [Line2D([], [], color=METHODS[s]["color"], lw=6, alpha=0.6, label=d.label(s)) for s in d.sources]
     fig.tight_layout(rect=[0, 0.2, 1, 1])
@@ -256,6 +278,8 @@ def fig_ablation(d: Data, out: Path, note):
     n = len(d.sources)
     w = 0.8 / n
     rng = np.random.default_rng(2)
+    ylo, top = box_ylim([d.cell(s_, dv, mc, 3.0, tt).ret_pct.to_numpy()
+                         for s_ in d.sources for dv, tt in plans.items() for mc in MECH_TITLE])
     for j, (dev, t) in enumerate(plans.items()):
         ax = axes[0][j]
         for i, src in enumerate(d.sources):
@@ -269,15 +293,12 @@ def fig_ablation(d: Data, out: Path, note):
                 bp["boxes"][0].set(facecolor=METHODS[src]["color"], alpha=0.45, edgecolor=METHODS[src]["color"])
                 ax.scatter(x + rng.uniform(-w * 0.28, w * 0.28, len(v)), v, s=14, color=METHODS[src]["color"],
                            edgecolor="white", linewidths=0.4, zorder=4)
-                st = d.star(src, dev, mech, 3.0, t)
-                if st:
-                    ax.text(x, max(v.max(), 0) + 3, st, ha="center", va="bottom", fontsize=10 if st != "ns" else 8,
-                            color="0.25" if st != "ns" else "0.55")
+                star_and_clip(ax, x, v, d.star(src, dev, mech, 3.0, t), METHODS[src]["color"], top)
         ax.set_xticks(range(len(MECH_TITLE)))
         ax.set_xticklabels(list(MECH_TITLE.values()))
         ax.axhline(100, color="0.5", lw=1, ls=":")
         ax.set_title(f"{SHORT[dev]} ablation, noise scale 3, t = {TIME_TICK_LABELS.get(int(t), t)}", fontsize=13)
-        ax.set_ylim(bottom=min(0.0, ax.get_ylim()[0]), top=max(112, ax.get_ylim()[1]))
+        ax.set_ylim(ylo, top)
     axes[0][0].set_ylabel("Retained performance (% of noise-free)")
     handles = [Line2D([], [], color=METHODS[s]["color"], lw=6, alpha=0.6, label=d.label(s)) for s in d.sources]
     fig.tight_layout(rect=[0, 0.2, 1, 1])
@@ -334,6 +355,7 @@ def main():
     ap.add_argument("--data-dir", type=Path, required=True)
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--prefix", default=None)
+    ap.add_argument("--flat", action="store_true", help="no crear la subcarpeta ruido/<tag>/ (organización antigua)")
     ap.add_argument("--group", choices=list(GROUPS), default="float")
     ap.add_argument("--wann-view", choices=["best", "mean"], default="best",
                     help="WANN: un peso por red elegido sin ruido (def.) o el promedio de sus pesos")
@@ -345,7 +367,7 @@ def main():
     label = a.env_label or proto.get("task_label", a.data_dir.name)
     prefix = (a.prefix or a.data_dir.name) + ("q" if a.group == "quant" else "") + ("" if a.wann_view == "best" else f"_{a.wann_view}") \
         + ("" if a.star_ref == "wann" else "_vs_fs")
-    out = Path(a.out_dir or "graficos")
+    out = tagged_dir(a.out_dir or "graficos", prefix, a.flat)
     setup_publication_style()
     d = Data(a.data_dir, a.group, a.wann_view, a.star_ref)
     if len(d.sources) < 2:
