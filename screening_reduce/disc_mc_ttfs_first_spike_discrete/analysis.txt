@@ -1,0 +1,36 @@
+==================================================================
+  Reduction analysis — run: disc_mc_ttfs_first_spike_discrete
+==================================================================
+
+Total trials: 8   successful: 8   rounds: 1
+Peak range: [-165.0000, -113.0000]
+
+── Space evolution (eliminated bins per round) ──
+  Round 0: no bins eliminated
+
+── Top 5 configs by peak_fitness ──
+ round  trial  peak_fitness  alg_probMoo  prob_addConn  prob_addNode  prob_enable  prob_mutAct  prob_toggleExcitatory  prob_initEnable  select_cullRatio  select_eliteRatio  select_tournSize  snn_window_ms  snn_tau_exc  snn_tau_inh  snn_ttfs_threshold
+     0      2     -113.0000       0.0500        0.3200        0.3600       0.1900       0.7000                 0.2500           0.5100            0.1400             0.1400                 4             37       7.8700      13.6600              0.2200
+     0      3     -115.0000       0.2200        0.0900        0.1500       0.0200       0.1600                 0.1400           0.6100            0.1300             0.2300                 2             68       8.4200      16.6300              0.2800
+     0      7     -119.0000       0.6600        0.2500        0.0500       0.0800       0.5800                 0.0200           0.5000            0.2700             0.3700                 2             26       7.2400      11.9700              0.2300
+     0      5     -142.0000       0.1100        0.1300        0.1700       0.2300       0.2900                 0.1300           0.3300            0.1800             0.0700                 8             24      11.9100       5.1600              0.2500
+     0      0     -163.0000       0.5100        0.2700        0.2200       0.2200       0.1900                 0.2100           0.4400            0.4900             0.0500                16             51       9.2700      11.7900              0.1000
+
+── Spearman ρ  (|ρ| descending) ──
+  Parameter                                  ρ     p-val  sig
+  prob_initEnable                       +0.687    0.0597    
+  prob_addConn                          -0.512    0.1942    
+  prob_addNode                          -0.503    0.2037    
+  snn_ttfs_threshold                    +0.430    0.2882    
+  select_tournSize                      -0.380    0.3525    
+  snn_tau_exc                           -0.366    0.3726    
+  select_cullRatio                      -0.342    0.4076    
+  prob_mutAct                           +0.245    0.5579    
+  alg_probMoo                           -0.209    0.6200    
+  prob_enable                           -0.146    0.7294    
+  select_eliteRatio                     +0.123    0.7722    
+  snn_tau_inh                           +0.122    0.7735    
+  prob_toggleExcitatory                 +0.099    0.8160    
+  snn_window_ms                         +0.024    0.9543    
+
+==================================================================

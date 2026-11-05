@@ -23,6 +23,11 @@ wmax_check_car.py (una red, un peso, 4 tiempos) al protocolo de las réplicas:
   * --weights all (para el frente de Pareto de eval_results/pareto_wmax.py): cada red se evalúa con LOS 6 pesos
     compartidos de WEIGHT_VALS (no solo con el ganador) × todas las ocupaciones. ~6× más procesos. Aquí solo se
     escribe networks.csv (sin summary/tradeoff, que asumen un peso por red).
+  * ReRAM-CMO se evalúa con DOS parametrizaciones (--cmo-variants): `reramcmo` = supuestos del proyecto (g_max 25,
+    g_min 1 µS; los de las réplicas) y `reramcmo_falcone` = rango del ajuste de Falcone et al. que asume aihwkit
+    (g_max 90, g_min 8 µS). PCM se deja tal cual (g_max 25 µS de IBM). Con el piso de Falcone (8/90 = 8,9 % de
+    g_max) las ocupaciones < ~9 % no son representables en CMO. Se registra (g_max, g_min) en run_params.json y se
+    rechaza reutilizar un directorio con otros valores. Las partes de `reramcmo` ya hechas se reutilizan.
   * Celdas (por red y ocupación): PCM y ReRAM-CMO a escala 1 en toda la grilla de tiempos (--times), más CMO a
     escala 3 y a escala 0 (piso g_min) con t = 1 s (figura de ocupación), y escala 3 a 1 año ("más ruido" para el
     Pareto). Más una celda `none` por red
@@ -76,7 +81,12 @@ TIMES = [0, 1, 10, 60, 300, 900, 3600, 7200, 21600, 43200, 86400, 172800, 604800
          15768000, 31536000]
 OCCUPANCIES = [0.0625, 0.125, 0.25, 0.5, 1.0]
 THRESHOLDS = [95.0, 90.0]     # retención mínima aceptable para el análisis de ahorro (tradeoff.csv)
-DEVICES = ["pcm", "reramcmo"]
+# Dispositivos. PCM usa su g_max original de IBM (25 µS, fijo en memristor_noise.hpp). ReRAM-CMO se evalúa con dos
+# parametrizaciones, porque aihwkit no trae g_max/g_min por defecto: `reramcmo` = los supuestos del proyecto
+# (25/1 µS, los de las réplicas) y `reramcmo_falcone` = el rango del ajuste de Falcone et al. (8-90 µS, aihwkit).
+# Las partes de `reramcmo` conservan su nombre de siempre, así que se reutilizan las ya calculadas.
+DEVICES = ["pcm", "reramcmo", "reramcmo_falcone"]
+CMO = {"reramcmo": (25.0, 1.0), "reramcmo_falcone": (90.0, 8.0)}      # variante -> (g_max, g_min) en µS
 SELECT_SEED = 999     # semilla reservada para elegir el nivel sin ruido (igual que run_noise_compare.py)
 RUN_SEED = 0          # semilla de chips/episodios de las celdas con ruido (la de las réplicas)
 
@@ -178,8 +188,11 @@ def pick_networks(task: str, weights: str = "best") -> pd.DataFrame:
 def cells(times: list[float]) -> list[tuple]:
     """(dispositivo, escala, t) con ruido, sin repetir."""
     out = [(dev, 1.0, float(t)) for dev in DEVICES for t in times]
-    for extra in [("reramcmo", 3.0, 1.0), ("reramcmo", 0.0, 1.0),          # figura de ocupación
-                  ("pcm", 3.0, YEAR), ("reramcmo", 3.0, YEAR)]:            # "más ruido" a 1 año (Pareto)
+    extras = [("pcm", 3.0, YEAR)]                                          # "más ruido" a 1 año (Pareto)
+    for v in CMO:
+        if v in DEVICES:                   # figura de ocupación (escala 3 a 1 s, piso g_min) + 1 año a escala 3
+            extras += [(v, 3.0, 1.0), (v, 0.0, 1.0), (v, 3.0, YEAR)]
+    for extra in extras:
         if extra not in out:
             out.append(extra)
     return out
@@ -199,16 +212,34 @@ def jobs_for(task: str, nets: pd.DataFrame, a, root: Path):
         pdir = root / "parts" / f"s{r.seed:02d}_L{fmt(r.level)}"
         base = [spec["binary"], "-f", r.net, "-d", spec["config"], "-p", r.override, "--weight", fmt(r.level),
                 "--mode", "per-synapse", "--n-chips", str(a.n_chips), "--reads-per-chip", str(a.reads_per_chip),
-                "--n-levels", "0", "--reramcmo-g-max", fmt(a.reramcmo_g_max), "--reramcmo-g-min", fmt(a.reramcmo_g_min),
-                "--seeds", str(RUN_SEED)]
+                "--n-levels", "0", "--seeds", str(RUN_SEED)]
+        gmm = lambda v: ["--reramcmo-g-max", fmt(CMO[v][0]), "--reramcmo-g-min", fmt(CMO[v][1])]
         yield pdir / f"{stem_of('none', 0, 0, None)}.csv", \
-            base + ["--w-max", fmt(r.level), "--noise-model", "none", "--t-inference", "0"]
+            base + gmm("reramcmo") + ["--w-max", fmt(r.level), "--noise-model", "none", "--t-inference", "0"]
         for occ in a.occupancy:
             wmax = r.level / occ
             for dev, s, t in cl:
                 yield pdir / f"{stem_of(dev, s, t, occ)}.csv", \
-                    base + ["--w-max", repr(round(wmax, 6)), "--noise-model", dev, "--t-inference", fmt(t),
-                            "--noise-scale", fmt(s)]
+                    base + (gmm(dev) if dev in CMO else gmm("reramcmo")) \
+                    + ["--w-max", repr(round(wmax, 6)), "--noise-model", "reramcmo" if dev in CMO else dev,
+                       "--t-inference", fmt(t), "--noise-scale", fmt(s)]
+
+
+def guard_params(root: Path, write: bool = True):
+    """Los nombres de las partes no incluyen g_max/g_min: si una variante de CMO ya se corrió en este directorio con
+    otros valores, reutilizar sus partes mezclaría supuestos distintos. Se registra y se compara."""
+    f = root / "run_params.json"
+    old = json.loads(f.read_text()) if f.is_file() else {}
+    new = dict(old)
+    for v in CMO:
+        if v in DEVICES:
+            cur = [CMO[v][0], CMO[v][1]]
+            if v in old and old[v] != cur:
+                sys.exit(f"Error: en {root} la variante `{v}` ya se evaluó con (g_max, g_min) = {old[v]} µS y ahora "
+                         f"pediste {cur}. Usá otro --out-dir (o borrá sus partes y run_params.json).")
+            new[v] = cur
+    if write:
+        f.write_text(json.dumps(new, indent=1))
 
 
 def run_one(part: Path, cmd: list[str], timeout: int):
@@ -294,10 +325,10 @@ def summarize(task: str, nets: pd.DataFrame, a, root: Path):
                 mins.append(ok.min() if len(ok) else np.inf)
             mins = np.array(mins)
             fin = mins[np.isfinite(mins)]
-            tr.append(dict(model=m, scale=s_, t=t, thr=thr, n=len(mins), n_ok=len(fin),
-                           min_occ_median=float(np.median(mins)), min_occ_q25=float(np.percentile(mins, 25)),
-                           min_occ_q75=float(np.percentile(mins, 75)),
-                           saving_median=float(1 - np.median(mins)) if np.isfinite(np.median(mins)) else np.nan))
+            # method="nearest": los percentiles no interpolan, así que las redes que nunca llegan (inf) no producen NaN
+            q25, med, q75 = (float(np.percentile(mins, q, method="nearest")) for q in (25, 50, 75))
+            tr.append(dict(model=m, scale=s_, t=t, thr=thr, n=len(mins), n_ok=len(fin), min_occ_median=med,
+                           min_occ_q25=q25, min_occ_q75=q75, saving_median=(1 - med) if np.isfinite(med) else np.nan))
     pd.DataFrame(tr).to_csv(root / "tradeoff.csv", index=False)
     exp = len(nets) * (1 + len(a.occupancy) * len(cells(a.times)))
     print(f"[{task}] {len(net)} filas red×celda de {exp - len(nets)} esperadas"
@@ -322,8 +353,13 @@ def main():
     ap.add_argument("--times", type=float, nargs="+", default=TIMES, help="tiempos (s) desde la programación")
     ap.add_argument("--n-chips", type=int, default=30)
     ap.add_argument("--reads-per-chip", type=int, default=1)
-    ap.add_argument("--reramcmo-g-max", type=float, default=25.0)
-    ap.add_argument("--reramcmo-g-min", type=float, default=1.0)
+    ap.add_argument("--cmo-variants", nargs="+", choices=["assumed", "falcone"], default=["assumed", "falcone"],
+                    help="parametrizaciones de ReRAM-CMO: assumed (25/1 µS, supuesto del proyecto) y/o falcone "
+                         "(8-90 µS, ajuste de Falcone et al. / aihwkit). PCM no depende de esto.")
+    ap.add_argument("--reramcmo-g-max", type=float, default=25.0, help="g_max (µS) de la variante `assumed`")
+    ap.add_argument("--reramcmo-g-min", type=float, default=1.0, help="g_min (µS) de la variante `assumed`")
+    ap.add_argument("--falcone-g-max", type=float, default=90.0, help="g_max (µS) de la variante `falcone`")
+    ap.add_argument("--falcone-g-min", type=float, default=8.0, help="g_min (µS) de la variante `falcone`")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 8, help="procesos simultáneos (1 hebra OpenMP c/u)")
     ap.add_argument("--timeout", type=int, default=3600, help="segundos máximos por proceso")
     ap.add_argument("--out-dir", default="", help="raíz de salida (def.: eval_results/); crea <tarea>_wmax_check/")
@@ -336,16 +372,21 @@ def main():
     if any(o <= 0 or o > 1 for o in a.occupancy):
         sys.exit("Error: --occupancy debe estar en (0, 1].")
 
+    CMO["reramcmo"] = (a.reramcmo_g_max, a.reramcmo_g_min)
+    CMO["reramcmo_falcone"] = (a.falcone_g_max, a.falcone_g_min)
+    DEVICES[:] = ["pcm"] + [{"assumed": "reramcmo", "falcone": "reramcmo_falcone"}[v] for v in a.cmo_variants]
+
     plan = {}
     for task in tasks:
         nets = pick_networks(task, a.weights)
         root = out_dir(task, a)
         root.mkdir(parents=True, exist_ok=True)
+        guard_params(root, write=not a.dry_run)
         nets.to_csv(root / ("levels_all.csv" if a.weights == "all" else "levels.csv"), index=False)
         jobs = list(jobs_for(task, nets, a, root))
         todo = [j for j in jobs if not j[0].is_file()]
         plan[task] = (nets, root, jobs, todo)
-        lv = (f"{nets.seed.nunique()} redes × pesos {sorted(nets.level.unique())}" if a.weights == "all" else
+        lv = (f"{nets.seed.nunique()} redes × pesos {[float(x) for x in sorted(nets.level.unique())]}" if a.weights == "all" else
               f"{len(nets)} redes; pesos elegidos (sin ruido): "
               + " ".join(f"s{r.seed:02d}:w{fmt(r.level)}" for r in nets.itertuples()))
         print(f"[{task}] {lv}"

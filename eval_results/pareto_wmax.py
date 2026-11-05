@@ -53,7 +53,8 @@ from plot_style import setup_publication_style, tagged_dir
 YEAR = 31536000.0
 TASKS = {"car": ("CarTrack", "Racing Car"), "disc_mc": ("Mountain Car (discrete)", "Mountain Car"),
          "acrobot": ("Acrobot", "Acrobot")}
-DEVICES = {"pcm": "PCM", "reramcmo": "ReRAM CMO/HfOx"}
+DEVICES = {"pcm": "PCM (g_max 25 µS)", "reramcmo": "ReRAM-CMO, assumed range (1-25 µS)",
+           "reramcmo_falcone": "ReRAM-CMO, Falcone et al. range (8-90 µS)"}
 METRIC_TITLE = {"mean": "mean over time (0 to {h})", "end": "at {h}", "worst": "worst instant (0 to {h})",
                 "stress": "at 1 year, noise scale 3"}
 GREENS = ["#FDE725", "#7AD151", "#22A884", "#2A788E", "#414487", "#440154"]     # un color por peso (viridis)
@@ -144,17 +145,19 @@ def draw(ax, pt, ag, levels, show_nets):
 
 
 def fig_pareto(task, label, df, metric, horizon, show_nets, out, csv_dir):
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6.2), sharey=True)
+    devs = {k: v for k, v in DEVICES.items() if k in set(df.model)}
+    fig, axes = plt.subplots(1, len(devs), figsize=(7 * len(devs), 6.2), sharey=True, squeeze=False)
+    axes = axes[0]
     levels = sorted(df.level.unique())
     summ = {}
-    for ax, (dev, name) in zip(axes, DEVICES.items()):
+    for ax, (dev, name) in zip(axes, devs.items()):
         pt = perf_table(df, metric, dev, horizon)
         if pt.empty:
             ax.set_title(f"{name}: sin datos")
             continue
         ag = aggregate(pt)
         col, mk = draw(ax, pt, ag, levels, show_nets)
-        ax.set_title(name, fontsize=14)
+        ax.set_title(name, fontsize=12.5)
         ax.set_xlabel("Relative conductance (∝ static power)")
         ax.grid(alpha=0.3)
         summ[dev] = ag
@@ -162,7 +165,7 @@ def fig_pareto(task, label, df, metric, horizon, show_nets, out, csv_dir):
         csv.parent.mkdir(parents=True, exist_ok=True)
         ag.to_csv(csv, index=False)
         f = ag[ag.on_front].sort_values("occ")
-        print(f"[{task}] {name:15s} frente ({metric}): "
+        print(f"[{task}] {dev:16s} frente ({metric}): "
               + "  ".join(f"w{r.level:g}@{r.occ * 100:g}% → {r.perf:.1f}" for r in f.itertuples()))
     axes[0].set_ylabel(f"Performance under noise, {METRIC_TITLE[metric].format(h='1 year')}\n"
                        "(% of the network's best noise-free return)")

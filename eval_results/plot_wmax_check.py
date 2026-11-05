@@ -39,7 +39,14 @@ from plot_style import setup_publication_style, tagged_dir
 YEAR = 31536000.0
 TASKS = {"car": ("CarTrack", "Racing Car"), "disc_mc": ("Mountain Car (discrete)", "Mountain Car"),
          "acrobot": ("Acrobot", "Acrobot")}
-SHORT = {"pcm": "PCM", "reramcmo": "ReRAM CMO/HfOx"}
+SHORT = {"pcm": "PCM (g_max 25 µS)", "reramcmo": "ReRAM-CMO, assumed range\n(1-25 µS)",
+         "reramcmo_falcone": "ReRAM-CMO, Falcone et al. range\n(8-90 µS)"}
+DEV_ORDER = ["pcm", "reramcmo", "reramcmo_falcone"]
+CMO_LABEL = {"reramcmo": "ReRAM CMO (assumed 1-25 µS)", "reramcmo_falcone": "ReRAM CMO (Falcone 8-90 µS)"}
+
+
+def present(res):
+    return [d for d in DEV_ORDER if d in set(res.model)]
 # ocupación -> azul secuencial (más oscuro = más conductancia); se asigna por rango, así sirve para cualquier lista
 BLUES = ["#C6DBEF", "#9ECAE1", "#4292C6", "#2171B5", "#08306B"]
 MARKERS = ["o", "s", "^", "D", "v", "P"]
@@ -68,8 +75,10 @@ def foot(label, n, levels, band="95% bootstrap CI over networks"):
 def fig_time(res, label, n, levels, out, nets=None):
     occs = sorted(res.occ.unique())
     sty = occ_style(occs)
-    fig, axes = plt.subplots(1, 2, figsize=(13.5, 5.8), sharey=True)
-    for ax, dev in zip(axes, ["pcm", "reramcmo"]):
+    devs = present(res)
+    fig, axes = plt.subplots(1, len(devs), figsize=(6.8 * len(devs), 5.9), sharey=True, squeeze=False)
+    axes = axes[0]
+    for ax, dev in zip(axes, devs):
         sub = res[(res.model == dev) & np.isclose(res.scale, 1.0)]
         ts = sorted(sub.t.unique())
         for o in occs:
@@ -94,7 +103,7 @@ def fig_time(res, label, n, levels, out, nets=None):
         if ts:
             ax.set_xlim(0, max(ts) * 1.08)        # symlog: sin esto el eje reserva media figura para t < 0
         ax.minorticks_off()
-        ax.set_title(f"{SHORT[dev]} (noise scale 1)", fontsize=14)
+        ax.set_title(f"{SHORT[dev]}\nnoise scale 1", fontsize=13)
         ax.set_xlabel("Time since programming")
     axes[0].set_ylabel("Retained performance (% of noise-free)")
     lo = min(0.0, float(res.lo.min()) - 3) if len(res) else 0.0
@@ -110,12 +119,13 @@ def fig_time(res, label, n, levels, out, nets=None):
     print(f"Guardado: {out}")
 
 
-def fig_occupancy(res, label, n, levels, out):
+def fig_occupancy(res, label, n, levels, out, cmo="reramcmo"):
     occs = sorted(res.occ.unique())
-    conds = [("reramcmo", 1.0, YEAR, "ReRAM CMO, scale 1, 1 year", "#D55E00", "o", "-"),
-             ("reramcmo", 1.0, 86400.0, "ReRAM CMO, scale 1, 1 day", "#E69F00", "s", "-"),
-             ("reramcmo", 3.0, 1.0, "ReRAM CMO, scale 3, 1 s", "#009E73", "^", "-"),
-             ("reramcmo", 0.0, 1.0, "ReRAM CMO, no noise (g_min floor only)", "#56B4E9", "D", "-"),
+    cl = CMO_LABEL[cmo].replace("ReRAM CMO", "CMO")
+    conds = [(cmo, 1.0, YEAR, f"{cl}, scale 1, 1 year", "#D55E00", "o", "-"),
+             (cmo, 1.0, 86400.0, f"{cl}, scale 1, 1 day", "#E69F00", "s", "-"),
+             (cmo, 3.0, 1.0, f"{cl}, scale 3, 1 s", "#009E73", "^", "-"),
+             (cmo, 0.0, 1.0, f"{cl}, no noise (g_min floor only)", "#56B4E9", "D", "-"),
              ("pcm", 1.0, YEAR, "PCM, scale 1, 1 year", "#0072B2", "v", "--"),
              ("pcm", 1.0, 86400.0, "PCM, scale 1, 1 day", "#7F7F7F", "x", "--")]
     xs = np.array(occs) * 100
@@ -139,7 +149,7 @@ def fig_occupancy(res, label, n, levels, out):
     ax.set_xlabel("Fraction of g_max used by the shared weight  (∝ synaptic conductance, i.e. static power)")
     ax.set_ylabel("Retained performance (% of noise-free)")
     ax.set_title(f"WANN-{label}: noise robustness depends on where the weight sits in the range", fontsize=14)
-    ax.legend(loc="lower right", fontsize=10)
+    ax.legend(loc="lower right", fontsize=9.5)
     fig.text(0.5, -0.01, foot(label, n, levels), ha="center", va="top", fontsize=9.5, color="0.35", wrap=True)
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -149,9 +159,11 @@ def fig_occupancy(res, label, n, levels, out):
 
 
 def fig_tradeoff(tr, label, n, levels, out):
-    fig, axes = plt.subplots(1, 2, figsize=(13.5, 5.6), sharey=True)
+    devs = [d for d in DEV_ORDER if d in set(tr.model)]
+    fig, axes = plt.subplots(1, len(devs), figsize=(6.8 * len(devs), 5.8), sharey=True, squeeze=False)
+    axes = axes[0]
     cols = {95.0: "#08306B", 90.0: "#E69F00"}
-    for ax, dev in zip(axes, ["pcm", "reramcmo"]):
+    for ax, dev in zip(axes, devs):
         sub = tr[(tr.model == dev) & np.isclose(tr.scale, 1.0)]
         for thr, col in cols.items():
             g = sub[np.isclose(sub.thr, thr)].sort_values("t")
@@ -176,7 +188,7 @@ def fig_tradeoff(tr, label, n, levels, out):
         ax.set_yticklabels([f"{v:g}%" if v <= 100 else "not reached" for v in yt])
         ax.minorticks_off()
         ax.axhline(100, color="0.5", lw=1, ls=":")
-        ax.set_title(f"{SHORT[dev]} (noise scale 1)", fontsize=14)
+        ax.set_title(f"{SHORT[dev]}\nnoise scale 1", fontsize=13)
         ax.set_xlabel("Time since programming")
     axes[0].set_ylabel("Minimum fraction of g_max needed\n(median over networks; band = IQR)")
     axes[0].legend(loc="lower right", fontsize=10)
@@ -213,7 +225,9 @@ def main():
         prefix = f"{task}_{a.prefix_suffix}"
         out = tagged_dir(Path(a.out_root) / gdir, prefix, a.flat)
         fig_time(res, label, n, levels, out / f"{prefix}_time.png", nets)
-        fig_occupancy(res, label, n, levels, out / f"{prefix}_occupancy.png")
+        for cmo in [d for d in present(res) if d != "pcm"]:
+            suf = "" if cmo == "reramcmo" else "_falcone"
+            fig_occupancy(res, label, n, levels, out / f"{prefix}_occupancy{suf}.png", cmo)
         if (d / "tradeoff.csv").is_file():
             fig_tradeoff(pd.read_csv(d / "tradeoff.csv"), label, n, levels, out / f"{prefix}_tradeoff.png")
 

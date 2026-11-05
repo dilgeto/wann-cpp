@@ -1,0 +1,11 @@
+operator,chosen,pct_chosen,applied,pct_applied
+addConn,3106,24.51,3048,98.13
+addNode,1997,15.76,1997,100.00
+enable,2433,19.20,2433,100.00
+mutAct,2082,16.43,2082,100.00
+toggleExc,3054,24.10,3054,100.00
+total,12672,100.00,12614,99.54
+
+probMoo objective,generations,pct
+meanFit_vs_1/nConn,20,15.62
+meanFit_vs_maxFit,108,84.38
