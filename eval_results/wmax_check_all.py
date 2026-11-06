@@ -139,12 +139,12 @@ def weight_vals(task: str) -> list[float]:
     return [float(x) for x in m.group(1).replace("\n", " ").split(",") if x.strip()]
 
 
-def pick_networks(task: str, weights: str = "best") -> pd.DataFrame:
+def pick_networks(task: str, weights: str = "best", eval_csvs: list[str] | None = None) -> pd.DataFrame:
     """Una fila por semilla de WANN: red, override y peso (columna `level`).
     best: peso ganador de WEIGHT_VALS de la revalidación sin ruido; odin: mejor nivel entero 1..7 sin ruido."""
     d = data_dir(task)
     if weights == "all":                       # las 11 redes × los 6 pesos de WEIGHT_VALS
-        b = pick_networks(task, "best")
+        b = pick_networks(task, "best", eval_csvs)
         wv = weight_vals(task)
         out = pd.concat([b.assign(level=w, sel=np.nan) for w in wv], ignore_index=True)
         return out.sort_values(["seed", "level"]).reset_index(drop=True)
@@ -153,7 +153,16 @@ def pick_networks(task: str, weights: str = "best") -> pd.DataFrame:
         if not pj.is_file():
             sys.exit(f"Error [{task}]: falta {pj} (de él sale la configuración ganadora: run_key y rank).")
         w = json.loads(pj.read_text())["wann"]
-        df = pd.concat([pd.read_csv(c) for c in TASKS[task]["eval_csvs"] if Path(c).is_file()], ignore_index=True)
+        csvs = list(eval_csvs) if eval_csvs else TASKS[task]["eval_csvs"]
+        found = [c for c in csvs if Path(c).is_file()]
+        if not found:
+            name = {"car": "car", "disc_mc": "mountain_car", "acrobot": "acrobot"}[task]
+            alt = [str(x) for x in sorted(Path("eval_results").rglob(f"{name}_best.csv"))]
+            sys.exit(f"Error [{task}]: no existen los CSV de revalidación {csvs} (de ahí salen run_key/rank/seed y el peso "
+                     f"ganador de cada red). ¿Falta `git pull` en este checkout?\n"
+                     f"  Otros {name}_best.csv en eval_results/: {alt[:8] if alt else 'ninguno'}\n"
+                     f"  Si uno es el correcto: --eval-csv <ruta> (con --task {task}).")
+        df = pd.concat([pd.read_csv(c) for c in found], ignore_index=True)
         if "reward_type" in df.columns and (df.reward_type == "original").any():
             df = df[df.reward_type == "original"]
         df = df[(df.run_key == w["run_key"]) & (df["rank"] == w["rank"])].sort_values("seed_idx")
@@ -345,12 +354,18 @@ def summarize(task: str, nets: pd.DataFrame, a, root: Path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--task", nargs="+", choices=list(TASKS) + ["all"], default=["all"])
+    ap.add_argument("--eval-csv", nargs="+", default=None, metavar="CSV",
+                    help="CSV(s) de revalidación (*_best.csv) de donde sale el peso ganador de cada red; por defecto los "
+                         "de TASKS. Úsalo con una sola --task.")
     ap.add_argument("--weights", choices=["best", "odin", "all"], default="best",
                     help="best: peso compartido ganador de cada red (WEIGHT_VALS); odin: mejor nivel entero 1..7; "
                          "all: los 6 pesos de WEIGHT_VALS por red (para el Pareto)")
     ap.add_argument("--occupancy", type=float, nargs="+", default=OCCUPANCIES,
                     help="fracción de g_max que ocupa el peso (w_max = nivel / ocupación); def.: 0.0625 0.125 0.25 0.5 1.0")
     ap.add_argument("--times", type=float, nargs="+", default=TIMES, help="tiempos (s) desde la programación")
+    ap.add_argument("--n-times", type=int, default=0, metavar="N",
+                    help="grilla densa: añade N tiempos espaciados en log entre 1 s y 1 año (enteros) a --times. Los "
+                         "tiempos ya calculados se reutilizan; solo se simulan los nuevos (p. ej. --n-times 50).")
     ap.add_argument("--n-chips", type=int, default=30)
     ap.add_argument("--reads-per-chip", type=int, default=1)
     ap.add_argument("--cmo-variants", nargs="+", choices=["assumed", "falcone"], default=["assumed", "falcone"],
@@ -367,6 +382,10 @@ def main():
     ap.add_argument("--summary-only", action="store_true", help="solo consolidar lo ya calculado")
     a = ap.parse_args()
     tasks = list(TASKS) if "all" in a.task else a.task
+    if a.eval_csv and len(tasks) != 1:
+        sys.exit("Error: --eval-csv solo con una --task.")
+    if a.n_times > 0:
+        a.times = list(a.times) + [float(round(x)) for x in np.logspace(0, np.log10(YEAR), a.n_times)]
     a.times = sorted(set(a.times))
     a.occupancy = sorted(set(a.occupancy))
     if any(o <= 0 or o > 1 for o in a.occupancy):
@@ -378,7 +397,7 @@ def main():
 
     plan = {}
     for task in tasks:
-        nets = pick_networks(task, a.weights)
+        nets = pick_networks(task, a.weights, a.eval_csv)
         root = out_dir(task, a)
         root.mkdir(parents=True, exist_ok=True)
         guard_params(root, write=not a.dry_run)

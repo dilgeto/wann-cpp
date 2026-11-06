@@ -107,7 +107,8 @@ def fig_time(res, label, n, levels, out, nets=None):
         ax.set_xlabel("Time since programming")
     axes[0].set_ylabel("Retained performance (% of noise-free)")
     lo = min(0.0, float(res.lo.min()) - 3) if len(res) else 0.0
-    axes[0].set_ylim(lo, 112)
+    top = max(112.0, float(res.hi.max()) + 3) if len(res) else 112.0      # la retención puede pasar de 100 % (ruido de la base)
+    axes[0].set_ylim(lo, top)
     handles = [Line2D([], [], color=sty[o][0], marker=sty[o][1], lw=2.2, ms=6,
                       label=f"weight uses {o * 100:g}% of g_max") for o in occs]
     fig.tight_layout(rect=[0, 0.14, 1, 1])
