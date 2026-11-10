@@ -214,6 +214,13 @@ def replica_cells(a) -> list[tuple]:
 
 
 def build_cells(a) -> list[tuple]:
+    """Celdas del experimento; --devices restringe los dispositivos simulados (la celda `none` siempre se conserva)."""
+    cells = _all_cells(a)
+    devs = getattr(a, "devices", None)
+    return cells if not devs else [c for c in cells if c[0] == "none" or c[0] in devs]
+
+
+def _all_cells(a) -> list[tuple]:
     if a.replicas and a.replica_cells == "reduced":
         return replica_cells(a)
     """Celdas únicas (noise_model, scale, t, mechanism). mechanism='all' = los tres mecanismos
@@ -831,6 +838,8 @@ def main():
     g.add_argument("--wann-wmax", type=float, default=7.0, help="w_max de WANN con pesos odin (nivel 7 = g_max)")
     g.add_argument("--wann-mappings", nargs="+", choices=["odin", "fullscale"], default=["odin", "fullscale"],
                    help="--replicas con niveles odin: supuestos de mapeo de WANN a evaluar (ver el docstring); def.: los dos")
+    g.add_argument("--devices", nargs="+", choices=REAL_MODELS + ["simple"], default=None,
+                   help="simular solo estos modelos de dispositivo (def.: todos); la celda sin ruido (`none`) se conserva siempre")
     g.add_argument("--only-methods", nargs="+", default=None,
                    help="simular solo las fuentes dadas (p. ej. wann_fs); la consolidación usa todo lo que haya en parts/")
     g.add_argument("--replica-cells", choices=["reduced", "full"], default="reduced",
