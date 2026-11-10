@@ -37,7 +37,7 @@ using ObsMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 6, false>>;
 using ActMatrix = rlt::Matrix<rlt::matrix::Specification<T, TI, 1, 1, false>>;
 
 namespace {
-std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed) {
+std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed, double ttfsThreshold) {
     constexpr double MAX_RATE   = 100.0;
     constexpr double REF_PERIOD = 2.0;
     switch (type) {
@@ -52,9 +52,9 @@ std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed) {
             return e;
         }
         case wann::SnnEncoder::TTFS:
-            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LINEAR, 1e-9);
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LINEAR, ttfsThreshold);
         case wann::SnnEncoder::TTFS_LOG:
-            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LOGARITHMIC, 1e-9);
+            return std::make_unique<TTFSEncoder>(TTFSEncoder::Mapping::LOGARITHMIC, ttfsThreshold);
         case wann::SnnEncoder::SMALL:
         case wann::SnnEncoder::LARGE:
             return nullptr;  // current injection, not spike trains
@@ -77,6 +77,15 @@ SnnAcrobotTask::SnnAcrobotTask(const Hyperparams& hyp)
     , decoder_(parseDecoder(hyp.snn_decoder))
     , shapingScale_(hyp.reward_shaping_scale)
     , resetBetweenSteps_(hyp.snn_reset_between_steps)
+    // snn_* microparameters are honoured only with snn_micro_active=true; without
+    // it the fixed legacy values (20 ms, tau 5/10, TTFS threshold 1e-9) the
+    // already-saved networks were trained with are kept. Window rounded: see
+    // SnnCarTask.cpp.
+    , microActive_(hyp.snn_micro_active)
+    , windowMs_(hyp.snn_micro_active ? std::round(hyp.snn_window_ms) : SIM_WINDOW_MS)
+    , tauExc_(hyp.snn_tau_exc)
+    , tauInh_(hyp.snn_tau_inh)
+    , ttfsThreshold_(hyp.snn_micro_active ? hyp.snn_ttfs_threshold : LEGACY_TTFS_THRESHOLD)
 {}
 
 NeuronType SnnAcrobotTask::wannActToNeuronType(int actId) {
@@ -126,6 +135,7 @@ Network SnnAcrobotTask::buildNetwork(const Ind& ind) const
         net.addSynapse(it_src->second, it_dst->second, cg.excitatory);
     }
 
+    if (microActive_) net.setTimeConstants(tauExc_, tauInh_);
     return net;
 }
 
@@ -161,6 +171,7 @@ Network SnnAcrobotTask::buildNetwork(const std::vector<double>& wVec,
         }
     }
 
+    if (microActive_) net.setTimeConstants(tauExc_, tauInh_);
     return net;
 }
 
@@ -184,11 +195,11 @@ std::pair<double,double> SnnAcrobotTask::runEpisode(Network& net, double sharedW
 
     constexpr double MAX_VEL_1  = 4.0 * M_PI;
     constexpr double MAX_VEL_2  = 9.0 * M_PI;
-    const int        window_steps = static_cast<int>(SIM_WINDOW_MS);
+    const int        window_steps = static_cast<int>(windowMs_);
     const int        n_channels   = nInput_ + 1;  // bias + observations
 
     constexpr double DT = 1.0;
-    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu, ttfsThreshold_);
 
     // --- Decoder setup ---
     const bool use_discrete  = (decoder_ == SnnDecoder::VOTING || decoder_ == SnnDecoder::RATE_ARGMAX ||
@@ -197,10 +208,10 @@ std::pair<double,double> SnnAcrobotTask::runEpisode(Network& net, double sharedW
     const RLDecoder::DecodingType dec_type = (decoder_ == SnnDecoder::FIRST_SPIKE)
         ? RLDecoder::DecodingType::FIRST_SPIKE
         : RLDecoder::DecodingType::RATE;
-    RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
+    RLDecoder rl_decoder(dec_type, windowMs_);
     const RLDecoder::DecodingType disc_type = (decoder_ == SnnDecoder::VOTING)
         ? RLDecoder::DecodingType::VOTING : RLDecoder::DecodingType::WINNER_TAKES_ALL;
-    RLDecoder disc_decoder(disc_type, SIM_WINDOW_MS, 5);
+    RLDecoder disc_decoder(disc_type, windowMs_, 5);
     const double max_spikes = static_cast<double>(window_steps) / 2.0;
 
     double total_shaped   = 0.0;
@@ -227,7 +238,7 @@ std::pair<double,double> SnnAcrobotTask::runEpisode(Network& net, double sharedW
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch) {
                 double v = std::clamp(norm[ch], 0.0, 1.0);
-                spike_trains[ch] = enc->encode(v, SIM_WINDOW_MS, DT);
+                spike_trains[ch] = enc->encode(v, windowMs_, DT);
             }
 
             for (int t = 0; t < window_steps; ++t) {
@@ -300,7 +311,7 @@ std::pair<double,double> SnnAcrobotTask::runEpisode(Network& net, double sharedW
             int winner;
             if (decoder_ == SnnDecoder::FIRST_SPIKE) {
                 winner = nOutput_ / 2;
-                double earliest = SIM_WINDOW_MS + 1.0;
+                double earliest = windowMs_ + 1.0;
                 for (int a = 0; a < nOutput_; ++a)
                     if (!multi_spikes[a].empty() && multi_spikes[a][0] < earliest) {
                         earliest = multi_spikes[a][0];
@@ -464,11 +475,11 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
 
     constexpr double MAX_VEL_1  = 4.0 * M_PI;
     constexpr double MAX_VEL_2  = 9.0 * M_PI;
-    const int        window_steps = static_cast<int>(SIM_WINDOW_MS);
+    const int        window_steps = static_cast<int>(windowMs_);
     const int        n_channels   = nInput_ + 1;
 
     constexpr double DT = 1.0;
-    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu);
+    auto enc = makeEncoder(encoder_, static_cast<uint32_t>(episodeSeed) ^ 0xDEADBEEFu, ttfsThreshold_);
 
     const bool use_discrete  = (decoder_ == SnnDecoder::VOTING || decoder_ == SnnDecoder::RATE_ARGMAX ||
                                 (decoder_ == SnnDecoder::FIRST_SPIKE && nOutput_ > 1));
@@ -476,10 +487,10 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
     const RLDecoder::DecodingType dec_type = (decoder_ == SnnDecoder::FIRST_SPIKE)
         ? RLDecoder::DecodingType::FIRST_SPIKE
         : RLDecoder::DecodingType::RATE;
-    RLDecoder rl_decoder(dec_type, SIM_WINDOW_MS);
+    RLDecoder rl_decoder(dec_type, windowMs_);
     const RLDecoder::DecodingType disc_type = (decoder_ == SnnDecoder::VOTING)
         ? RLDecoder::DecodingType::VOTING : RLDecoder::DecodingType::WINNER_TAKES_ALL;
-    RLDecoder disc_decoder(disc_type, SIM_WINDOW_MS, 5);
+    RLDecoder disc_decoder(disc_type, windowMs_, 5);
     const double max_spikes = static_cast<double>(window_steps) / 2.0;
 
     for (TI step = 0; step < Env::EPISODE_STEP_LIMIT; ++step) {
@@ -509,7 +520,7 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
             std::vector<std::vector<double>> spike_trains(n_channels);
             for (int ch = 0; ch < n_channels; ++ch) {
                 double v = std::clamp(norm[ch], 0.0, 1.0);
-                spike_trains[ch] = enc->encode(v, SIM_WINDOW_MS, DT);
+                spike_trains[ch] = enc->encode(v, windowMs_, DT);
             }
             for (int t = 0; t < window_steps; ++t) {
                 net.applyInputSpikes(spike_trains, net.getCurrentTime());
@@ -582,7 +593,7 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
             int winner;
             if (decoder_ == SnnDecoder::FIRST_SPIKE) {
                 winner = nOutput_ / 2;
-                double earliest = SIM_WINDOW_MS + 1.0;
+                double earliest = windowMs_ + 1.0;
                 for (int a = 0; a < nOutput_; ++a)
                     if (!multi_spikes[a].empty() && multi_spikes[a][0] < earliest) {
                         earliest = multi_spikes[a][0];

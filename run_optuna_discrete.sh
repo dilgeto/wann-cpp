@@ -3,21 +3,24 @@
 # discreto, replicando la configuración de car_ttfs_first_spike_discrete:
 #
 #   - mismo espacio de búsqueda: INITIAL_SPACE de screening_reduce.py (14
-#     hiperparámetros, grilla de 2 decimales) — no se pasa --space-override
+#     hiperparámetros con ttfs, 13 con otros encoders; grilla de 2 decimales) — no se pasa --space-override
 #   - mismos presupuestos: Fase 1 = 4 rondas x 30 trials; Fase 2 = 40 trials;
 #     Fase 3 = top 3 x 11 seeds
-#   - encoder ttfs; decoders first_spike y rate_argmax (ambas tareas)
+#   - encoder ttfs por defecto (ENCODERS=small para small); decoders first_spike
+#     y rate_argmax (ambas tareas)
 #   - --tag discrete -> run_key `<task>_<encoder>_<decoder>_discrete`, así no
 #     pisa ni reanuda los runs anteriores (screening_reduce/<task>_<enc>_<dec>)
 #
 # Al terminar la Fase 3, screening_full.py corre solo la evaluación de pesos +
 # bootstrap vs ANN/PPO (bootstrap_compare_{acrobot,mountain_car}_auto.py).
 #
-# OJO: snn_window_ms / snn_tau_exc / snn_tau_inh / snn_ttfs_threshold forman
-# parte del espacio (para ser idénticos a car), pero hoy solo SnnCarTask y
-# SnnBipedalTask los leen; Acrobot y Mountain Car discreto usan un
-# SIM_WINDOW_MS fijo en compilación, así que esas 4 dimensiones no afectan el
-# fitness en estas tareas. Tampoco aplica early_stop_patience (solo main_car).
+# Microparámetros SNN (snn_window_ms / snn_tau_exc / snn_tau_inh /
+# snn_ttfs_threshold): desde 2026-11 los leen SnnCarTask, SnnBipedalTask,
+# SnnDiscMCTask y SnnAcrobotTask (estas dos últimas solo con
+# snn_micro_active=true, que screening_reduce/full activan solos). Con un
+# encoder distinto de ttfs/ttfs_log (p. ej. small) snn_ttfs_threshold se saca
+# del espacio (13 dimensiones en vez de 14), porque solo lo lee TTFSEncoder.
+# Tampoco aplica early_stop_patience (solo main_car).
 #
 # Variables de entorno configurables (mismos nombres/defaults que run_all.sh):
 #   JOBS_REDUCE   procesos paralelos en Fase 1        (default 8)
@@ -33,6 +36,7 @@
 #   bash run_optuna_discrete.sh
 #   TASKS=acrobot bash run_optuna_discrete.sh
 #   DECODERS=rate_argmax bash run_optuna_discrete.sh
+#   TASKS=acrobot ENCODERS=small DECODERS=rate_argmax bash run_optuna_discrete.sh
 #   JOBS_REDUCE=4 OMP_REDUCE=128 bash run_optuna_discrete.sh
 #
 # Es reanudable: screening_reduce.py retoma results.csv/space_log.jsonl del

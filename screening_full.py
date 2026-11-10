@@ -79,6 +79,7 @@ except ImportError:
 from screening_reduce import (
     INITIAL_SPACE,
     space_for_task,
+    effective_encoder,
     micro_flag_overrides,
     TASK_DEFAULTS,
     VALID_ENCODERS,
@@ -117,7 +118,8 @@ def _read_best_weight_peak(path: Path) -> float | None:
 
 # ── Load reduced space ────────────────────────────────────────────────────────
 
-def load_reduced_space(run_key: str, task: str) -> tuple[dict[str, tuple], str]:
+def load_reduced_space(run_key: str, task: str,
+                       encoder: str | None = None) -> tuple[dict[str, tuple], str]:
     """
     Load the final reduced space from screening_reduce results.
     run_key is '{task}' or '{task}_{encoder}_{decoder}'.
@@ -126,7 +128,7 @@ def load_reduced_space(run_key: str, task: str) -> tuple[dict[str, tuple], str]:
     """
     space_log = Path("screening_reduce") / run_key / "space_log.jsonl"
     if not space_log.exists():
-        return space_for_task(INITIAL_SPACE, task), "INITIAL_SPACE (no reduction log found)"
+        return space_for_task(INITIAL_SPACE, task, encoder), "INITIAL_SPACE (no reduction log found)"
 
     last_entry = None
     with open(space_log) as f:
@@ -135,9 +137,9 @@ def load_reduced_space(run_key: str, task: str) -> tuple[dict[str, tuple], str]:
                 last_entry = json.loads(line)
 
     if last_entry is None:
-        return space_for_task(INITIAL_SPACE, task), "INITIAL_SPACE (empty reduction log)"
+        return space_for_task(INITIAL_SPACE, task, encoder), "INITIAL_SPACE (empty reduction log)"
 
-    space = space_for_task({p: tuple(v) for p, v in last_entry["space"].items()}, task)
+    space = space_for_task({p: tuple(v) for p, v in last_entry["space"].items()}, task, encoder)
     source = (f"screening_reduce/{run_key}/space_log.jsonl "
               f"(round {last_entry['round']})")
     return space, source
@@ -795,7 +797,8 @@ def main() -> None:
         sys.exit(1)
 
     # Load reduced space from matching screening_reduce run
-    space, source = load_reduced_space(rkey, args.task)
+    space, source = load_reduced_space(rkey, args.task,
+                                          effective_encoder(args.encoder, base_config))
     print(f"\n{'='*66}")
     print(f"  Task: {args.task}   run key: {rkey}   mode: {args.mode}")
     print(f"  Executable: {executable}")

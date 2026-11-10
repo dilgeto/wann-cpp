@@ -277,20 +277,44 @@ INITIAL_SPACE: dict[str, tuple] = {
 # SNN microparameters only take effect in some Snn<Task>Task.cpp — sampling
 # them for any other task just adds dimensions that cannot change fitness
 # (pure noise for the reduction statistics, and a reported "best window" that
-# was never actually run). car/bipedal always honour them; disc_mc only when
+# was never actually run). car/bipedal always honour them; disc_mc and acrobot only when
 # snn_micro_active=true, which the screening scripts then set (see
 # SNN_MICRO_NEEDS_FLAG). Add a task here when wiring them into its C++ task.
 SNN_MICRO_KEYS  = ("snn_window_ms", "snn_tau_exc", "snn_tau_inh", "snn_ttfs_threshold")
-SNN_MICRO_TASKS = {"car", "bipedal", "disc_mc"}
-SNN_MICRO_NEEDS_FLAG = {"disc_mc"}
+SNN_MICRO_TASKS = {"car", "bipedal", "disc_mc", "acrobot"}
+SNN_MICRO_NEEDS_FLAG = {"disc_mc", "acrobot"}
 
 
-def space_for_task(space: dict[str, tuple], task: str) -> dict[str, tuple]:
+# snn_ttfs_threshold only reaches TTFSEncoder (makeEncoder() in each
+# Snn<Task>Task.cpp); every other encoder (small/large/current inject current,
+# rate/poisson ignore it) never reads it, so sampling it there is pure noise.
+TTFS_ENCODERS = {"ttfs", "ttfs_log"}
+
+
+def effective_encoder(encoder: str | None, base_config: str) -> str | None:
+    """The encoder a run will really use: the --encoder override, else the
+    base config JSON's snn_encoder (None if unreadable -> keep every dim)."""
+    if encoder:
+        return encoder
+    try:
+        with open(base_config) as f:
+            return json.load(f).get("snn_encoder")
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def space_for_task(space: dict[str, tuple], task: str,
+                   encoder: str | None = None) -> dict[str, tuple]:
     """Drop the SNN microparameters from a search space for tasks whose C++
-    adapter ignores them."""
+    adapter ignores them, and snn_ttfs_threshold when `encoder` is known and
+    not a TTFS encoder (encoder=None keeps it: unknown -> be conservative)."""
     if task in SNN_MICRO_TASKS:
-        return dict(space)
-    return {k: v for k, v in space.items() if k not in SNN_MICRO_KEYS}
+        out = dict(space)
+    else:
+        out = {k: v for k, v in space.items() if k not in SNN_MICRO_KEYS}
+    if encoder is not None and encoder not in TTFS_ENCODERS:
+        out.pop("snn_ttfs_threshold", None)
+    return out
 
 
 def micro_flag_overrides(task: str) -> dict[str, Any]:
@@ -717,10 +741,11 @@ def cmd_full(
             print("Resuming: existing results.csv is empty or corrupt — starting fresh.")
 
     # Restore narrowed space from previous rounds if resuming
-    space = space_for_task(INITIAL_SPACE, task)
+    enc_eff = effective_encoder(encoder, base_config)
+    space = space_for_task(INITIAL_SPACE, task, enc_eff)
     if space_override:
         space.update(space_override)
-        space = space_for_task(space, task)
+        space = space_for_task(space, task, enc_eff)
         print(f"  Space override applied ({len(space_override)} params) — "
               f"scoped to run_key='{rkey}', INITIAL_SPACE unchanged for other runs.")
     if space_log.exists():

@@ -20,6 +20,7 @@ Uso:
 """
 import argparse
 import os
+import textwrap
 import sys
 from pathlib import Path
 
@@ -72,48 +73,76 @@ def foot(label, n, levels, band="95% bootstrap CI over networks"):
             f"conductance = lower static power). Bands: {band}.")
 
 
-def fig_time(res, label, n, levels, out, nets=None):
+def ylim_for(values_lo, values_hi, pad_frac=0.05, include=None):
+    """Límites Y ajustados a los datos (con margen), sin recortar nada por encima o por debajo de 100 %."""
+    lo, hi = float(np.nanmin(values_lo)), float(np.nanmax(values_hi))
+    if include is not None:
+        lo, hi = min(lo, include), max(hi, include)
+    pad = max((hi - lo) * pad_frac, 1.0)
+    return lo - pad, hi + pad
+
+
+def fig_time(res, label, n, levels, out, nets=None, zoom_floor=60.0):
+    """Fila superior: rango completo (ajustado a medias y bandas, incluso > 100 %). Fila inferior: zoom sobre las
+    curvas que se mantienen por encima de `zoom_floor` % (la zona donde se decide cuánto se puede bajar)."""
     occs = sorted(res.occ.unique())
     sty = occ_style(occs)
     devs = present(res)
-    fig, axes = plt.subplots(1, len(devs), figsize=(6.8 * len(devs), 5.9), sharey=True, squeeze=False)
-    axes = axes[0]
-    for ax, dev in zip(axes, devs):
+    fig, axes = plt.subplots(2, len(devs), figsize=(6.2 * len(devs), 8.6), sharex="col", squeeze=False,
+                             gridspec_kw=dict(height_ratios=[1, 1]))
+    sub_all = res[np.isclose(res.scale, 1.0) & res.model.isin(devs)]
+    for k, dev in enumerate(devs):
         sub = res[(res.model == dev) & np.isclose(res.scale, 1.0)]
         ts = sorted(sub.t.unique())
-        for o in occs:
-            rows = [cell(res, dev, 1.0, t, o) for t in ts]
-            ok = [r is not None for r in rows]
-            if not any(ok):
-                continue
-            tt = np.array([t for t, k in zip(ts, ok) if k])
-            rr = [r for r in rows if r is not None]
-            col, mk = sty[o]
-            if nets is not None:
-                for _, g in nets[(nets.model == dev) & np.isclose(nets.scale, 1.0) & np.isclose(nets.occ, o)].groupby("seed"):
-                    g = g.sort_values("t")
-                    ax.plot(g.t, g.ret, color=col, alpha=0.13, lw=0.8)
-            ax.fill_between(tt, [r.lo for r in rr], [r.hi for r in rr], color=col, alpha=0.16, linewidth=0)
-            ax.plot(tt, [r.ret for r in rr], color=col, marker=mk, lw=2.2, ms=5.5, zorder=4)
-        ax.axhline(100, color="0.5", lw=1, ls=":")
-        ax.set_xscale("symlog", linthresh=1.0, linscale=0.35)
-        tk = [(t, l) for t, l in TICKS if ts and min(ts) <= t <= max(ts)]
-        ax.set_xticks([t for t, _ in tk])
-        ax.set_xticklabels([l for _, l in tk], rotation=40, ha="right")
-        if ts:
-            ax.set_xlim(0, max(ts) * 1.08)        # symlog: sin esto el eje reserva media figura para t < 0
-        ax.minorticks_off()
-        ax.set_title(f"{SHORT[dev]}\nnoise scale 1", fontsize=13)
-        ax.set_xlabel("Time since programming")
-    axes[0].set_ylabel("Retained performance (% of noise-free)")
-    lo = min(0.0, float(res.lo.min()) - 3) if len(res) else 0.0
-    top = max(112.0, float(res.hi.max()) + 3) if len(res) else 112.0      # la retención puede pasar de 100 % (ruido de la base)
-    axes[0].set_ylim(lo, top)
+        for r_i, ax in enumerate((axes[0][k], axes[1][k])):
+            for o in occs:
+                rows = [cell(res, dev, 1.0, t, o) for t in ts]
+                ok = [r is not None for r in rows]
+                if not any(ok):
+                    continue
+                tt = np.array([t for t, kk in zip(ts, ok) if kk])
+                rr = [r for r in rows if r is not None]
+                col, mk = sty[o]
+                if nets is not None:
+                    for _, g in nets[(nets.model == dev) & np.isclose(nets.scale, 1.0) & np.isclose(nets.occ, o)].groupby("seed"):
+                        g = g.sort_values("t")
+                        ax.plot(g.t, g.ret, color=col, alpha=0.13, lw=0.8)
+                ax.fill_between(tt, [r.lo for r in rr], [r.hi for r in rr], color=col, alpha=0.12, linewidth=0)
+                ax.plot(tt, [r.ret for r in rr], color=col, marker=mk, lw=2.0, ms=4.5 if len(tt) > 30 else 5.5, zorder=4)
+            ax.axhline(100, color="0.5", lw=1, ls=":")
+            ax.set_xscale("symlog", linthresh=1.0, linscale=0.35)
+            tk = [(t, l) for t, l in TICKS if ts and min(ts) <= t <= max(ts)]
+            ax.set_xticks([t for t, _ in tk])
+            ax.set_xticklabels([l for _, l in tk], rotation=40, ha="right")
+            if ts:
+                ax.set_xlim(0, max(ts) * 1.08)        # symlog: sin esto el eje reserva media figura para t < 0
+            ax.minorticks_off()
+            ax.grid(alpha=0.3)
+            ax.tick_params(labelbottom=(r_i == 1))
+    # filas con eje Y compartido entre dispositivos (comparables), ajustado a los datos
+    lo, hi = ylim_for(sub_all.lo, sub_all.hi, include=100.0)
+    keep = sub_all[sub_all.ret >= zoom_floor]
+    if len(keep):
+        zl, zh = ylim_for(keep.ret, keep.ret, pad_frac=0.12, include=None)
+        zh = max(zh, float(keep.ret.max()) + 1.0)
+    else:
+        zl, zh = lo, hi
+    for k in range(len(devs)):
+        axes[0][k].set_ylim(lo, hi)
+        axes[1][k].set_ylim(zl, zh)
+        axes[0][k].set_title(f"{SHORT[dev := devs[k]]}\nnoise scale 1", fontsize=13)
+        axes[1][k].set_xlabel("Time since programming")
+        if k:
+            axes[0][k].tick_params(labelleft=False)
+            axes[1][k].tick_params(labelleft=False)
+        axes[0][k].axhspan(zl, zh, color="0.5", alpha=0.07, zorder=0)       # región ampliada abajo
+    axes[0][0].set_ylabel("Retained performance (% of noise-free)\nfull range")
+    axes[1][0].set_ylabel(f"zoom (curves ≥ {zoom_floor:g}%)")
     handles = [Line2D([], [], color=sty[o][0], marker=sty[o][1], lw=2.2, ms=6,
                       label=f"weight uses {o * 100:g}% of g_max") for o in occs]
-    fig.tight_layout(rect=[0, 0.14, 1, 1])
-    fig.legend(handles=handles, loc="lower center", ncol=len(occs), bbox_to_anchor=(0.5, 0.03))
-    fig.text(0.5, -0.01, foot(label, n, levels), ha="center", va="top", fontsize=9.5, color="0.35", wrap=True)
+    fig.tight_layout(rect=[0, 0.1, 1, 1], h_pad=1.2)
+    fig.legend(handles=handles, loc="lower center", ncol=len(occs), bbox_to_anchor=(0.5, 0.035))
+    fig.text(0.5, 0.0, textwrap.fill(foot(label, n, levels), 190), ha="center", va="bottom", fontsize=9, color="0.35")
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out)
     plt.close(fig)
@@ -131,11 +160,13 @@ def fig_occupancy(res, label, n, levels, out, cmo="reramcmo"):
              ("pcm", 1.0, 86400.0, "PCM, scale 1, 1 day", "#7F7F7F", "x", "--")]
     xs = np.array(occs) * 100
     fig, ax = plt.subplots(figsize=(10.5, 6.2))
+    ylo, yhi = [], []
     for m, s, t, lab, col, mk, ls in conds:
         rows = [cell(res, m, s, t, o) for o in occs]
         if any(r is None for r in rows):
             continue
         y, lo, hi = (np.array([getattr(r, k) for r in rows]) for k in ("ret", "lo", "hi"))
+        ylo.append(lo.min()); yhi.append(hi.max())
         ax.fill_between(xs, lo, hi, color=col, alpha=0.13, linewidth=0)
         ax.plot(xs, y, color=col, marker=mk, lw=2.3, ls=ls, ms=7, label=lab, zorder=4)
         ax.annotate(f"{y[0]:.0f}%", (xs[0], y[0]), textcoords="offset points", xytext=(-6, -14), ha="right",
@@ -146,7 +177,8 @@ def fig_occupancy(res, label, n, levels, out, cmo="reramcmo"):
     ax.set_xticklabels([f"{x:g}%" for x in xs])
     ax.minorticks_off()
     ax.set_xlim(xs.min() * 0.8, xs.max() * 1.1)
-    ax.set_ylim(min(0.0, float(res.lo.min()) - 3), 112)
+    if ylo:
+        ax.set_ylim(*ylim_for(ylo, yhi, include=100.0))      # se ajusta a lo dibujado, incluso > 100 %
     ax.set_xlabel("Fraction of g_max used by the shared weight  (∝ synaptic conductance, i.e. static power)")
     ax.set_ylabel("Retained performance (% of noise-free)")
     ax.set_title(f"WANN-{label}: noise robustness depends on where the weight sits in the range", fontsize=14)
