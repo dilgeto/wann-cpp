@@ -1,0 +1,28 @@
+--- a/sgrl/noise.py	2026-11-10 17:04:11.853349274 -0300
++++ b/sgrl/noise.py	2026-11-10 17:04:11.894834715 -0300
+@@ -200,6 +200,7 @@
+     drift_scale: Optional[float] = None
+     n_levels: int = 0  # niveles de conductancia al programar (<=1: continua)
+     w_max: Optional[float] = None  # |w| que mapea a g_max; None = max|W| de cada capa
++    occupancy: float = 1.0  # fracción de g_max a la que queda el mayor |w| de cada capa (w_max efectivo = w_max / occupancy)
+     t_inference: Optional[float] = None  # s; None = defecto del modelo (0 pcm/simple, 1 reram/reramcmo)
+     reramcmo_g_max: float = 25.0
+     reramcmo_g_min: float = 1.0
+@@ -250,6 +251,8 @@
+     g.add_argument(f"--{prefix}drift-scale", type=float, default=None)
+     g.add_argument(f"--{prefix}n-levels", type=int, default=d.n_levels)
+     g.add_argument(f"--{prefix}w-max", type=float, default=None, help="def. max|W| de cada capa")
++    g.add_argument(f"--{prefix}occupancy", type=float, default=d.occupancy,
++                   help="fracción de g_max a la que queda el mayor |w| de cada capa (1 = todo el rango, def.)")
+     g.add_argument(f"--{prefix}reramcmo-g-max", type=float, default=d.reramcmo_g_max)
+     g.add_argument(f"--{prefix}reramcmo-g-min", type=float, default=d.reramcmo_g_min)
+     return g
+@@ -310,7 +313,7 @@
+     @torch.no_grad()
+     def program(self, cfg: NoiseConfig, model, gen):
+         w = self.weight.detach()
+-        w_max = cfg.w_max if cfg.w_max else float(w.abs().max().clamp_min(1e-8))
++        w_max = (cfg.w_max if cfg.w_max else float(w.abs().max().clamp_min(1e-8))) / cfg.occupancy
+         self._xbar = Crossbar(w, w_max, model)
+         self._xbar.program(gen)
+ 

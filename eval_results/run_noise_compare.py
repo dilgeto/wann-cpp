@@ -426,6 +426,62 @@ def select_wann_replicas(task: str, spec: dict, a, best: dict) -> list[dict]:
     return out
 
 
+def occ_tag(occ: float) -> str:
+    """Etiqueta de una ocupación para los model_id/archivos: 0.0625 -> 6p25."""
+    return f"{occ * 100:g}".replace(".", "p")
+
+
+def chosen_odin_levels(task: str, a) -> dict[int, float]:
+    """Nivel ODIN (1..7) de cada red WANN (replica_seed -> nivel), elegido SIN ruido con la semilla reservada 999
+    en la celda `none` de <--levels-from>/<tarea>_replicas (el mismo criterio de stats_noise_replicas.network_table).
+    Como la ocupación solo reescala la conductancia, el desempeño sin ruido (y por tanto el nivel elegido) no cambia."""
+    d = Path(a.levels_from) / f"{task}_replicas"
+    sw, mo = d / "sweep_all.csv", d / "models.csv"
+    if not (sw.is_file() and mo.is_file()):
+        sys.exit(f"Error [{task}]: --occupancies necesita {sw} y {mo} (réplicas ODIN ya calculadas) para elegir el nivel de "
+                 f"cada red sin ruido; ajustá --levels-from.")
+    df = pd.read_csv(sw, usecols=["model_id", "seed", "ret"])
+    sel = df[df.seed == SELECT_SEED].groupby("model_id")["ret"].mean()
+    mo = pd.read_csv(mo)
+    mo = mo[(mo.source == "wann") & mo.model_id.isin(sel.index)].copy()
+    mo["sel"] = mo.model_id.map(sel)
+    best = mo.sort_values("sel", ascending=False).drop_duplicates("replica_seed")
+    return {int(r.replica_seed): float(r.weight_value) for r in best.itertuples()}
+
+
+def occupancy_models(task: str, spec: dict, a, best: dict) -> list[dict]:
+    """--occupancies: por cada red WANN, SU nivel ODIN elegido sin ruido guardado a cada ocupación de g_max
+    (w_max = nivel / ocupación; fuente `wann_occ`), y por cada red SGRL de las variantes con/neu, la misma red con
+    el mayor |w| de cada capa a esa fracción de g_max (fuente `sgrl_<variante>_occ`; requiere el parche
+    eval_results/sgrl_occupancy.patch en ../surrogate-gradient-rl). Para SGRL la ocupación 1.0 es el comportamiento por
+    defecto (ya calculado en las fuentes sgrl_con/sgrl_neu): se omite salvo con --sgrl-full-occupancy."""
+    levels = chosen_odin_levels(task, a)
+    saved = (a.wann_mappings, a.replica_wann_weights)
+    a.wann_mappings, a.replica_wann_weights = ["odin"], "odin"
+    base = select_wann_replicas(task, spec, a, best)
+    a.wann_mappings, a.replica_wann_weights = saved
+    out = []
+    for m in base:
+        if levels.get(m["replica_seed"]) != m["weight_value"]:
+            continue
+        for occ in a.occupancies:
+            L = m["weight_value"]
+            out.append({**m, "model_id": f"wann_occ{occ_tag(occ)}_s{m['replica_seed']:02d}_L{int(L)}", "source": "wann_occ",
+                        "label": f"{m['label']}, occupancy {occ * 100:g}%", "w_max": L / occ, "occupancy": occ})
+    if len({m["replica_seed"] for m in out}) != len({m["replica_seed"] for m in base}):
+        sys.exit(f"Error [{task}]: no se encontró un nivel ODIN elegido para todas las redes WANN en --levels-from.")
+    for variant in a.sg_variants:
+        for m in select_sgrl_variant(task, spec, a, variant):
+            run = Path(m["path"]).parent.name
+            for occ in a.occupancies:
+                if occ == 1.0 and not a.sgrl_full_occupancy:
+                    continue
+                out.append({**m, "model_id": f"sgrl_{variant}_occ{occ_tag(occ)}_{run}", "source": f"sgrl_{variant}_occ",
+                            "label": f"{m['label']}, occupancy {occ * 100:g}%", "occupancy": occ,
+                            "replica_seed": replica_seed_of(run)})
+    return out
+
+
 def select_sgrl_quant(task: str, a, models: list[dict], all_models: bool = False) -> list[dict]:
     """Versión cuantizada del modelo principal (el primero) de cada fuente SGRL ya elegida; con all_models, de TODOS."""
     repo = Path(a.sg_repo).resolve()
@@ -469,15 +525,19 @@ class TaskCtx:
         wlabel = f"WANN {w['run_key']} rank{w['rank']:02d}-seed{w['seed_idx']:02d}" if w["rank"] >= 0 else "WANN (manual)"
         if a.replicas:
             a.sg_top = a.sgv_top = 999            # todas las semillas del trial/rank elegido
-        if a.replicas:
+        if a.occupancies:
+            if not a.replicas:
+                sys.exit("Error: --occupancies solo con --replicas.")
+            self.models = occupancy_models(task, spec, a, w)
+        elif a.replicas:
             self.models = select_wann_replicas(task, spec, a, w) + select_sgrl(task, spec, a)
         else:
             self.models = [dict(model_id=f"wann_w{wi}", source="wann", label=f"{wlabel} (w idx {wi})",
                                 path=w["net"], train_return=w["reward"], weight_index=wi)
                            for wi in a.wann_weights] + select_sgrl(task, spec, a)
-        for variant in a.sg_variants:
+        for variant in ([] if a.occupancies else a.sg_variants):
             self.models += select_sgrl_variant(task, spec, a, variant)
-        if a.replicas:   # réplica = el nº de semilla de entrenamiento de cada red SGRL
+        if a.replicas and not a.occupancies:   # réplica = el nº de semilla de entrenamiento de cada red SGRL
             for m in self.models:
                 if m["source"].startswith("sgrl"):
                     m["replica_seed"] = replica_seed_of(Path(m["path"]).parent.name)
@@ -493,6 +553,11 @@ class TaskCtx:
             sg = [m for m in self.models if m["source"] == src]
             if src == "wann_fs":
                 print(f"    wann_fs   {len(sg)} redes×nivel de WANN en fondo de escala (w_max = nivel)")
+                continue
+            if src == "wann_occ" or src.endswith("_occ"):
+                occs = sorted({m["occupancy"] for m in sg})
+                print(f"    {src:14s} {len(sg)} modelos = {len(sg) // len(occs)} redes × ocupaciones "
+                      f"{', '.join(f'{o * 100:g}%' for o in occs)}")
                 continue
             extra = (f", rank {sg[0]['rank']} (validación {sg[0]['val_mean']:.1f})" if "rank" in sg[0]
                      else f", {sg[0]['quant_bits']}-bit {sg[0]['quant_scheme']}" if "quant_bits" in sg[0] else "")
@@ -558,6 +623,8 @@ def sgrl_cmd(a, ctx, model, cell, seed, out_path: Path) -> list[str]:
            "--t-inference", fmt(t), "--n-levels", str(a.n_levels),
            "--reramcmo-g-max", fmt(a.reramcmo_g_max), "--reramcmo-g-min", fmt(a.reramcmo_g_min),
            "--out", str(out_path)]
+    if "occupancy" in model:
+        cmd += ["--occupancy", fmt(model["occupancy"])]
     return cmd + scale_flags(cell, "--noise-scales")
 
 
@@ -728,7 +795,7 @@ def input_files(ctx: TaskCtx, a) -> list[tuple[str, Path]]:
     if ctx.wann["override"]:
         files.append(("wann:" + str(ctx.wann["override"]), Path(ctx.wann["override"])))
     for m in ctx.models:                      # --replicas: cada semilla de WANN trae su propia red y override
-        if m["source"] in ("wann", "wann_fs") and "net" in m:
+        if m["source"] in ("wann", "wann_fs", "wann_occ") and "net" in m:
             files += [("wann:" + m["net"], Path(m["net"])), ("wann:" + m["override"], Path(m["override"]))]
     files += [("wann:" + c, Path(c)) for c in ctx.spec["eval_csvs"]]       # deciden cuál es "el mejor"
     default_dir = a.sg_default_dir or ("runs_default" if (sg_repo / "runs_default").is_dir() else "runs")
@@ -840,6 +907,15 @@ def main():
                    help="--replicas con niveles odin: supuestos de mapeo de WANN a evaluar (ver el docstring); def.: los dos")
     g.add_argument("--devices", nargs="+", choices=REAL_MODELS + ["simple"], default=None,
                    help="simular solo estos modelos de dispositivo (def.: todos); la celda sin ruido (`none`) se conserva siempre")
+    g.add_argument("--occupancies", type=float, nargs="+", default=None,
+                   help="--replicas: fracciones de g_max (p. ej. 0.0625 0.125 0.25 0.5 1) a las que se guarda el peso de cada "
+                        "red (protocolo aparte: solo el nivel ODIN elegido de cada WANN y las variantes con/neu de SGRL; "
+                        "usar --devices pcm reramcmo y una --out-dir propia). SGRL requiere el parche sgrl_occupancy.patch")
+    g.add_argument("--levels-from", default="eval_results",
+                   help="--occupancies: carpeta con <tarea>_replicas/{sweep_all,models}.csv ya calculados, de donde sale el "
+                        "nivel ODIN elegido sin ruido de cada red (def.: eval_results)")
+    g.add_argument("--sgrl-full-occupancy", action="store_true",
+                   help="--occupancies: simular también SGRL a ocupación 1.0 (por defecto se reutiliza sgrl_con/sgrl_neu)")
     g.add_argument("--only-methods", nargs="+", default=None,
                    help="simular solo las fuentes dadas (p. ej. wann_fs); la consolidación usa todo lo que haya en parts/")
     g.add_argument("--replica-cells", choices=["reduced", "full"], default="reduced",
@@ -925,10 +1001,16 @@ def main():
           f"= {min(a.jobs, a.jobs_sgrl) * 0.5:.0f} GB.")
     if a.dry_run:
         for ctx in ctxs:
-            for j in [j for j in jobs if j.ctx is ctx][:1] + [j for j in jobs if j.ctx is ctx and j.source == "sgrl_con"][:1]:
+            for j in [j for j in jobs if j.ctx is ctx][:1] + [j for j in jobs if j.ctx is ctx and j.source.startswith("sgrl_con")][:1]:
                 print(f"[dry-run] {j.label}\n   $ {' '.join(j.cmd)}")
         return
 
+    if a.occupancies and any(m["source"].startswith("sgrl") for c in ctxs for m in c.models):
+        h = subprocess.run([a.sg_python, str(Path(a.sg_repo).resolve() / "scripts" / "noise_eval.py"), "--help"],
+                           capture_output=True, text=True)
+        if "--occupancy" not in h.stdout:
+            sys.exit(f"Error: {a.sg_repo}/scripts/noise_eval.py no tiene --occupancy. Aplicá el parche:\n"
+                     f"  (cd {a.sg_repo} && git apply {REPO / 'eval_results' / 'sgrl_occupancy.patch'})")
     for ctx in ctxs:
         check_protocol(ctx, a)
     for ctx in ctxs:
