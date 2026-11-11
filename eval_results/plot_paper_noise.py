@@ -13,7 +13,7 @@ The two sources are merged into eval_results/paper_noise/<task>_merged/ (cache) 
 per-network aggregation as stats_noise_replicas.py (WANN: one ODIN level per network chosen noise-free with the
 reserved seed 999; retention = (return - floor) / (noise-free return - floor) x 100).
 
-Figures (graficos/paper/noise/<name>.png + <name>_caption.md; English; no title/footnotes inside the image):
+Figures (graficos/paper/superseded/noise_odin_as_is/<name>.png + <name>_caption.md; English; no title/footnotes inside the image):
   noise_intensity   retention vs. noise scale (devices in rows, tasks in columns)
   noise_drift       retention vs. time since programming, noise scale 1
   noise_boxplots    distribution over networks at noise scales 1 and 3 (stars: Mann-Whitney vs. WANN, BH-FDR)
@@ -44,12 +44,12 @@ from stats_noise_replicas import network_table
 
 OLD = _SCRIPT_DIR            # eval_results/<task>_replicas (PCM + noise-free)
 NEW = _SCRIPT_DIR / "paper_noise"   # eval_results/paper_noise/<task>_replicas (ReRAM-CMO, Falcone range)
-OUT = _ROOT / "graficos" / "paper" / "noise"
+OUT = _ROOT / "graficos" / "paper" / "superseded" / "noise_odin_as_is"
 TASKS = [("car", "CarTrack"), ("disc_mc", "Mountain Car"), ("acrobot", "Acrobot")]
 SRC = ["wann", "sgrl_con", "sgrl_neu"]
-LABEL = {"wann": "WANN", "sgrl_con": "SGRL (same connections)", "sgrl_neu": "SGRL (same neurons)"}
+LABEL = {"wann": "WANN", "sgrl_con": "SGRL (same connections)", "sgrl_neu": "SGRL (same neurons)", "sgrl_64": "SGRL 64×64"}
 STYLE = {"wann": dict(color="#D55E00", marker="o"), "sgrl_con": dict(color="#CC79A7", marker="s"),
-         "sgrl_neu": dict(color="#4D4D4D", marker="^")}          # Okabe-Ito; blue/green are reserved for the devices
+         "sgrl_neu": dict(color="#4D4D4D", marker="^"), "sgrl_64": dict(color="#56B4E9", marker="D")}          # Okabe-Ito; blue/green are reserved for the devices
 DEV_LABEL = {"pcm": "PCM", "reramcmo": "ReRAM-CMO"}
 DEV_COLOR = {"pcm": "#0072B2", "reramcmo": "#009E73"}
 T0 = {"pcm": 0.0, "reramcmo": 1.0}              # default evaluation time of each device (intensity / ablation for CMO)
@@ -152,7 +152,7 @@ def legend(fig, boxes=False, y=0.0):
         h = [Line2D([], [], color=STYLE[s]["color"], lw=7, alpha=0.6, label=LABEL[s]) for s in SRC]
     else:
         h = [Line2D([], [], color=STYLE[s]["color"], marker=STYLE[s]["marker"], lw=2.2, ms=7, label=LABEL[s]) for s in SRC]
-    fig.legend(handles=h, loc="lower center", ncol=3, frameon=False, bbox_to_anchor=(0.5, y))
+    fig.legend(handles=h, loc="lower center", ncol=3 if len(SRC) <= 3 else 2, frameon=False, bbox_to_anchor=(0.5, y))
 
 
 def save(fig, name, caption):

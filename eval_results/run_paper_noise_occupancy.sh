@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Barrido de ruido de memristores a distintas OCUPACIONES de g_max (6.25, 12.5, 25, 50, 100 %: las mismas del estudio
 # de ocupación) para las figuras del paper. PCM (g_max 25 uS) y ReRAM-CMO con el rango de Falcone (8-90 uS); WANN,
-# SGRL con las mismas conexiones y SGRL con las mismas neuronas; float32, sin cuantización, sin SGRL 64x64.
+# SGRL con las mismas conexiones, SGRL con las mismas neuronas y SGRL 64x64 (metodología nueva); float32, sin cuantización.
 # SOLO EVALÚA (no entrena). Correrlo donde estén ./build/wann_*_noise, el venv de ../surrogate-gradient-rl y los
 # checkpoints (p. ej. el clúster).
 #
@@ -11,6 +11,10 @@
 #      run_noise_compare.py lo comprueba y se detiene con ese mensaje si falta.
 #   2. eval_results/<tarea>_replicas/{sweep_all.csv,models.csv}: de ahí sale el nivel ODIN que cada red WANN eligió SIN
 #      ruido (el barrido solo simula ese nivel por red, no los 7).
+#
+# Variante 64x64 (SGRL 64x64 con la metodología de screening nueva: ../surrogate-gradient-rl/runs_64x64 y screening_64x64;
+# NO las de runs_default/): se simula a las 5 ocupaciones, incluido el 100 % (no hay datos previos). Si ya corriste el
+# barrido sin la 64, relanzar este mismo script solo calcula las partes que faltan (las demás se saltan).
 #
 # Qué simula (protocolo de las réplicas: 30 chips x 1 lectura, semilla 0, 22 celdas por modelo y ocupación)
 #   * WANN: SU nivel ODIN elegido, guardado a cada ocupación (w_max = nivel / ocupación), las 5 ocupaciones.
@@ -43,6 +47,6 @@ python eval_results/run_noise_compare.py \
     --out-dir eval_results/paper_noise_occ --levels-from eval_results \
     --occupancies 0.0625 0.125 0.25 0.5 1 \
     --devices pcm reramcmo --reramcmo-g-max 90 --reramcmo-g-min 8 \
-    --sg-variants con neu \
+    --sg-variants con neu 64 --sgrl-full-occupancy 64 \
     --jobs "$JOBS" --jobs-sgrl "$JOBS_SGRL" \
     --skip-plots "${EXTRA[@]}"

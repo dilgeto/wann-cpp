@@ -46,12 +46,13 @@ import plot_paper_noise as P
 from plot_style import setup_publication_style
 from stats_noise_replicas import network_table
 
-SRC = P.SRC
+# SRC is read from P.SRC at call time (it gains sgrl_64 when that data exists)
 KEEP = ["source", "model_id", "noise_model", "mechanism", "scale", "t_inference", "seed", "chip", "read", "weight_rmse",
         "ret", "prog_noise_scale", "read_noise_scale", "drift_scale"]
 YEAR = 31536000.0
 OCCS_ALL = [0.0625, 0.125, 0.25, 0.5, 1.0]
-VARIANT = {"sgrl_con": "sgrl_con_occ", "sgrl_neu": "sgrl_neu_occ"}
+VARIANT = {"sgrl_con": "sgrl_con_occ", "sgrl_neu": "sgrl_neu_occ", "sgrl_64": "sgrl_64_occ"}
+FULL_FROM_OCC = {"sgrl_64"}   # SGRL 64x64 (new methodology): simulated at 100 % too, no earlier data to reuse
 
 
 def tag(o):
@@ -76,8 +77,9 @@ def build(task, occ, a):
     frames.append(ns[ns.model_id.isin(wm.model_id)].assign(source="wann"))
     models.append(wm.assign(source="wann")[["model_id", "source", "replica_seed"]])
     have_cmo = bool((ns.noise_model == "reramcmo").any())
-    for s in ("sgrl_con", "sgrl_neu"):
-        if np.isclose(occ, 1.0):
+    has64 = bool((nm.source == "sgrl_64_occ").any())
+    for s in ("sgrl_con", "sgrl_neu") + (("sgrl_64",) if has64 else ()):
+        if np.isclose(occ, 1.0) and s not in FULL_FROM_OCC:
             om = pd.read_csv(old / "models.csv")
             om = om[om.source == s]
             parts = [pd.read_csv(old / "sweep_all.csv").query("source == @s and noise_model in ['none', 'pcm']")]
@@ -116,9 +118,11 @@ def common_for(occ=None):
     c = P.COMMON_ORIG
     i, j = c.index("WANN: one ODIN"), c.index("Devices:")
     at = "at the occupancy given in the figure" if occ is None else f"at {occ * 100:g} % of g_max"
+    extra = (", and 64×64 networks (hyperparameters from the same two-phase screening as the other SGRL variants)"
+             if "sgrl_64" in P.SRC else "")
     mid = (f"WANN: the ODIN integer level of each network (chosen noise-free with an independent seed) with every weight "
            f"written {at} (w_max = weight / occupancy); SGRL: float32 (not quantized) networks with the same number of "
-           f"connections or of neurons as the WANN network, with the largest |w| of each layer written {at}. ")
+           f"connections or of neurons as the WANN network{extra}, with the largest |w| of each layer written {at}. ")
     return c[:i] + mid + c[j:]
 
 
@@ -139,7 +143,7 @@ def summary(ds, occs, a):
                 ax = axs[r][c]
                 if r == 0:
                     ax.set_title(title, fontsize=12)
-                for src in SRC:
+                for src in P.SRC:
                     xs, ms, lo, hi = [], [], [], []
                     for o in occs:
                         v = ds[o].vec(task, src, dev, mech, sc, t)
@@ -190,6 +194,9 @@ def main():
     a.cache_dir = a.cache_dir or a.occ_dir / "merged"
     setup_publication_style()
     P.COMMON_ORIG = P.COMMON
+    nm0 = pd.read_csv(a.occ_dir / 'car_replicas' / 'models.csv')
+    if (nm0.source == 'sgrl_64_occ').any():
+        P.SRC = ['wann', 'sgrl_con', 'sgrl_neu', 'sgrl_64']
     occs = sorted(a.occupancies)
     ds = {o: load(o, a) for o in occs}
     P.OUT = a.out

@@ -170,6 +170,9 @@ TASKS = {
 VARIANTS = {
     "con": dict(runs="runs", screening="screening", what="mismas conexiones"),
     "neu": dict(runs="runs_neuronas", screening="screening_neuronas", what="mismas neuronas"),
+    # SGRL 64x64 con la misma metodología de screening (fase 2/3) que las otras dos; fuente `sgrl_64`. NO entra por
+    # defecto en --sg-variants (el 64x64 de runs_default/ usó otra metodología de hiperparámetros: no se usa).
+    "64": dict(runs="runs_64x64", screening="screening_64x64", what="64x64"),
 }
 
 
@@ -474,7 +477,7 @@ def occupancy_models(task: str, spec: dict, a, best: dict) -> list[dict]:
         for m in select_sgrl_variant(task, spec, a, variant):
             run = Path(m["path"]).parent.name
             for occ in a.occupancies:
-                if occ == 1.0 and not a.sgrl_full_occupancy:
+                if occ == 1.0 and variant not in a.sgrl_full_occupancy:
                     continue
                 out.append({**m, "model_id": f"sgrl_{variant}_occ{occ_tag(occ)}_{run}", "source": f"sgrl_{variant}_occ",
                             "label": f"{m['label']}, occupancy {occ * 100:g}%", "occupancy": occ,
@@ -882,7 +885,7 @@ def main():
     g.add_argument("--sg-device", default="cpu")
     g.add_argument("--sg-default-dir", default=None,
                    help="carpeta (dentro de --sg-repo) de las corridas 64×64 originales; def.: runs_default si existe, si no runs")
-    g.add_argument("--sg-variants", nargs="*", choices=list(VARIANTS), default=list(VARIANTS),
+    g.add_argument("--sg-variants", nargs="*", choices=list(VARIANTS), default=["con", "neu"],
                    help="variantes con la red del tamaño de la de WANN: con (mismas conexiones), neu (mismas neuronas); "
                         "sin valores = ninguna (def.: las dos)")
     g.add_argument("--sgv-top", type=int, default=1, help="semillas por variante (def.: 1 = solo el mejor modelo)")
@@ -890,6 +893,8 @@ def main():
                    help="si > 0, añade las versiones cuantizadas (B bits) de los modelos principales de SGRL; 0 = no (def.)")
     g.add_argument("--sg-quant-scheme", default="odin", choices=["odin", "symmetric"])
     g.add_argument("--sg-quant-dir", default="runs_quant", help="carpeta (en --sg-repo) con los checkpoints de quantize_eval.py")
+    g.add_argument("--sg-64-runs", default="runs_64x64", help="corridas de la variante 64x64 (metodología nueva)")
+    g.add_argument("--sg-64-screening", default="screening_64x64")
     g.add_argument("--sg-con-runs", default="runs", help="corridas de la variante por conexiones")
     g.add_argument("--sg-con-screening", default="screening")
     g.add_argument("--sg-neu-runs", default="runs_neuronas", help="corridas de la variante por neuronas")
@@ -914,8 +919,9 @@ def main():
     g.add_argument("--levels-from", default="eval_results",
                    help="--occupancies: carpeta con <tarea>_replicas/{sweep_all,models}.csv ya calculados, de donde sale el "
                         "nivel ODIN elegido sin ruido de cada red (def.: eval_results)")
-    g.add_argument("--sgrl-full-occupancy", action="store_true",
-                   help="--occupancies: simular también SGRL a ocupación 1.0 (por defecto se reutiliza sgrl_con/sgrl_neu)")
+    g.add_argument("--sgrl-full-occupancy", nargs="*", choices=list(VARIANTS), default=[],
+                   help="--occupancies: variantes de SGRL que se simulan también a ocupación 1.0 (por defecto se reutiliza "
+                        "sgrl_con/sgrl_neu ya calculadas; la 64 es nueva y hay que simularla a 1.0)")
     g.add_argument("--only-methods", nargs="+", default=None,
                    help="simular solo las fuentes dadas (p. ej. wann_fs); la consolidación usa todo lo que haya en parts/")
     g.add_argument("--replica-cells", choices=["reduced", "full"], default="reduced",
