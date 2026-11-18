@@ -15,8 +15,9 @@
 #
 # Requisitos (en el cluster, además de los de run_paper_noise_occupancy.sh):
 #   1. Recompilar los binarios de ruido (wann_*_noise tienen --reramcmo-mapping):  ./build.sh
-#   2. Parche de SGRL, DESPUÉS del de ocupación:
-#        (cd ../surrogate-gradient-rl && git apply ../wann-cpp/eval_results/sgrl_cmo_mapping.patch)
+#   2. SGRL: el parche de ocupación (sgrl_occupancy.patch, ya aplicado en el cluster) y el mapeo CMO. Este último se aplica con
+#      un script por anclas (no un diff), funciona con o sin el de ocupación y es idempotente:
+#        python eval_results/apply_sgrl_cmo_mapping.py ../surrogate-gradient-rl
 #   3. eval_results/<tarea>_replicas/{sweep_all.csv,models.csv} (nivel ODIN por red, elegido sin ruido; no cambia).
 #
 # SGRL se simula también al 100 % (no se puede reutilizar eval_results/paper_noise: es el mapeo legacy).

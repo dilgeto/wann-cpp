@@ -948,7 +948,7 @@ def main():
     g.add_argument("--reramcmo-mapping", choices=("legacy", "pair", "single"), default="legacy",
                    help="ReRAM-CMO peso->conductancia. legacy (def.): histórico, el recorte a g_min deforma los pesos incluso a "
                         "escala 0; pair: par diferencial con g_min en ambas ramas (piso cancelado); single: un dispositivo "
-                        "afín, como el SingleDeviceConductanceConverter de aihwkit. SGRL necesita sgrl_cmo_mapping.patch. "
+                        "afín, como el SingleDeviceConductanceConverter de aihwkit. SGRL necesita apply_sgrl_cmo_mapping.py. "
                         "Usar una --out-dir propia por mapeo: mezclarlos es incompatible")
     g = ap.add_argument_group("Ejecución")
     g.add_argument("--jobs", type=int, default=500, help="procesos simultáneos en total")
@@ -1031,8 +1031,8 @@ def main():
         h = subprocess.run([a.sg_python, str(Path(a.sg_repo).resolve() / "scripts" / "noise_eval.py"), "--help"],
                            capture_output=True, text=True)
         if "--reramcmo-mapping" not in h.stdout:
-            sys.exit(f"Error: {a.sg_repo}/scripts/noise_eval.py no tiene --reramcmo-mapping. Aplicá el parche "
-                     f"(después del de ocupación):\n  (cd {a.sg_repo} && git apply {REPO / 'eval_results' / 'sgrl_cmo_mapping.patch'})")
+            sys.exit(f"Error: {a.sg_repo}/scripts/noise_eval.py no tiene --reramcmo-mapping. Aplicá el cambio:\n"
+                     f"  python {REPO / 'eval_results' / 'apply_sgrl_cmo_mapping.py'} {a.sg_repo}")
     for ctx in ctxs:
         check_protocol(ctx, a)
     for ctx in ctxs:

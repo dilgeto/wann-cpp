@@ -352,6 +352,11 @@ target_link_libraries(wann_car_odin_finetune PRIVATE
     rl_tools_iface
     OpenMP::OpenMP_CXX)
 
+# memnoise_stats: muestrea los modelos de ruido de memristor_noise.hpp (media y desviación por peso) para compararlos con
+# aihwkit real (eval_results/compare_with_aihwkit.py). Solo cabecera: no enlaza el simulador SNN, no simula redes.
+add_executable(memnoise_stats src/memnoise_stats.cpp)
+target_include_directories(memnoise_stats PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Mismo main que wann_car_noise, con la tarea fijada en compilación (ver el
 # comentario en main_car_noise.cpp): una binaria por tarea.
 foreach(NOISE_TASK acrobot disc_mc)

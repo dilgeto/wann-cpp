@@ -424,13 +424,13 @@ private:
 //     Esos son los valores "de aihwkit" para este modelo (los de este header
 //     siguen en NaN a propósito: el constructor de la crossbar lanza si no se
 //     fijan explícitamente; pasar 88.199997 / 9.0 para reproducir aihwkit).
-//   - aihwkit NO recorta g_prog a >= 0 en su _apply_poly (sin clamp inferior),
-//     lo que puede dar conductancias negativas que después rompen el
-//     log10(g_drift) de apply_drift_noise_to_conductance con NaN. Acá SÍ se
+//   - aihwkit NO recorta g_prog en su _apply_poly. Con mapping Legacy acá SÍ se
 //     recorta (programación a [0, g_max]; drift a un epsilon chico antes del
-//     log10) — una adición defensiva nuestra, necesaria en C++ para no
-//     propagar NaN silenciosamente; no cambia el resultado en el rango normal
-//     de operación, solo evita el caso límite.
+//     log10) — adición defensiva histórica: con la rama inactiva en 0 el ruido
+//     daría conductancias negativas y NaN en log10. Con Pair/Single no se recorta
+//     la programación (réplica exacta de aihwkit; las conductancias son >= g_min > 0);
+//     solo queda el epsilon antes del log10, que nunca se alcanza en ese rango.
+//   - Ventana de aceptación: ver progCoeff() (aihwkit usa de facto la del 0.2 %).
 // Cómo se mapea el peso a conductancia en ReRAM-CMO:
 //   Legacy  par diferencial, rama inactiva a 0 y lectura recortada a >= g_min por rama: el peso leído es
 //           max(g,g_min)-g_min, así que (aun con ruido 0) los pesos con g < g_min se anulan y los demás se achican.
@@ -458,6 +458,8 @@ struct ReRamCMODeviceModel {
     double read_noise_scale = 1.0;
     double drift_scale = 1.0;
 
+    // (Con mapping Pair/Single esta clave se interpreta como en aihwkit: en PORCENTAJE, ver progCoeff(); con el valor
+    // por defecto 2e-2 eso selecciona de facto la ventana del 0.2 %.)
     // Ventana de aceptación del lazo de programar-y-verificar (0.2% = más
     // estricta/menos ruido; 2% = más laxa/más ruido) — debe ser una clave
     // exacta de prog_coeff; si no, se usa la más chica disponible (igual que
@@ -565,9 +567,25 @@ public:
     size_t size() const { return n_; }
 
 private:
+    // Con mapping Pair/Single el modelo replica a aihwkit TAL CUAL (lo único que difiere de aihwkit es el mapeo que se
+    // prueba); Legacy conserva el comportamiento histórico bit a bit. Las diferencias que Legacy mantiene:
+    //   - claves de la ventana de aceptación (ver progCoeff) y
+    //   - recorte de g_prog a [0, g_max] en la programación (ver progNoise).
+    bool aihwkitExact() const { return dev_.mapping != CmoMapping::Legacy; }
+
     const std::vector<double>& progCoeff() const {
+        if (aihwkitExact()) {
+            // aihwkit (reram.py, verificado 2026-11-18, commit 86681d9): coeff_dict = {0.2: [...], 2: [...]} con claves en
+            // PORCENTAJE y `acceptance_range = 2e-2` por defecto. 0.02 no es ninguna clave -> el constructor cae en
+            // min(coeff_dict.keys()) = 0.2, o sea que por defecto aihwkit usa los coeficientes del 0.2 % (los de menor
+            // ruido, ~10x menos que los del 2 %). Se replica la búsqueda tal cual: la clave se compara en las unidades de
+            // aihwkit (porcentaje), no en fracción; pasar 0.2 o 2 selecciona esa ventana, cualquier otro valor cae a la mínima.
+            for (const auto& kv : dev_.prog_coeff)
+                if (std::fabs(kv.first * 100.0 - dev_.acceptance_range) < 1e-9) return kv.second;
+            return dev_.prog_coeff.begin()->second;  // min key
+        }
         auto it = dev_.prog_coeff.find(dev_.acceptance_range);
-        if (it == dev_.prog_coeff.end()) it = dev_.prog_coeff.begin();  // min key, igual que aihwkit
+        if (it == dev_.prog_coeff.end()) it = dev_.prog_coeff.begin();  // min key (historico: claves en fracción)
         return it->second;
     }
 
@@ -584,6 +602,10 @@ private:
         }
         std::normal_distribution<double> Z(0.0, 1.0);
         const double g_prog = g_target + dev_.prog_noise_scale * sig * Z(rng);
+        // aihwkit no recorta g_prog en la programación (solo el recorte final de la lectura, a [g_min, g_max]); con los
+        // mapeos Pair/Single las conductancias objetivo están en [g_min, g_max] con g_min > 0, así que el recorte inferior
+        // no hace falta y el superior sesgaría los dispositivos que quedan en g_max. Legacy sigue recortando.
+        if (aihwkitExact() && dev_.n_levels <= 1) return g_prog;
         return detail::quantizeConductance(std::clamp(g_prog, 0.0, dev_.g_max),
                                             dev_.g_max, dev_.n_levels);
     }

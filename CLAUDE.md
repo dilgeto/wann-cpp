@@ -499,6 +499,21 @@ reproduces aihwkit's own `g_final.clamp(min=g_min, max=g_max)` — setting
 none`, proving the scale-ablation logic itself is correct and the gap was
 purely the floor).
 
+ReRAM-CMO parity with aihwkit (verified 2026-11-18 against master `86681d9`): `--reramcmo-mapping pair|single`
+(default `legacy` = historical, bit-identical to before) makes `ReRamCMONoisyCrossbar` and the SG port
+(`../surrogate-gradient-rl/sgrl/noise.py`, patched with `eval_results/apply_sgrl_cmo_mapping.py`) replicate aihwkit
+exactly except for the mapping under test: `single` = `SingleDeviceConductanceConverter` (what `ReRamCMONoiseModel`
+uses), `pair` = `SinglePairConductanceConverter` (g_min on both branches); default range there is 88.199997 / 9.0 µS.
+Key trap: aihwkit's default `acceptance_range=2e-2` is not a key of its percent-keyed `coeff_dict` {0.2, 2}, so it
+silently uses the **0.2 %** programming-noise coefficients; `legacy` keeps the old 2 % window (10.6x more noise).
+Sweeps: `MAPPING=pair|single bash eval_results/run_paper_noise_cmo_mapping.sh`. Direct comparison against the real
+aihwkit (clone of IBM/aihwkit, noise models are pure PyTorch): `python eval_results/compare_with_aihwkit.py
+--aihwkit-src <clone>` compares per-weight mean/sd of aihwkit's `ReRamCMONoiseModel` (single, and pair via
+`SinglePairConductanceConverter`) and `PCMLikeNoiseModel` against `sgrl/noise.py` and `build/memnoise_stats` (C++),
+mechanism by mechanism (prog/read/drift/all) and over times; exit 1 lists mismatches. The harness was validated only
+against a hand-written stand-in of aihwkit (it catches a wrong acceptance window or drift), never against the real thing.
+Still deliberately different: absent connections have no device, no drift compensation, no `w_noise`, no periphery.
+
 Left deliberately unimplemented, pick up if it becomes the priority:
 
 1. **Neuron-parameter variability (mismatch).** Rasch et al. 2023 found output/
