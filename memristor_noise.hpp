@@ -418,11 +418,12 @@ private:
 //     con g_min propio) en vez de SinglePairConductanceConverter. Acá se aplica
 //     igual por separado a cada rama del par diferencial (g_target_pos_/neg_)
 //     para encajar con el resto de este header — adaptación nuestra, no literal.
-//   - g_max/g_min NO tienen valor por defecto en aihwkit (su __init__ exige que
-//     se pasen, o lanza ValueError) — a diferencia de PCM (25 µS) y ReRamWan2022
-//     (40 µS), acá no hay ningún número de referencia que copiar. Se dejan en
-//     NaN y el constructor de la crossbar lanza si no se fijan explícitamente,
-//     en vez de inventar un valor no verificado.
+//   - g_max/g_min: ReRamCMONoiseModel los recibe como None y los pasa a su
+//     SingleDeviceConductanceConverter, que (verificado 2026-11-18 contra aihwkit
+//     master, conductance.py) usa por defecto g_max = 88.199997 y g_min = 9.0 µS.
+//     Esos son los valores "de aihwkit" para este modelo (los de este header
+//     siguen en NaN a propósito: el constructor de la crossbar lanza si no se
+//     fijan explícitamente; pasar 88.199997 / 9.0 para reproducir aihwkit).
 //   - aihwkit NO recorta g_prog a >= 0 en su _apply_poly (sin clamp inferior),
 //     lo que puede dar conductancias negativas que después rompen el
 //     log10(g_drift) de apply_drift_noise_to_conductance con NaN. Acá SÍ se

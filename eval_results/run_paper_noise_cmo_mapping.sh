@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Barrido ReRAM-CMO (Falcone 8-90 uS) con un mapeo peso->conductancia que NO deforma los pesos a ruido 0, a las 5 ocupaciones,
+# Barrido ReRAM-CMO con el rango por defecto de aihwkit (g_max 88.199997, g_min 9.0 uS: los del SingleDeviceConductanceConverter
+# que usa ReRamCMONoiseModel cuando no se le pasan valores) y con un mapeo peso->conductancia que NO deforma los pesos a ruido 0, a las 5 ocupaciones,
 # para WANN y SG (same connections / same neurons / 64x64). Reemplaza los datos CMO de paper_noise_occ y paper_noise (mapeo
 # "legacy"), donde el recorte a g_min anulaba/achicaba los pesos incluso con ruido 0 (sobre todo en SG).
+# NO se reutilizan los datos CMO de 8-90 uS (paper_noise, paper_noise_occ): otro rango y mapeo legacy.
 # SOLO EVALÚA (no entrena). Mismo protocolo que run_paper_noise_occupancy.sh (30 chips x 1 lectura, semilla 0). Solo CMO:
 # PCM no tiene piso y sus datos no cambian.
 #
@@ -18,11 +20,11 @@
 #   3. eval_results/<tarea>_replicas/{sweep_all.csv,models.csv} (nivel ODIN por red, elegido sin ruido; no cambia).
 #
 # SGRL se simula también al 100 % (no se puede reutilizar eval_results/paper_noise: es el mapeo legacy).
-# Salida: eval_results/paper_noise_occ_<MAPPING>/<tarea>_replicas/{parts/,sweep_all.csv,models.csv}. Reanudable.
+# Salida: eval_results/paper_noise_occ_<MAPPING>_aihwkit/<tarea>_replicas/{parts/,sweep_all.csv,models.csv}. Reanudable.
 #
 # Uso (desde la raíz del repo):
 #   MAPPING=pair   DRY=1 bash eval_results/run_paper_noise_cmo_mapping.sh   # solo el plan, no simula
-#   MAPPING=pair   bash eval_results/run_paper_noise_cmo_mapping.sh         # JOBS=300 JOBS_SGRL=100 (~83 min de pared)
+#   MAPPING=pair   bash eval_results/run_paper_noise_cmo_mapping.sh         # JOBS=300 JOBS_SGRL=100 (~83 min de pared; con 70 hebras: JOBS=70 JOBS_SGRL=70, ~130 min)
 #   MAPPING=single bash eval_results/run_paper_noise_cmo_mapping.sh
 #   MAPPING=pair TASKS="acrobot" JOBS=190 bash eval_results/run_paper_noise_cmo_mapping.sh
 set -euo pipefail
@@ -30,6 +32,8 @@ cd "$(dirname "$0")/.."
 
 MAPPING="${MAPPING:?definí MAPPING=pair o MAPPING=single}"
 case "$MAPPING" in pair|single) ;; *) echo "MAPPING debe ser pair o single" >&2; exit 1;; esac
+G_MAX="${G_MAX:-88.199997}"   # rango por defecto de aihwkit para ReRAM-CMO; sobrescribir solo con una razón explícita
+G_MIN="${G_MIN:-9.0}"
 JOBS="${JOBS:-300}"
 JOBS_SGRL="${JOBS_SGRL:-100}"
 TASKS="${TASKS:-car disc_mc acrobot}"
@@ -38,9 +42,9 @@ EXTRA=()
 
 python eval_results/run_noise_compare.py \
     --replicas --task $TASKS \
-    --out-dir "eval_results/paper_noise_occ_${MAPPING}" --levels-from eval_results \
+    --out-dir "eval_results/paper_noise_occ_${MAPPING}_aihwkit" --levels-from eval_results \
     --occupancies 0.0625 0.125 0.25 0.5 1 \
-    --devices reramcmo --reramcmo-g-max 90 --reramcmo-g-min 8 --reramcmo-mapping "$MAPPING" \
+    --devices reramcmo --reramcmo-g-max "$G_MAX" --reramcmo-g-min "$G_MIN" --reramcmo-mapping "$MAPPING" \
     --sg-variants con neu 64 --sgrl-full-occupancy con neu 64 \
     --jobs "$JOBS" --jobs-sgrl "$JOBS_SGRL" \
     --skip-plots "${EXTRA[@]}"
