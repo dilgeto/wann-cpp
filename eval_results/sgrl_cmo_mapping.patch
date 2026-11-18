@@ -1,0 +1,94 @@
+--- a/sgrl/noise.py
++++ b/sgrl/noise.py
+@@ -162,6 +162,17 @@
+     read_K: float = 0.0277316483
+     t_read: float = 1.0e-6
+     n_levels: int = 0
++    # Mapeo peso -> conductancia (mismo significado que CmoMapping de memristor_noise.hpp / --reramcmo-mapping):
++    #   legacy  par diferencial, rama inactiva a 0 y lectura recortada a >= g_min por rama (histórico: aun con ruido 0 anula
++    #           los pesos con g < g_min y achica el resto)
++    #   pair    par diferencial con g_min en ambas ramas: el piso se cancela (como SinglePairConductanceConverter de aihwkit)
++    #   single  un dispositivo por peso, afín (min de la matriz -> g_min, max -> g_max; SingleDeviceConductanceConverter,
++    #           el de ReRamCMONoiseModel en aihwkit). La ocupación (max|w|/w_max) centra y recorta el rango usado.
++    mapping: str = "legacy"
++
++    @property
++    def g_offset(self) -> float:  # conductancia de reposo de cada rama del par (solo mapping == "pair")
++        return self.g_min if self.mapping == "pair" else 0.0
+ 
+     def program(self, g_t, gen):
+         coeff = self.prog_coeff.get(self.acceptance_range, self.prog_coeff[min(self.prog_coeff)])
+@@ -204,6 +215,7 @@
+     t_inference: Optional[float] = None  # s; None = defecto del modelo (0 pcm/simple, 1 reram/reramcmo)
+     reramcmo_g_max: float = 25.0
+     reramcmo_g_min: float = 1.0
++    reramcmo_mapping: str = "legacy"  # legacy | pair | single (ver ReRamCMOModel)
+ 
+     def scales(self):
+         pick = lambda v: self.noise_scale if v is None else v
+@@ -233,7 +245,10 @@
+         m = ReRamWanModel(noise_scale=p, n_levels=cfg.n_levels)
+     else:
+         m = ReRamCMOModel(g_max=cfg.reramcmo_g_max, g_min=cfg.reramcmo_g_min, prog_noise_scale=p,
+-                          read_noise_scale=r, drift_scale=d, n_levels=cfg.n_levels)
++                          read_noise_scale=r, drift_scale=d, n_levels=cfg.n_levels,
++                          mapping=cfg.reramcmo_mapping)
++        if cfg.reramcmo_mapping not in ("legacy", "pair", "single"):
++            raise ValueError("reramcmo_mapping debe ser legacy, pair o single")
+         if not (0.0 <= m.g_min < m.g_max):
+             raise ValueError("reramcmo: hace falta 0 <= g_min < g_max")
+     return m
+@@ -255,6 +270,9 @@
+                    help="fracción de g_max a la que queda el mayor |w| de cada capa (1 = todo el rango, def.)")
+     g.add_argument(f"--{prefix}reramcmo-g-max", type=float, default=d.reramcmo_g_max)
+     g.add_argument(f"--{prefix}reramcmo-g-min", type=float, default=d.reramcmo_g_min)
++    g.add_argument(f"--{prefix}reramcmo-mapping", choices=("legacy", "pair", "single"), default=d.reramcmo_mapping,
++                   help="ReRAM-CMO peso->conductancia: legacy (hist., el piso g_min deforma los pesos), pair (par diferencial "
++                        "con g_min en ambas ramas) o single (un dispositivo afín, como aihwkit)")
+     return g
+ 
+ 
+@@ -274,19 +292,38 @@
+ 
+     def __init__(self, weight: torch.Tensor, w_max: float, model):
+         self.model, self.w_max = model, float(w_max)
+-        g = (weight.abs() / self.w_max).clamp(0.0, 1.0) * model.g_max
+-        zero = torch.zeros_like(g)
+-        self.g_pos, self.g_neg = torch.where(weight > 0, g, zero), torch.where(weight < 0, g, zero)
++        self.single = getattr(model, "mapping", "legacy") == "single"
++        if self.single:
++            # un dispositivo por peso: afín en [min(W), max(W)] de la matriz (aihwkit lo hace por tile)
++            lo, hi, amax = float(weight.min()), float(weight.max()), float(weight.abs().max())
++            if not hi - lo > 1e-12:  # un solo valor: aihwkit dividiría por 0; rango simétrico +-|w|
++                m = amax if amax > 0 else 1.0
++                lo, hi = -m, m
++            occ = min(1.0, max(0.0, amax / self.w_max)) if amax > 0 else 1.0
++            total = model.g_max - model.g_min
++            self.w_lo, self.g_lo, self.sc = lo, model.g_min + 0.5 * (1.0 - occ) * total, occ * total / (hi - lo)
++            self.g_pos, self.g_neg = self.g_lo + (weight - lo) * self.sc, None
++        else:
++            # offset = g_min en "pair" (rama inactiva en g_min, rango útil g_max - g_min); en "legacy" 0 y g_max
++            self.offset = float(getattr(model, "g_offset", 0.0))
++            self.span = model.g_max - self.offset
++            g = (weight.abs() / self.w_max).clamp(0.0, 1.0) * self.span
++            zero = torch.zeros_like(g)
++            self.g_pos = torch.where(weight > 0, g, zero) + self.offset
++            self.g_neg = torch.where(weight < 0, g, zero) + self.offset
+         self.state = None
+ 
+     def program(self, gen):
+-        self.state = (self.model.program(self.g_pos, gen), self.model.program(self.g_neg, gen))
++        self.state = (self.model.program(self.g_pos, gen),
++                      None if self.g_neg is None else self.model.program(self.g_neg, gen))
+ 
+     def read(self, t: float, gen) -> torch.Tensor:
+         if self.state is None:
+             raise RuntimeError("Crossbar.read antes de program()")
++        if self.single:
++            return self.w_lo + (self.model.read(self.state[0], t, gen) - self.g_lo) / self.sc
+         gp, gn = (self.model.read(s, t, gen) for s in self.state)
+-        return (gp - gn) * (self.w_max / self.model.g_max)
++        return (gp - gn) * (self.w_max / self.span)
+ 
+ 
+ class NoisyLinear(nn.Linear):
