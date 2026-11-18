@@ -35,8 +35,8 @@ from plot_style import setup_publication_style
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATA = (_REPO_ROOT.parent / "ODIN-SG-WANN-datos" / "sg" / "datos_graficos" / "datos"
                 / "01_E0_vs_E4_placa_lazo_cerrado_3_tareas" / "redes.csv")
-DEFAULT_OUT = _REPO_ROOT / "graficos" / "sg_odin_perdida_rendimiento_boxplot.png"
-DEFAULT_OUT_BEST = _REPO_ROOT / "graficos" / "sg_odin_perdida_rendimiento_boxplot_mejor_config.png"
+DEFAULT_OUT = _REPO_ROOT / "graficos" / "paper" / "fpga" / "sg_odin_loss_boxplot.png"
+DEFAULT_OUT_BEST = _REPO_ROOT / "graficos" / "paper" / "fpga" / "sg_odin_loss_boxplot_best_config.png"
 
 TASKS = [("Acrobot", "Acrobot"), ("MountainCar", "Discrete\nMountain Car"), ("Coche", "Racing car")]
 # (columna familia, etiqueta, color, desplazamiento) — Okabe-Ito, seguro para daltonismo

@@ -32,7 +32,7 @@ from plot_style import setup_publication_style
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ODIN = _REPO_ROOT.parent / "ODIN-SG-WANN-datos" / "wann" / "datos_graficos"
 DEFAULT_REF = _REPO_ROOT / "eval_results" / "wann_odin_reference_episodes.csv"
-DEFAULT_OUT = _REPO_ROOT / "graficos" / "wann_odin_perdida_rendimiento_boxplot.png"
+DEFAULT_OUT = _REPO_ROOT / "graficos" / "paper" / "fpga" / "wann_odin_loss_boxplot.png"
 
 TASKS = [("acrobot", "Acrobot", -500.0), ("mountain_car", "Discrete\nMountain Car", -200.0),
          ("car", "Racing car", 0.0)]

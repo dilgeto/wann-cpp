@@ -430,6 +430,21 @@ private:
 //     log10) — una adición defensiva nuestra, necesaria en C++ para no
 //     propagar NaN silenciosamente; no cambia el resultado en el rango normal
 //     de operación, solo evita el caso límite.
+// Cómo se mapea el peso a conductancia en ReRAM-CMO:
+//   Legacy  par diferencial, rama inactiva a 0 y lectura recortada a >= g_min por rama: el peso leído es
+//           max(g,g_min)-g_min, así que (aun con ruido 0) los pesos con g < g_min se anulan y los demás se achican.
+//           Es el comportamiento histórico (por defecto) y deforma sobre todo a redes con pesos dispares.
+//   Pair    par diferencial con g_min en AMBAS ramas (rama inactiva = g_min, activa = g_min + |w|/w_max·(g_max-g_min)):
+//           el piso se cancela en G+ - G-, igual que SinglePairConductanceConverter de aihwkit. NO es lo que aihwkit
+//           usa para este modelo (ver Single).
+//   Single  un dispositivo por peso, mapeo afín: el peso mínimo de la matriz -> g_min y el máximo -> g_max
+//           (SingleDeviceConductanceConverter de aihwkit, el conversor de ReRamCMONoiseModel). Todas las conductancias
+//           nacen dentro de [g_min, g_max], así que el recorte final solo corta excursiones de ruido/deriva. Sin
+//           par diferencial: la deriva común desplaza todos los pesos (no se cancela). La ocupación (occ = max|w|/w_max)
+//           es una extensión nuestra: el rango se usa centrado y recortado a occ·(g_max-g_min); con occ = 1 es el
+//           mapeo literal de aihwkit.
+enum class CmoMapping { Legacy, Pair, Single };
+
 struct ReRamCMODeviceModel {
     // Sin valor por defecto confiable — aihwkit tampoco trae uno para este
     // modelo (ValueError si no se pasan). Fijarlos a mediciones reales del
@@ -467,6 +482,9 @@ struct ReRamCMODeviceModel {
 
     // Niveles de conductancia distinguibles al programar (<=1 = continuo).
     int n_levels = 0;
+
+    // Mapeo peso -> conductancia (ver CmoMapping). Por defecto Legacy = comportamiento histórico.
+    CmoMapping mapping = CmoMapping::Legacy;
 };
 
 class ReRamCMONoisyCrossbar {
@@ -480,10 +498,34 @@ public:
                 "valor por defecto en aihwkit, no inventamos uno acá");
         if (!(dev_.g_min >= 0.0) || !(dev_.g_min < dev_.g_max))
             throw std::invalid_argument("ReRamCMONoisyCrossbar: hay que fijar 0 <= g_min < g_max");
-        for (size_t i = 0; i < n_; ++i) {
-            const double g = std::clamp(std::abs(weights[i]) / w_max_, 0.0, 1.0) * dev_.g_max;
-            g_target_pos_[i] = weights[i] > 0 ? g : 0.0;
-            g_target_neg_[i] = weights[i] < 0 ? g : 0.0;
+        // Compensado: rango útil [g_min, g_max] -> la rama inactiva descansa en
+        // g_min y la activa sube `g` sobre g_min; sin compensar: offset 0 y span g_max.
+        if (dev_.mapping == CmoMapping::Single) {
+            double lo = 0.0, hi = 0.0, amax = 0.0;
+            if (n_ > 0) { lo = hi = weights[0]; }
+            for (double w : weights) { lo = std::min(lo, w); hi = std::max(hi, w); amax = std::max(amax, std::abs(w)); }
+            if (!(hi - lo > 1e-12)) {  // un solo valor: aihwkit dividiría por 0; usar el rango simétrico +-|w|
+                const double m = amax > 0.0 ? amax : 1.0;
+                lo = -m; hi = m;
+            }
+            const double occ = amax > 0.0 ? std::clamp(amax / w_max_, 0.0, 1.0) : 1.0;
+            const double total = dev_.g_max - dev_.g_min;
+            w_lo_ = lo;
+            g_lo_ = dev_.g_min + 0.5 * (1.0 - occ) * total;   // occ = 1 -> g_min
+            sc_ = occ * total / (hi - lo);                    // µS por unidad de peso
+            for (size_t i = 0; i < n_; ++i) {
+                g_target_pos_[i] = g_lo_ + (weights[i] - w_lo_) * sc_;
+                g_target_neg_[i] = 0.0;
+            }
+        } else {
+            // Pair: rango útil [g_min, g_max], rama inactiva en g_min; Legacy: offset 0 y span g_max.
+            offset_ = dev_.mapping == CmoMapping::Pair ? dev_.g_min : 0.0;
+            span_ = dev_.g_max - offset_;
+            for (size_t i = 0; i < n_; ++i) {
+                const double g = std::clamp(std::abs(weights[i]) / w_max_, 0.0, 1.0) * span_;
+                g_target_pos_[i] = offset_ + (weights[i] > 0 ? g : 0.0);
+                g_target_neg_[i] = offset_ + (weights[i] < 0 ? g : 0.0);
+            }
         }
         g_prog_pos_ = g_target_pos_;
         g_prog_neg_ = g_target_neg_;
@@ -496,7 +538,7 @@ public:
         const auto& coeff = progCoeff();
         for (size_t i = 0; i < n_; ++i) {
             g_prog_pos_[i] = progNoise(g_target_pos_[i], coeff, rng);
-            g_prog_neg_[i] = progNoise(g_target_neg_[i], coeff, rng);
+            if (dev_.mapping != CmoMapping::Single) g_prog_neg_[i] = progNoise(g_target_neg_[i], coeff, rng);
         }
     }
 
@@ -506,7 +548,12 @@ public:
     template <class RNG>
     void read_weights(RNG& rng, double t_inference, std::vector<double>& out) const {
         out.resize(n_);
-        const double scale = w_max_ / dev_.g_max;
+        if (dev_.mapping == CmoMapping::Single) {
+            for (size_t i = 0; i < n_; ++i)
+                out[i] = w_lo_ + (driftAndRead(g_prog_pos_[i], t_inference, rng) - g_lo_) / sc_;
+            return;
+        }
+        const double scale = w_max_ / span_;
         for (size_t i = 0; i < n_; ++i) {
             const double gp = driftAndRead(g_prog_pos_[i], t_inference, rng);
             const double gn = driftAndRead(g_prog_neg_[i], t_inference, rng);
@@ -563,6 +610,8 @@ private:
     ReRamCMODeviceModel dev_;
     double w_max_;
     size_t n_;
+    double offset_ = 0.0, span_ = 0.0;  // Pair: (g_min, g_max-g_min); Legacy: (0, g_max)
+    double w_lo_ = 0.0, g_lo_ = 0.0, sc_ = 1.0;  // Single: peso y conductancia mínimos, µS por unidad de peso
     std::vector<double> g_target_pos_, g_target_neg_, g_prog_pos_, g_prog_neg_;
 };
 

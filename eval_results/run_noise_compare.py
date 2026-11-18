@@ -615,6 +615,8 @@ def wann_cmd(a, ctx, model, cell, seed) -> list[str]:
             "--t-inference", fmt(t), "--n-levels", str(a.n_levels),
             "--reramcmo-g-max", fmt(a.reramcmo_g_max), "--reramcmo-g-min", fmt(a.reramcmo_g_min),
             "--seeds", str(seed)]
+    if a.reramcmo_mapping != "legacy":
+        cmd += ["--reramcmo-mapping", a.reramcmo_mapping]
     return cmd + scale_flags(cell, "--noise-scale")
 
 
@@ -626,6 +628,8 @@ def sgrl_cmd(a, ctx, model, cell, seed, out_path: Path) -> list[str]:
            "--t-inference", fmt(t), "--n-levels", str(a.n_levels),
            "--reramcmo-g-max", fmt(a.reramcmo_g_max), "--reramcmo-g-min", fmt(a.reramcmo_g_min),
            "--out", str(out_path)]
+    if a.reramcmo_mapping != "legacy":
+        cmd += ["--reramcmo-mapping", a.reramcmo_mapping]
     if "occupancy" in model:
         cmd += ["--occupancy", fmt(model["occupancy"])]
     return cmd + scale_flags(cell, "--noise-scales")
@@ -844,8 +848,9 @@ def check_protocol(ctx: TaskCtx, a):
         return
     old = json.loads(p.read_text())
     diffs = []
-    for k in ("n_chips", "reads_per_chip", "n_levels", "reramcmo_g_max", "reramcmo_g_min"):
-        if str(getattr(a, k)) != old.get("args", {}).get(k):
+    for k in ("n_chips", "reads_per_chip", "n_levels", "reramcmo_g_max", "reramcmo_g_min", "reramcmo_mapping"):
+        # protocol.json anteriores al flag no lo guardan: equivalen a "legacy" (comportamiento histórico)
+        if str(getattr(a, k)) != old.get("args", {}).get(k, "legacy" if k == "reramcmo_mapping" else None):
             diffs.append(f"{k}: {old.get('args', {}).get(k)} -> {getattr(a, k)}")
     if old.get("episodes") != ctx.episodes:
         diffs.append(f"episodes: {old.get('episodes')} -> {ctx.episodes}")
@@ -940,6 +945,11 @@ def main():
     g.add_argument("--with-simple", action="store_true", help="incluir el modelo 'simple' (placeholder) en intensidad")
     g.add_argument("--reramcmo-g-max", type=float, default=25.0)
     g.add_argument("--reramcmo-g-min", type=float, default=1.0)
+    g.add_argument("--reramcmo-mapping", choices=("legacy", "pair", "single"), default="legacy",
+                   help="ReRAM-CMO peso->conductancia. legacy (def.): histórico, el recorte a g_min deforma los pesos incluso a "
+                        "escala 0; pair: par diferencial con g_min en ambas ramas (piso cancelado); single: un dispositivo "
+                        "afín, como el SingleDeviceConductanceConverter de aihwkit. SGRL necesita sgrl_cmo_mapping.patch. "
+                        "Usar una --out-dir propia por mapeo: mezclarlos es incompatible")
     g = ap.add_argument_group("Ejecución")
     g.add_argument("--jobs", type=int, default=500, help="procesos simultáneos en total")
     g.add_argument("--jobs-sgrl", type=int, default=None,
@@ -1017,6 +1027,12 @@ def main():
         if "--occupancy" not in h.stdout:
             sys.exit(f"Error: {a.sg_repo}/scripts/noise_eval.py no tiene --occupancy. Aplicá el parche:\n"
                      f"  (cd {a.sg_repo} && git apply {REPO / 'eval_results' / 'sgrl_occupancy.patch'})")
+    if a.reramcmo_mapping != "legacy" and any(m["source"].startswith("sgrl") for c in ctxs for m in c.models):
+        h = subprocess.run([a.sg_python, str(Path(a.sg_repo).resolve() / "scripts" / "noise_eval.py"), "--help"],
+                           capture_output=True, text=True)
+        if "--reramcmo-mapping" not in h.stdout:
+            sys.exit(f"Error: {a.sg_repo}/scripts/noise_eval.py no tiene --reramcmo-mapping. Aplicá el parche "
+                     f"(después del de ocupación):\n  (cd {a.sg_repo} && git apply {REPO / 'eval_results' / 'sgrl_cmo_mapping.patch'})")
     for ctx in ctxs:
         check_protocol(ctx, a)
     for ctx in ctxs:

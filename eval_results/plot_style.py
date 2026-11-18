@@ -57,6 +57,29 @@ def setup_publication_style() -> None:
     })
 
 
+# Journal ("Neural Networks", Elsevier): vector PDF/EPS with embedded fonts; widths 90 mm (single column) / 190 mm (full page).
+JOURNAL_FULL_W = 7.48    # in = 190 mm
+JOURNAL_COL_W = 3.54     # in = 90 mm
+
+
+def setup_journal_style() -> None:
+    """Style for figures drawn AT the final journal size (no later down-scaling): sans-serif (Liberation Sans, Arial-metric),
+    text >= 7 pt, TrueType fonts embedded in PDF/PS (fonttype 42), 600 dpi raster previews. Use with figsize width JOURNAL_*_W."""
+    setup_publication_style()
+    plt.rcParams.update({
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Liberation Sans", "Arial", "Helvetica", "DejaVu Sans"],
+        "mathtext.fontset": "custom", "mathtext.rm": "Liberation Sans", "mathtext.it": "Liberation Sans:italic",
+        "mathtext.bf": "Liberation Sans:bold",
+        "pdf.fonttype": 42, "ps.fonttype": 42,
+        "font.size": 7, "axes.titlesize": 8, "axes.labelsize": 7.5, "xtick.labelsize": 7, "ytick.labelsize": 7,
+        "legend.fontsize": 7,
+        "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6,
+        "xtick.major.size": 2.5, "ytick.major.size": 2.5, "grid.linewidth": 0.4, "lines.linewidth": 1.0,
+        "savefig.dpi": 600, "savefig.pad_inches": 0.03,
+    })
+
+
 _TASK_PREFIX = re.compile(r"^(car|disc_mc|acrobot)_")
 
 

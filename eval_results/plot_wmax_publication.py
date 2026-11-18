@@ -9,7 +9,7 @@ lower synaptic conductance, i.e. lower static power (proxy). Retention = (return
 x 100, per network; the replicate unit is the WANN network (n = 11).
 
 Devices: PCM (g_max 25 µS) and ReRAM-CMO with the Falcone et al. range (8-90 µS) only.
-Figures (graficos/paper/occupancy/<name>.png + <name>_caption.md; English, no title/footnotes inside the image):
+Figures (graficos/paper/memristors/occupancy/<name>.png + <name>_caption.md; English, no title/footnotes inside the image):
   retention_vs_occupancy      retention at 1 year vs occupancy, one panel per task, one line per device model
   networks_above_threshold    fraction of networks keeping >= 90 % of their noise-free return, vs occupancy
   retention_heatmap           retention over time x occupancy (devices in rows, tasks in columns)
@@ -38,7 +38,7 @@ from matplotlib.ticker import FixedLocator, FixedFormatter
 from plot_style import setup_publication_style
 
 DATA = _SCRIPT_DIR / "wmax_study"
-OUT = _ROOT / "graficos" / "paper" / "occupancy"
+OUT = _ROOT / "graficos" / "paper" / "memristors" / "occupancy"
 YEAR = 31536000.0
 TASKS = [("car", "CarTrack"), ("disc_mc", "Mountain Car"), ("acrobot", "Acrobot")]
 DEVICES = ["pcm", "reramcmo_falcone"]

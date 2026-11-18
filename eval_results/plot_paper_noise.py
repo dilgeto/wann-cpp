@@ -13,7 +13,7 @@ The two sources are merged into eval_results/paper_noise/<task>_merged/ (cache) 
 per-network aggregation as stats_noise_replicas.py (WANN: one ODIN level per network chosen noise-free with the
 reserved seed 999; retention = (return - floor) / (noise-free return - floor) x 100).
 
-Figures (graficos/paper/superseded/noise_odin_as_is/<name>.png + <name>_caption.md; English; no title/footnotes inside the image):
+Figures (graficos/paper/memristors/superseded/noise_odin_as_is/<name>.png + <name>_caption.md; English; no title/footnotes inside the image):
   noise_intensity   retention vs. noise scale (devices in rows, tasks in columns)
   noise_drift       retention vs. time since programming, noise scale 1
   noise_boxplots    distribution over networks at noise scales 1 and 3 (stars: Mann-Whitney vs. WANN, BH-FDR)
@@ -44,8 +44,8 @@ from stats_noise_replicas import network_table
 
 OLD = _SCRIPT_DIR            # eval_results/<task>_replicas (PCM + noise-free)
 NEW = _SCRIPT_DIR / "paper_noise"   # eval_results/paper_noise/<task>_replicas (ReRAM-CMO, Falcone range)
-OUT = _ROOT / "graficos" / "paper" / "superseded" / "noise_odin_as_is"
-TASKS = [("car", "CarTrack"), ("disc_mc", "Mountain Car"), ("acrobot", "Acrobot")]
+OUT = _ROOT / "graficos" / "paper" / "memristors" / "superseded" / "noise_odin_as_is"
+TASKS = [("acrobot", "Acrobot"), ("disc_mc", "Mountain Car"), ("car", "Racing Car")]
 SRC = ["wann", "sgrl_con", "sgrl_neu"]
 LABEL = {"wann": "WANN", "sgrl_con": "SGRL (same connections)", "sgrl_neu": "SGRL (same neurons)", "sgrl_64": "SGRL 64×64"}
 STYLE = {"wann": dict(color="#D55E00", marker="o"), "sgrl_con": dict(color="#CC79A7", marker="s"),
@@ -171,8 +171,8 @@ def n_nets(d):
     return out
 
 
-COMMON = ("Retention = (return − floor)/(noise-free return − floor) × 100 for each trained network, with floors 0 / −200 / "
-          "−500 (CarTrack / Mountain Car / Acrobot); a network is the unit of replication (n = 11 per method and "
+COMMON = ("Retention = (return − floor)/(noise-free return − floor) × 100 for each trained network, with floors −500 / −200 / "
+          "0 (Acrobot / Mountain Car / Racing Car); a network is the unit of replication (n = 11 per method and "
           "task), each network averaged over 30 chips × 1 read. WANN: one ODIN integer level "
           "(1–7, weight = level, w_max = 7) per network, chosen noise-free with an independent seed; SGRL: float32 "
           "(not quantized) networks with the same number of connections or of neurons as the WANN network. Devices: PCM "

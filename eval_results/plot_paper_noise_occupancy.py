@@ -13,7 +13,7 @@ Occupancy = fraction of g_max at which the programmed weight sits. WANN: every w
 (chosen noise-free), written at that fraction of g_max (w_max = weight / occupancy). SGRL: the largest |w| of each layer
 at that fraction (all other weights lower). Retention = (return - floor)/(noise-free return - floor) x 100 per network.
 
-Outputs (graficos/paper/noise_occupancy/):
+Outputs (graficos/paper/memristors/noise_occupancy/):
   noise_vs_occupancy_pcm.png, noise_vs_occupancy_reramcmo.png   retention vs. occupancy for each noise type (columns)
                                                                 and task (rows): the figure that shows how occupancy
                                                                 interacts with each mechanism
@@ -187,7 +187,7 @@ def main():
     ap.add_argument("--old-dir", type=Path, default=_SCRIPT_DIR, help="folder with <task>_replicas (PCM, SGRL at 100%%)")
     ap.add_argument("--cmo-dir", type=Path, default=_SCRIPT_DIR / "paper_noise", help="folder with <task>_replicas (CMO, SGRL at 100%%)")
     ap.add_argument("--cache-dir", type=Path, default=None)
-    ap.add_argument("--out", type=Path, default=_ROOT / "graficos" / "paper" / "noise_occupancy")
+    ap.add_argument("--out", type=Path, default=_ROOT / "graficos" / "paper" / "memristors" / "noise_occupancy")
     ap.add_argument("--occupancies", type=float, nargs="+", default=OCCS_ALL)
     ap.add_argument("--no-per-occupancy", action="store_true", help="only the occupancy-vs-noise summary figures")
     a = ap.parse_args()

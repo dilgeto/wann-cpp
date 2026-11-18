@@ -47,7 +47,7 @@
 //       [--n-chips N] [--reads-per-chip N] [--t-inference t1,t2,...] \
 //       [--w-max V] [--noise-scale F] \
 //       [--prog-noise-scale F] [--read-noise-scale F] [--drift-scale F] \
-//       [--n-levels N] [--reramcmo-g-max V] [--reramcmo-g-min V] \
+//       [--n-levels N] [--reramcmo-g-max V] [--reramcmo-g-min V] [--reramcmo-mapping legacy|pair|single] \
 //       --seeds s0,s1,...
 
 #include "../include/wann/Hyperparams.h"
@@ -157,6 +157,9 @@ struct Args {
     // propios si se tienen mediciones reales.
     double reramcmoGMax = 25.0;
     double reramcmoGMin = 1.0;
+    // Mapeo peso->conductancia de ReRAM-CMO (ver CmoMapping en memristor_noise.hpp): legacy = histórico (def.),
+    // pair = par diferencial con g_min en ambas ramas, single = un dispositivo afín (como aihwkit).
+    std::string reramcmoMapping = "legacy";
 };
 
 void printUsage(const char* argv0) {
@@ -167,7 +170,7 @@ void printUsage(const char* argv0) {
                  "[--n-chips N] [--reads-per-chip N] [--t-inference t1,t2,...] "
                  "[--w-max V] [--noise-scale F] "
                  "[--prog-noise-scale F] [--read-noise-scale F] [--drift-scale F] "
-                 "[--n-levels N] [--reramcmo-g-max V] [--reramcmo-g-min V] "
+                 "[--n-levels N] [--reramcmo-g-max V] [--reramcmo-g-min V] [--reramcmo-mapping legacy|pair|single] "
                  "--seeds s0,s1,...\n";
 }
 
@@ -196,6 +199,7 @@ int main(int argc, char* argv[]) {
         else if (arg == "--n-levels"         && i+1 < argc) { a.nLevels        = std::stoi(argv[++i]); }
         else if (arg == "--reramcmo-g-max"   && i+1 < argc) { a.reramcmoGMax   = std::stod(argv[++i]); }
         else if (arg == "--reramcmo-g-min"   && i+1 < argc) { a.reramcmoGMin   = std::stod(argv[++i]); }
+        else if (arg == "--reramcmo-mapping" && i+1 < argc) { a.reramcmoMapping = argv[++i]; }
         else { printUsage(argv[0]); return 1; }
     }
 
@@ -294,6 +298,10 @@ int main(int argc, char* argv[]) {
     memnoise::ReRamCMODeviceModel dmReramCmo;
     dmReramCmo.g_max = a.reramcmoGMax;
     dmReramCmo.g_min = a.reramcmoGMin;
+    if      (a.reramcmoMapping == "legacy") dmReramCmo.mapping = memnoise::CmoMapping::Legacy;
+    else if (a.reramcmoMapping == "pair")   dmReramCmo.mapping = memnoise::CmoMapping::Pair;
+    else if (a.reramcmoMapping == "single") dmReramCmo.mapping = memnoise::CmoMapping::Single;
+    else { std::cerr << "--reramcmo-mapping debe ser legacy, pair o single.\n"; return 1; }
     dmReramCmo.prog_noise_scale = progScale;
     dmReramCmo.read_noise_scale = readScale;
     dmReramCmo.drift_scale      = driftScale;
