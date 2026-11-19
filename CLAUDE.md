@@ -510,8 +510,12 @@ Sweeps: `MAPPING=pair|single bash eval_results/run_paper_noise_cmo_mapping.sh`. 
 aihwkit (clone of IBM/aihwkit, noise models are pure PyTorch): `python eval_results/compare_with_aihwkit.py
 --aihwkit-src <clone>` compares per-weight mean/sd of aihwkit's `ReRamCMONoiseModel` (single, and pair via
 `SinglePairConductanceConverter`) and `PCMLikeNoiseModel` against `sgrl/noise.py` and `build/memnoise_stats` (C++),
-mechanism by mechanism (prog/read/drift/all) and over times; exit 1 lists mismatches. The harness was validated only
-against a hand-written stand-in of aihwkit (it catches a wrong acceptance window or drift), never against the real thing.
+mechanism by mechanism (prog/read/drift/all) and over times; exit 1 lists mismatches. Validated 2026-11-18 on the
+cluster against the real aihwkit source (commit `86681d9`): full run, N=3000, 4 times, SG + C++ = 240/240 match
+(max |z| 3.68); digit-for-digit identical to a hand-written stand-in with the same seeds. That run was at occupancy 100 %
+(`w_max = max|w|`) only; occupancy < 1 is our own extension (aihwkit has none), checked by `--occupancy-check
+[--skip-base]`: aihwkit itself computes the occupancy-`o` mapping when given dummy weights that widen the range
+(`max|w|/o` for pair/PCM, `centre ± radius/o` for single), and only the real weights are compared.
 Still deliberately different: absent connections have no device, no drift compensation, no `w_noise`, no periphery.
 
 Left deliberately unimplemented, pick up if it becomes the priority:

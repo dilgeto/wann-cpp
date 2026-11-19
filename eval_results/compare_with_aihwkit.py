@@ -13,6 +13,9 @@ Como los generadores aleatorios son distintos no se compara muestra a muestra:
     estándar y el cociente de desviaciones está en 1 ± 5.5·sqrt((curtosis-1)/(2(N-1))) (≈ ±10 % si es gaussiana, N = 3000;
     más ancho donde la deriva aprieta los dispositivos contra g_min/g_max y casi todas las muestras caen en un punto). Se prueba cada mecanismo por separado (solo programación,
     solo lectura, solo deriva y los tres juntos), varios tiempos y matrices tipo SG (densa, con ceros) y tipo WANN (±L).
+  * ocupación (--occupancy-check): los barridos usan ocupaciones 6.25-100 % de g_max, una extensión nuestra que aihwkit no tiene
+    (w_max = max|w|/occ). Se comprueba haciendo que aihwkit calcule ese mismo mapeo con pesos ficticios que ensanchan el rango
+    (augment_for_occupancy) y comparando solo los pesos reales.
   * informativo: `apply_drift_noise` de aihwkit (flujo program_analog_weights -> drift_analog_weights) vuelve a calcular
     el mínimo/máximo del tensor ya perturbado; se mide cuánto se aparta ese camino de `apply_noise`.
 
@@ -25,6 +28,7 @@ Ejecuta código del repo de aihwkit que indiques: usá uno que hayas clonado vos
 Uso (desde la raíz del repo):
   python eval_results/compare_with_aihwkit.py --aihwkit-src ~/aihwkit [--sgrl-repo ../surrogate-gradient-rl]
         [--memnoise-bin build/memnoise_stats] [--n 3000] [--quick] [--models reramcmo pcm] [--out resultados.csv]
+        [--occupancy-check [--occupancies 0.0625 0.125 0.25 0.5] [--skip-base]]
 Códigos de salida: 0 = todo coincide, 1 = hay diferencias (se listan), 2 = falta algo (aihwkit, SG o el binario).
 Solo evalúa pesos sueltos: no simula redes ni entrena.
 """
@@ -131,18 +135,39 @@ def aihwkit_model(kind, mapping, scales, classes):
     return m
 
 
-def sample_aihwkit(model, W, t, n, seed, two_step=False):
+def augment_for_occupancy(W, kind, mapping, occ):
+    """aihwkit no tiene "ocupación" (siempre mapea el máximo a g_max), pero se puede hacer que ÉL calcule el mapeo de
+    ocupación `occ` añadiendo pesos ficticios que ensanchen el rango, y descartar su lectura:
+      * pair / PCM : un peso ficticio de magnitud max|w|/occ  -> escala = (g_max-g_min)·occ/max|w|, igual que w_max = max|w|/occ.
+      * single     : pesos ficticios en c ± R/occ (c = centro y R = radio de [min W, max W]) -> el rango [c-R/occ, c+R/occ] va a
+                     [g_min, g_max], o sea g = g_c + (w-c)·occ/(2R)·(g_max-g_min): el mapeo centrado que usamos (en pesos
+                     simétricos, ±max|w|/occ)."""
+    import torch
+    if occ >= 1.0:
+        return W
+    if kind == "pcm" or mapping == "pair":
+        extra = [float(W.abs().max()) / occ]
+    else:
+        lo, hi = float(W.min()), float(W.max())
+        c, R = 0.5 * (lo + hi), 0.5 * (hi - lo)
+        extra = [c - R / occ, c + R / occ]
+    return torch.cat([W, torch.tensor([extra], dtype=W.dtype)], 1)
+
+
+def sample_aihwkit(model, W, t, n, seed, two_step=False, aug=None):
     import torch
     torch.manual_seed(seed)
-    out = np.empty((n, W.numel()))
+    Win = W if aug is None else aug
+    k = W.numel()
+    out = np.empty((n, k))
     try:
         for i in range(n):
             if two_step:
-                wp, nu = model.apply_programming_noise(W.clone())
+                wp, nu = model.apply_programming_noise(Win.clone())
                 res = model.apply_drift_noise(wp, nu, t)
             else:
-                res = model.apply_noise(W.clone(), t)
-            out[i] = res.reshape(-1).double().numpy()
+                res = model.apply_noise(Win.clone(), t)
+            out[i] = res.reshape(-1)[:k].double().numpy()
     except Exception as e:  # noqa: BLE001
         sys.exit(f"El propio código de aihwkit falló al muestrear ({type(e).__name__}: {e}).\n"
                  f"  Suele ser incompatibilidad de versiones (aihwkit aplica numpy.log10/sqrt a tensores de torch).\n"
@@ -150,7 +175,7 @@ def sample_aihwkit(model, W, t, n, seed, two_step=False):
     return out
 
 
-def sample_sgrl(N, kind, mapping, scales, W, t, n, seed):
+def sample_sgrl(N, kind, mapping, scales, W, t, n, seed, occ=1.0):
     import torch
     p, r, d = scales
     if kind == "pcm":
@@ -159,7 +184,7 @@ def sample_sgrl(N, kind, mapping, scales, W, t, n, seed):
         m = N.ReRamCMOModel(g_max=CMO_GMAX, g_min=CMO_GMIN, prog_noise_scale=p, read_noise_scale=r, drift_scale=d,
                             mapping=mapping)
     gen = torch.Generator().manual_seed(seed)
-    wmax = float(W.abs().max())
+    wmax = float(W.abs().max()) / occ
     out = np.empty((n, W.numel()))
     for i in range(n):
         x = N.Crossbar(W, wmax, m)
@@ -168,9 +193,9 @@ def sample_sgrl(N, kind, mapping, scales, W, t, n, seed):
     return out
 
 
-def stats_cpp(binary, kind, mapping, scales, W, t, n, seed):
+def stats_cpp(binary, kind, mapping, scales, W, t, n, seed, occ=1.0):
     wl = ",".join(f"{v:.9g}" for v in W.reshape(-1).tolist())
-    cmd = [str(binary), "--model", "pcm" if kind == "pcm" else "reramcmo", "--weights", wl, "--w-max", f"{float(W.abs().max()):.9g}",
+    cmd = [str(binary), "--model", "pcm" if kind == "pcm" else "reramcmo", "--weights", wl, "--w-max", f"{float(W.abs().max()) / occ:.9g}",
            "--t", repr(t), "--n", str(n), "--prog", str(scales[0]), "--read", str(scales[1]), "--drift", str(scales[2]),
            "--seed", str(seed)]
     if kind != "pcm":
@@ -216,6 +241,11 @@ def main():
     ap.add_argument("--models", nargs="+", default=["reramcmo", "pcm"], choices=["reramcmo", "pcm"])
     ap.add_argument("--no-cpp", action="store_true")
     ap.add_argument("--no-sgrl", action="store_true")
+    ap.add_argument("--occupancy-check", action="store_true",
+                    help="además (o solo, con --skip-base) prueba ocupaciones < 1, la extensión nuestra que usan los barridos: "
+                         "aihwkit calcula el mismo mapeo añadiendo pesos ficticios (ver augment_for_occupancy)")
+    ap.add_argument("--occupancies", type=float, nargs="+", default=[0.0625, 0.125, 0.25, 0.5])
+    ap.add_argument("--skip-base", action="store_true", help="omitir la grilla base (ocupación 1)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default=None, help="CSV con todos los casos")
     a = ap.parse_args()
@@ -234,33 +264,39 @@ def main():
     cases = []
     for kind in a.models:
         for mapping in (("single", "pair") if kind == "reramcmo" else ("pair",)):
-            for wk, mech, t in itertools.product(("sg", "wann"), MECHS, times):
-                cases.append((kind, mapping, wk, mech, t))
+            if not a.skip_base:
+                for wk, mech, t in itertools.product(("sg", "wann"), MECHS, times):
+                    cases.append((kind, mapping, wk, mech, t, 1.0))
+            if a.occupancy_check:
+                for occ, wk, mech, t in itertools.product(a.occupancies, ("sg", "wann"), ("none", "prog", "all"), (1.0, 31536000.0)):
+                    cases.append((kind, mapping, wk, mech, t, occ))
+    if not cases:
+        sys.exit("No hay casos: --skip-base sin --occupancy-check")
     print(f"{len(cases)} casos, {n} muestras por caso y método\n")
-    print(f"{'caso':44s} {'vs':6s} {'ok':3s} {'max|z|':>7s} {'sd min..max':>13s} {'max|Δ|/max|w|':>14s}")
+    print(f"{'caso':52s} {'vs':6s} {'ok':3s} {'max|z|':>7s} {'sd min..max':>13s} {'max|Δ|/max|w|':>14s}")
 
     rows, bad = [], []
-    for ci, (kind, mapping, wk, mech, t) in enumerate(cases):
+    for ci, (kind, mapping, wk, mech, t, occ) in enumerate(cases):
         W = test_weights(wk)
         scales = MECHS[mech]
         det = mech == "none"
         model = aihwkit_model(kind, mapping, scales, classes)
-        ref = sample_aihwkit(model, W, t, n, a.seed + ci)
+        ref = sample_aihwkit(model, W, t, n, a.seed + ci, aug=augment_for_occupancy(W, kind, mapping, occ))
         m_a, s_a = ref.mean(0), ref.std(0, ddof=1)
         with np.errstate(divide="ignore", invalid="ignore"):
             kurt = np.where(s_a > 1e-12, ((ref - m_a) ** 4).mean(0) / np.maximum(ref.var(0), 1e-300) ** 2, 3.0)
         scale = float(W.abs().max())
-        label = f"{kind}/{mapping}/{wk}/{mech}/t={t:g}"
+        label = f"{kind}/{mapping}/{wk}/{mech}/t={t:g}" + (f"/occ={occ:g}" if occ < 1 else "")
         results = []
         if N is not None:
-            o = sample_sgrl(N, kind, mapping, scales, W, t, n, a.seed + 1000 + ci)
+            o = sample_sgrl(N, kind, mapping, scales, W, t, n, a.seed + 1000 + ci, occ)
             results.append(("SG", m_a, s_a, o.mean(0), o.std(0, ddof=1)))
         if not a.no_cpp:
-            cm, cs = stats_cpp(binary, kind, mapping, scales, W, t, n, a.seed + 2000 + ci)
+            cm, cs = stats_cpp(binary, kind, mapping, scales, W, t, n, a.seed + 2000 + ci, occ)
             results.append(("C++", m_a, s_a, cm, cs))
         for who, ma, sa, mb, sb in results:
             ok, zmax, r0, r1, dmax = compare(mb, sb, ma, sa, n, scale, det, kurt)  # (nuestro) vs (aihwkit)
-            print(f"{label:44s} {who:6s} {'ok' if ok else 'NO':3s} {zmax:7.2f} {r0:6.3f}..{r1:5.3f} {dmax:14.2e}")
+            print(f"{label:52s} {who:6s} {'ok' if ok else 'NO':3s} {zmax:7.2f} {r0:6.3f}..{r1:5.3f} {dmax:14.2e}")
             rows.append(dict(case=label, vs=who, ok=ok, max_z=zmax, sd_ratio_min=r0, sd_ratio_max=r1, max_dmean_rel=dmax))
             if not ok:
                 bad.append((label, who))
