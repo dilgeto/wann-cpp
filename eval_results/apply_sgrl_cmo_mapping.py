@@ -6,7 +6,8 @@
   python eval_results/apply_sgrl_cmo_mapping.py [ruta/al/repo/surrogate-gradient-rl] [--check] [--revert-info]
 
 * Funciona con o sin sgrl_occupancy.patch aplicado (las anclas no tocan sus líneas).
-* Idempotente y por pasos: paso 1 = mapeo pair/single; paso 2 = réplica exacta de aihwkit en pair/single (ventana de aceptación
+* Idempotente y por pasos: paso 0 = ocupación (--occupancy, lo que hacía sgrl_occupancy.patch, que ya NO hace falta: ese parche
+  falla si el mapeo ya está aplicado); paso 1 = mapeo pair/single; paso 2 = réplica exacta de aihwkit en pair/single (ventana de aceptación
   del ruido de programación y sin recorte de g_prog). Aplica solo lo que falta, así que sirve también si ya corriste la versión
   anterior del script (solo paso 1).
 * Todo o nada: si falta o se repite alguna ancla no escribe nada y dice cuál.
@@ -101,6 +102,27 @@ EDITS = [
         return (gp - gn) * (self.w_max / self.span)"""),
 ]
 
+# Paso 0: ocupación (equivale a sgrl_occupancy.patch, pero por anclas: ese parche solo aplica ANTES del mapeo y falla si el
+# mapeo ya está puesto). Agrega NoiseConfig.occupancy y --occupancy: w_max efectivo = w_max / occupancy.
+EDITS_OCC = [
+    ("NoiseConfig.occupancy",
+     """    w_max: Optional[float] = None  # |w| que mapea a g_max; None = max|W| de cada capa
+""",
+     """    w_max: Optional[float] = None  # |w| que mapea a g_max; None = max|W| de cada capa
+    occupancy: float = 1.0  # fracción de g_max a la que queda el mayor |w| de cada capa (w_max efectivo = w_max / occupancy)
+"""),
+    ("add_noise_args --occupancy",
+     """    g.add_argument(f"--{prefix}w-max", type=float, default=None, help="def. max|W| de cada capa")
+""",
+     """    g.add_argument(f"--{prefix}w-max", type=float, default=None, help="def. max|W| de cada capa")
+    g.add_argument(f"--{prefix}occupancy", type=float, default=d.occupancy,
+                   help="fracción de g_max a la que queda el mayor |w| de cada capa (1 = todo el rango, def.)")
+"""),
+    ("NoisyLinear.program",
+     """        w_max = cfg.w_max if cfg.w_max else float(w.abs().max().clamp_min(1e-8))""",
+     """        w_max = (cfg.w_max if cfg.w_max else float(w.abs().max().clamp_min(1e-8))) / cfg.occupancy"""),
+]
+
 # Paso 2 (réplica exacta de aihwkit con los mapeos pair/single; "legacy" queda bit a bit como antes). Las líneas que toca
 # existen igual con o sin el paso 1, así que se aplica sobre cualquiera de los dos estados.
 EDITS_V2 = [
@@ -133,8 +155,12 @@ def main():
     if not path.is_file():
         sys.exit(f"No existe {path}")
     s = path.read_text(encoding="utf-8")
-    occ = "occupancy" in s
-    print(f"{path}\n  sgrl_occupancy.patch: {'aplicado' if occ else 'NO aplicado'} (necesario para run_paper_noise_*.sh, no para este script)")
+    print(f"{path}")
+    occ_marks = ["occupancy: float" in s, "--{prefix}occupancy" in s, "/ cfg.occupancy" in s]
+    v0 = all(occ_marks)
+    if any(occ_marks) and not v0:
+        sys.exit("  ocupación aplicada A MEDIAS (hay restos pero no todo). Restaurá el archivo (git checkout sgrl/noise.py) "
+                 "y vuelve a correr.")
     v1 = "reramcmo_mapping" in s and "g_offset" in s and "self.single" in s
     v2 = V2_MARK in s
     if not v1 and ("reramcmo_mapping" in s or "self.single" in s):
@@ -142,8 +168,9 @@ def main():
                  "y vuelve a correr.")
     if v2 and not v1:
         sys.exit("  paso 2 presente sin el paso 1: restaurá el archivo (git checkout sgrl/noise.py) y vuelve a correr.")
-    todo = ([] if v1 else EDITS) + ([] if v2 else EDITS_V2)
-    print(f"  paso 1 (mapeo pair/single): {'ya aplicado' if v1 else 'pendiente'};  "
+    todo = ([] if v0 else EDITS_OCC) + ([] if v1 else EDITS) + ([] if v2 else EDITS_V2)
+    print(f"  paso 0 (ocupación): {'ya aplicado' if v0 else 'pendiente'};  "
+          f"paso 1 (mapeo pair/single): {'ya aplicado' if v1 else 'pendiente'};  "
           f"paso 2 (réplica exacta de aihwkit en pair/single): {'ya aplicado' if v2 else 'pendiente'}")
     if not todo:
         print("  nada que hacer")

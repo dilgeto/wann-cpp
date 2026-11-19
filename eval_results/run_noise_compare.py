@@ -920,7 +920,7 @@ def main():
     g.add_argument("--occupancies", type=float, nargs="+", default=None,
                    help="--replicas: fracciones de g_max (p. ej. 0.0625 0.125 0.25 0.5 1) a las que se guarda el peso de cada "
                         "red (protocolo aparte: solo el nivel ODIN elegido de cada WANN y las variantes con/neu de SGRL; "
-                        "usar --devices pcm reramcmo y una --out-dir propia). SGRL requiere el parche sgrl_occupancy.patch")
+                        "usar --devices pcm reramcmo y una --out-dir propia). SGRL requiere apply_sgrl_cmo_mapping.py (ocupación incluida)")
     g.add_argument("--levels-from", default="eval_results",
                    help="--occupancies: carpeta con <tarea>_replicas/{sweep_all,models}.csv ya calculados, de donde sale el "
                         "nivel ODIN elegido sin ruido de cada red (def.: eval_results)")
@@ -1026,7 +1026,8 @@ def main():
                            capture_output=True, text=True)
         if "--occupancy" not in h.stdout:
             sys.exit(f"Error: {a.sg_repo}/scripts/noise_eval.py no tiene --occupancy. Aplicá el parche:\n"
-                     f"  (cd {a.sg_repo} && git apply {REPO / 'eval_results' / 'sgrl_occupancy.patch'})")
+                     f"  python {REPO / 'eval_results' / 'apply_sgrl_cmo_mapping.py'} {a.sg_repo}   (aplica ocupación y mapeo CMO; "
+                     f"sgrl_occupancy.patch ya no hace falta y falla si el mapeo está aplicado)")
     if a.reramcmo_mapping != "legacy" and any(m["source"].startswith("sgrl") for c in ctxs for m in c.models):
         h = subprocess.run([a.sg_python, str(Path(a.sg_repo).resolve() / "scripts" / "noise_eval.py"), "--help"],
                            capture_output=True, text=True)
