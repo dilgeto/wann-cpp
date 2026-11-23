@@ -77,13 +77,20 @@ def build(task, occ, a):
     frames.append(ns[ns.model_id.isin(wm.model_id)].assign(source="wann"))
     models.append(wm.assign(source="wann")[["model_id", "source", "replica_seed"]])
     have_cmo = bool((ns.noise_model == "reramcmo").any())
+    ac = None
+    if a.cmo_aihwkit_dir is not None:      # ReRAM-CMO from the aihwkit-range sweep (all methods, every occupancy, 100 % included)
+        ac = a.cmo_aihwkit_dir / f"{task}_replicas"
+        if not (ac / "sweep_all.csv").is_file():
+            sys.exit(f"No data in {ac}. Run eval_results/run_paper_noise_cmo_mapping.sh (on the cluster) first.")
+        have_cmo = True
+        frames[0] = frames[0][frames[0].noise_model.isin(["none", "pcm"])]
     has64 = bool((nm.source == "sgrl_64_occ").any())
     for s in ("sgrl_con", "sgrl_neu") + (("sgrl_64",) if has64 else ()):
         if np.isclose(occ, 1.0) and s not in FULL_FROM_OCC:
             om = pd.read_csv(old / "models.csv")
             om = om[om.source == s]
             parts = [pd.read_csv(old / "sweep_all.csv").query("source == @s and noise_model in ['none', 'pcm']")]
-            if (cmo / "sweep_all.csv").is_file():
+            if ac is None and (cmo / "sweep_all.csv").is_file():
                 cs = pd.read_csv(cmo / "sweep_all.csv")
                 parts.append(cs[(cs.source == s) & (cs.noise_model == "reramcmo")])
             frames.append(pd.concat(parts).assign(source=s))
@@ -93,8 +100,20 @@ def build(task, occ, a):
             if sm.empty:
                 print(f"[{task}] no {s} data at occupancy {occ * 100:g}%: that method is skipped there.")
                 continue
-            frames.append(ns[ns.model_id.isin(sm.model_id)].assign(source=s))
+            f = ns[ns.model_id.isin(sm.model_id)]
+            frames.append((f[f.noise_model.isin(["none", "pcm"])] if ac is not None else f).assign(source=s))
             models.append(sm.assign(source=s)[["model_id", "source", "replica_seed"]])
+    if ac is not None:
+        cs, cm = pd.read_csv(ac / "sweep_all.csv"), pd.read_csv(ac / "models.csv")
+        for s, v in (("wann", "wann_occ"),) + tuple((k, VARIANT[k]) for k in VARIANT):
+            sm = cm[(cm.source == v) & np.isclose(cm.occupancy.astype(float), occ)]
+            if sm.empty:
+                print(f"[{task}] no {s} ReRAM-CMO data at occupancy {occ * 100:g}%: skipped there.")
+                continue
+            # own ids ("cmo_..."): the noise-free rows of this dataset are the baseline of its own ReRAM-CMO rows
+            f = cs[cs.model_id.isin(sm.model_id)].assign(source=s, model_id=lambda x: "cmo_" + x.model_id)
+            frames.append(f)
+            models.append(sm.assign(source=s, model_id="cmo_" + sm.model_id)[["model_id", "source", "replica_seed"]])
     df = pd.concat(frames, ignore_index=True)[KEEP]
     dst = a.cache_dir / f"{task}_occ{tag(occ)}"
     dst.mkdir(parents=True, exist_ok=True)
@@ -123,7 +142,10 @@ def common_for(occ=None):
     mid = (f"WANN: the ODIN integer level of each network (chosen noise-free with an independent seed) with every weight "
            f"written {at} (w_max = weight / occupancy); SGRL: float32 (not quantized) networks with the same number of "
            f"connections or of neurons as the WANN network{extra}, with the largest |w| of each layer written {at}. ")
-    return c[:i] + mid + c[j:]
+    tail = c[j:]
+    if P.CMO_MAPPING:
+        tail = P.CMO_DEVICES[P.CMO_MAPPING]
+    return c[:i] + mid + tail
 
 
 # ------------------------------------------------------------------------------------------------ summary figure
@@ -131,6 +153,26 @@ COND = {"pcm": [("prog", 3.0, 86400.0, "Programming noise only (scale 3)"), ("re
                 ("drift", 3.0, 86400.0, "Drift only (scale 3, 1 day)"), ("all", 1.0, YEAR, "All noise, 1 year (scale 1)")],
         "reramcmo": [("all", 0.0, 1.0, "No noise (g_min floor only)"), ("prog", 3.0, 1.0, "Programming noise only (scale 3)"),
                      ("read", 3.0, 1.0, "Read noise only (scale 3)"), ("all", 1.0, YEAR, "All noise, 1 year (scale 1)")]}
+
+
+def set_cmo_mapping(mapping):
+    """Switch the ReRAM-CMO wording (captions, panel titles) to the aihwkit-range sweep of that mapping."""
+    P.CMO_MAPPING = mapping
+    if mapping:
+        COND["reramcmo"][0] = ("all", 0.0, 1.0, "No noise (scale 0)")
+
+
+def add_cmo_args(ap):
+    ap.add_argument("--cmo-aihwkit-dir", type=Path, default=None,
+                    help="ReRAM-CMO from eval_results/paper_noise_occ_<pair|single>_aihwkit (run_paper_noise_cmo_mapping.sh): "
+                         "all methods at every occupancy; PCM keeps coming from --occ-dir/--old-dir. Needs --cmo-mapping")
+    ap.add_argument("--cmo-mapping", choices=["pair", "single"], default=None, help="mapping of --cmo-aihwkit-dir (for the captions)")
+
+
+def check_cmo_args(ap, a):
+    if (a.cmo_aihwkit_dir is None) != (a.cmo_mapping is None):
+        ap.error("--cmo-aihwkit-dir and --cmo-mapping go together")
+    set_cmo_mapping(a.cmo_mapping)
 
 
 def summary(ds, occs, a):
@@ -189,9 +231,11 @@ def main():
     ap.add_argument("--cache-dir", type=Path, default=None)
     ap.add_argument("--out", type=Path, default=_ROOT / "graficos" / "paper" / "memristors" / "noise_occupancy")
     ap.add_argument("--occupancies", type=float, nargs="+", default=OCCS_ALL)
+    add_cmo_args(ap)
     ap.add_argument("--no-per-occupancy", action="store_true", help="only the occupancy-vs-noise summary figures")
     a = ap.parse_args()
-    a.cache_dir = a.cache_dir or a.occ_dir / "merged"
+    check_cmo_args(ap, a)
+    a.cache_dir = a.cache_dir or (a.cmo_aihwkit_dir or a.occ_dir) / "merged"
     setup_publication_style()
     P.COMMON_ORIG = P.COMMON
     nm0 = pd.read_csv(a.occ_dir / 'car_replicas' / 'models.csv')

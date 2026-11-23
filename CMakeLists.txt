@@ -487,6 +487,23 @@ target_link_libraries(wann_eval_weights_disc_mc PRIVATE
     OpenMP::OpenMP_CXX)
 
 # ---------------------------------------------------------------------------
+# Executables: wann_replay_weights_{acrobot,car,disc_mc} – exportan UN episodio
+# (peso compartido y seed elegidos) de una red guardada a CSV de trayectoria.
+# Solo evaluación. Misma razón de un-binario-por-tarea que wann_eval_weights_*.
+# ---------------------------------------------------------------------------
+foreach(RW_TASK ACROBOT:acrobot:SnnAcrobotTask CAR:car:SnnCarTask DISC_MC:disc_mc:SnnDiscMCTask)
+    string(REPLACE ":" ";" RW_PARTS "${RW_TASK}")
+    list(GET RW_PARTS 0 RW_DEF)
+    list(GET RW_PARTS 1 RW_NAME)
+    list(GET RW_PARTS 2 RW_SRC)
+    add_executable(wann_replay_weights_${RW_NAME} src/main_replay_weights.cpp src/${RW_SRC}.cpp)
+    target_compile_definitions(wann_replay_weights_${RW_NAME} PRIVATE EVAL_TASK_${RW_DEF})
+    target_include_directories(wann_replay_weights_${RW_NAME} PRIVATE include)
+    target_link_libraries(wann_replay_weights_${RW_NAME} PRIVATE
+        wann_lib snn_engine_imp snn_encoding_imp snn_core_imp rl_tools_iface OpenMP::OpenMP_CXX)
+endforeach()
+
+# ---------------------------------------------------------------------------
 # BipedalWalker(Hardcore)-v3 – port a C++ sin Box2D que vive en snn-simulator
 # (include/rl/environments/bipedal_walker/, solo cabeceras, ya cubierto por las
 # include dirs de snn_*_imp). Hardcore por defecto; bipedal_hardcore=false

@@ -234,6 +234,15 @@ a fixed `1.0` in `SnnCarTask.cpp`), and do not add TTFS's `t_max_ratio` alongsid
 `snn_window_ms` either (`t_max = (window-dt)*t_max_ratio` is the same kind of product;
 `t_max_ratio` stays fixed at `1.0`, not exposed as a hyperparameter).
 
+**Acrobot shared-weight table (changed 2026-11-23).** `SnnAcrobotTask::WEIGHT_VALS` is now
+`{0.5, 1, 2, 3, 5, 8}` (same as Car / Mountain Car); it used to be `{0.5, 1, 1.5, 2, 2.5, 3}`. Reason: the old
+nets were only required to work up to 3.0 and collapse at weight 4 (`eval_results/acrobot_replicas`), which made
+them very fragile to per-synapse memristor noise. Consequence: every Acrobot run/result produced before this
+(`screening_*/acrobot_*` without the `_w8` tag, `log/full_p3_acrobot_*`) has `weight_index`/`.wi` pointing into the
+*old* table — evaluate those nets with `wann_eval_weights_acrobot --weights 0.5,1,1.5,2,2.5,3` (the
+`eval_p3_weights.py` / `weight_sweep_eval.py` tables were switched to the new values, so re-running them on old
+Acrobot run_keys gives wrong `weight_value` labels). New search: `run_optuna_acrobot_w8.sh` (tag `w8`).
+
 **Logging** (`src/DataGatherer.cpp`): appends per-generation population statistics,
 writes `<prefix>_best.gen`/`.wi` (best individual + which shared-weight index won)
 and Pareto snapshots consumed by `graph.py`/`graph_network.py`. Mirrors a Python

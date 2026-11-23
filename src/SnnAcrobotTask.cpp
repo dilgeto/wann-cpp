@@ -66,8 +66,13 @@ std::unique_ptr<Encoder> makeEncoder(wann::SnnEncoder type, uint32_t seed, doubl
 
 namespace wann {
 
+// Shared-weight grid. Until 2026-11-23 this was {0.5, 1.0, 1.5, 2.0, 2.5, 3.0}: the evolved nets were then only
+// ever required to work up to 3.0 and collapsed (-500) at weight 4 (see eval_results/acrobot_replicas), which made
+// them far more fragile to per-synapse perturbation than Car / Mountain Car. Now the same grid as those tasks.
+// Runs/results produced with the old grid index into a different table: evaluate them with
+// `wann_eval_weights_acrobot --weights 0.5,1,1.5,2,2.5,3`.
 const double SnnAcrobotTask::WEIGHT_VALS[N_WEIGHTS] = {
-    0.5, 1.0, 1.5, 2.0, 2.5, 3.0
+    0.5, 1.0, 2.0, 3.0, 5.0, 8.0
 };
 
 SnnAcrobotTask::SnnAcrobotTask(const Hyperparams& hyp)

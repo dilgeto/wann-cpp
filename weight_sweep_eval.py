@@ -45,7 +45,7 @@ TASK_EVAL: dict[str, dict] = {
     "acrobot": {
         "executable":  "./build/wann_acrobot_eval",
         "base_config": "p/acrobot_snn.json",
-        "weight_vals": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
+        "weight_vals": [0.5, 1.0, 2.0, 3.0, 5.0, 8.0],   # acrobot: was 0.5..3 (step .5) until 2026-11-23
     },
     "car": {
         "executable":  "./build/wann_car_eval",

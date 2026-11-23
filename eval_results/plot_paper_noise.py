@@ -182,6 +182,27 @@ COMMON = ("Retention = (return − floor)/(noise-free return − floor) × 100 f
           "the retention loss or gain on that device is due to the floor and not to stochastic noise. ")
 
 
+# ReRAM-CMO with the aihwkit range (9.0-88.2 uS) and a mapping that does not deform the weights at noise 0 (set by
+# plot_paper_noise_occupancy.py --cmo-mapping pair|single; None = the historical 8-90 uS "legacy" wording above)
+CMO_MAPPING = None
+CMO_DEVICES = {
+    "pair": ("Devices: PCM (g_max = 25 µS) and ReRAM-CMO (g_min–g_max = 9.0–88.2 µS, the default range of the aihwkit CMO "
+             "converter; noise model: aihwkit ReRamCMONoiseModel, Falcone et al.). ReRAM-CMO uses the pair mapping "
+             "(SinglePairConductanceConverter): every weight is a differential pair whose idle device sits at g_min, so the "
+             "noise-free read-out equals the programmed weight and noise scale 0 is lossless. For ReRAM-CMO the occupancy is "
+             "the fraction of (g_max − g_min) used by the largest |weight|. Noise scale 1 = literature default of the device "
+             "model. "),
+    "single": ("Devices: PCM (g_max = 25 µS) and ReRAM-CMO (g_min–g_max = 9.0–88.2 µS, the default range of the aihwkit CMO "
+               "converter; noise model: aihwkit ReRamCMONoiseModel, Falcone et al.). ReRAM-CMO uses the single-device mapping "
+               "(SingleDeviceConductanceConverter, the one aihwkit uses for this model): every weight is one device and the "
+               "weight range [−w_max, w_max] is mapped affinely onto [g_min, g_max], so weight 0 sits at the middle of the "
+               "range and noise scale 0 is lossless. For ReRAM-CMO the occupancy is the fraction of the conductance range, "
+               "centred, spanned by the weight range. Noise scale 1 = literature default of the device model. "),
+}
+CMO_SCALE0 = ("At scale 0 PCM is 100 % by construction; for ReRAM-CMO the noise-free read-out is exact, so scale 0 is also "
+              "100 % up to evaluation-seed variation. ")
+
+
 def pending_note(d):
     return "" if "reramcmo" in d.devs else (" **ReRAM-CMO is not drawn yet**: its Falcone-range sweep "
                                            "(`eval_results/run_paper_noise_falcone.sh`) has not been run.")
@@ -228,9 +249,10 @@ def fig_intensity(d):
     cap = ("**noise_intensity** — Retained performance as a function of the noise scale (all mechanisms scaled together) "
            "for WANN and two SGRL variants, one panel per task (columns) and device (rows). Thin lines: individual "
            "trained networks; thick line and band: mean over networks and 95 % bootstrap CI. Evaluated right after "
-           "programming (PCM: t = 0; ReRAM-CMO: t = 1 s). Dotted line: 100 % (noise-free). At scale 0 PCM is 100 % by "
-           "construction; for ReRAM-CMO scale 0 still includes the g_min floor of the differential pair (8.9 % of "
-           "g_max), so it can differ from 100 %. " + COMMON + pending_note(d))
+           "programming (PCM: t = 0; ReRAM-CMO: t = 1 s). Dotted line: 100 % (noise-free). "
+           + (CMO_SCALE0 if CMO_MAPPING else "At scale 0 PCM is 100 % by construction; for ReRAM-CMO scale 0 still includes "
+              "the g_min floor of the differential pair (8.9 % of g_max), so it can differ from 100 %. ")
+           + COMMON + pending_note(d))
     save(fig, "noise_intensity", cap)
 
 

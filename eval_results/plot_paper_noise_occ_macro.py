@@ -31,6 +31,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator
 
 import plot_paper_noise as P
 import plot_paper_noise_occupancy as O
@@ -48,6 +49,9 @@ def occ_text(occ):
     return f"{occ * 100:g} %"
 
 
+ZOOM = False         # set from --zoom: panels whose mean curves and CIs all stay high get a truncated y axis
+ZOOM_MIN_FLOOR = 15.0   # panels whose lowest mean / CI bound is below this keep the axis down to 0 (%)
+ZOOMED = {}          # kind -> number of zoomed panels (for the caption)
 JOURNAL = False      # set from --journal: draw at 190 mm wide with >= 7 pt text and thinner marks
 
 
@@ -74,6 +78,8 @@ def draw_lines(ax, d, task, dev, xs, getter, rng):
         for _, row in tab.iterrows():
             ax.plot(range(len(xs)), row.to_numpy(), color=P.STYLE[src]["color"], lw=thin, alpha=0.22 if JOURNAL else 0.18, zorder=2)
         ci = np.array([P.boot_ci(tab[k].dropna().to_numpy(), rng) for k in range(len(xs))])
+        lo_s, hi_s = getattr(ax, "_stat", (np.inf, -np.inf))        # lowest / highest mean or CI bound drawn (for --zoom)
+        ax._stat = (min(lo_s, np.nanmin(ci[:, 0]), tab.mean(axis=0).min()), max(hi_s, np.nanmax(ci[:, 1]), tab.mean(axis=0).max()))
         ax.fill_between(range(len(xs)), ci[:, 0], ci[:, 1], color=P.STYLE[src]["color"], alpha=0.15, lw=0, zorder=3)
         ax.plot(range(len(xs)), tab.mean(axis=0).to_numpy(), color=P.STYLE[src]["color"], lw=thick,
                 marker=P.STYLE[src]["marker"], ms=ms, zorder=4)
@@ -88,10 +94,22 @@ def finish(fig, axs, occs, devs, xlabel):
             lo, hi = min(a.get_ylim()[0] for a in col), max(a.get_ylim()[1] for a in col)
             for a in col:
                 a.set_ylim(lo, hi)
+    if ZOOM:                       # y range of every panel fitted to its mean curves and CI bands (thin lines may be clipped)
+        for a in axs.ravel():
+            smin, smax = getattr(a, "_stat", (0.0, 100.0))
+            bot = np.floor((smin - 7.0) / 5.0) * 5.0
+            bot = min(bot, 0.0) if smin < ZOOM_MIN_FLOOR else bot
+            a.set_ylim(bot, max(smax, 100.0) + 4.0)
+            if bot > 0:
+                a.yaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))      # whole-number ticks on the zoomed axes
+                a.text(0.985, 0.04, "y zoomed", transform=a.transAxes, ha="right", va="bottom", color="0.35",
+                       fontsize=6 if JOURNAL else 9, style="italic")
+                ZOOMED[finish.kind] = ZOOMED.get(finish.kind, 0) + 1
     for ax in axs[:, 0]:
         ax.set_ylabel("Retained performance (%)")
     for ax in axs[-1]:
         ax.set_xlabel(xlabel)
+    fig.align_ylabels(axs[:, 0])
     for i in range(axs.shape[0]):
         dev = devs[i % nd]
         axs[i][0].annotate(P.DEV_LABEL[dev], xy=(-0.36 if JOURNAL else -0.30, 0.5), xycoords="axes fraction", rotation=90,
@@ -134,6 +152,7 @@ def make(kind, occs, ds):
                 ax.set_xticks(range(len(xs)))
                 ax.set_xticklabels(labels)
                 ax.set_ylim(bottom=min(0.0, ax.get_ylim()[0]), top=min(ax.get_ylim()[1], P.Y_CAP))
+    finish.kind = kind
     finish(fig, axs, occs, devs, "Time since programming" if kind == "drift" else "Noise scale")
     return fig
 
@@ -152,13 +171,18 @@ def caption(kind, occs, ds):
         head = ("**noise_intensity_occ25_occ100** — Retained performance as a function of the noise scale (all mechanisms scaled "
                 f"together), with the conductance occupancy of g_max set to {two} (top and bottom pair of rows); within each pair, "
                 "rows are devices (PCM, ReRAM-CMO) and columns are tasks. Evaluated right after programming (PCM: t = 0; "
-                "ReRAM-CMO: t = 1 s). At scale 0 PCM is 100 % by construction; for ReRAM-CMO scale 0 still includes the g_min floor "
-                "of the differential pair (8.9 % of g_max), so it can differ from 100 %. ")
+                "ReRAM-CMO: t = 1 s). " + (P.CMO_SCALE0 if P.CMO_MAPPING else
+                "At scale 0 PCM is 100 % by construction; for ReRAM-CMO scale 0 still includes the g_min floor "
+                "of the differential pair (8.9 % of g_max), so it can differ from 100 %. "))
     tail = ("Thin lines: individual trained networks; thick line and band: mean over networks and 95 % bootstrap CI. Dotted line: "
             "100 % (noise-free). Rows of the same device and task share the y axis across the two occupancies. Time points "
             "are categorical (not to scale). ") if kind == "drift" else (
             "Thin lines: individual trained networks; thick line and band: mean over networks and 95 % bootstrap CI. Dotted line: "
             "100 % (noise-free). Rows of the same device and task share the y axis across the two occupancies. ")
+    if ZOOM:
+        tail += ("The y axis of each panel is fitted to its mean curves and 95 % CI bands, so it differs between panels; "
+                 "panels whose axis does not start at 0 are marked “y zoomed”, and individual networks outside the axis "
+                 "limits are not drawn. ")
     return (head + tail + common + P.pending_note(ds[occs[0]])).replace("SGRL", P.SG_NAME).strip() + "\n"
 
 
@@ -170,15 +194,20 @@ def main():
     ap.add_argument("--occ-dir", type=Path, default=_SCRIPT_DIR / "paper_noise_occ")
     ap.add_argument("--old-dir", type=Path, default=_SCRIPT_DIR)
     ap.add_argument("--cmo-dir", type=Path, default=_SCRIPT_DIR / "paper_noise")
+    ap.add_argument("--zoom", action="store_true", help="fit the y axis of every panel to its mean curves and CI bands (thin per-network lines may be clipped); "
+                    "panels whose axis does not start at 0 are marked 'y zoomed'")
+    O.add_cmo_args(ap)
     ap.add_argument("--out", type=Path, default=OUT)
     ap.add_argument("--journal", action="store_true",
                     help="draw at the final journal size (190 mm wide, >= 7 pt text, embedded fonts) and write vector PDF + 600 dpi PNG "
                          "to <journal-dir>/figura_0N (drift = 05, intensity = 04) instead of --out")
     ap.add_argument("--journal-dir", type=Path, default=_ROOT / "graficos" / "paper" / "send_to_journal")
+    ap.add_argument("--journal-suffix", default="", help="appended to the journal file name (e.g. B -> figura_04B); keeps figura_04/05 untouched")
     a = ap.parse_args()
-    global JOURNAL
-    JOURNAL = a.journal
-    a.cache_dir = a.occ_dir / "merged"
+    global JOURNAL, ZOOM
+    JOURNAL, ZOOM = a.journal, a.zoom
+    O.check_cmo_args(ap, a)
+    a.cache_dir = (a.cmo_aihwkit_dir or a.occ_dir) / "merged"
     (setup_journal_style if a.journal else setup_publication_style)()
     P.SG_NAME = a.sgrl_name
     P.COMMON_ORIG = P.COMMON
@@ -187,7 +216,8 @@ def main():
         P.SRC = ["wann", "sgrl_con", "sgrl_neu", "sgrl_64"]
     P.LABEL = {k: v.replace("SGRL", a.sgrl_name) for k, v in P.LABEL.items()}
     occs = list(a.occupancies)
-    ds = {o: O.load(o, Namespace(old_dir=a.old_dir, cmo_dir=a.cmo_dir, occ_dir=a.occ_dir, cache_dir=a.cache_dir)) for o in occs}
+    ds = {o: O.load(o, Namespace(old_dir=a.old_dir, cmo_dir=a.cmo_dir, occ_dir=a.occ_dir, cache_dir=a.cache_dir,
+                                       cmo_aihwkit_dir=a.cmo_aihwkit_dir)) for o in occs}
     a.out.mkdir(parents=True, exist_ok=True)
     for kind in a.kinds:
         fig = make(kind, occs, ds)
@@ -195,12 +225,12 @@ def main():
         if a.journal:
             a.journal_dir.mkdir(parents=True, exist_ok=True)
             for ext in (".pdf", ".png"):
-                fig.savefig(a.journal_dir / (JOURNAL_NAME[kind] + ext))
+                fig.savefig(a.journal_dir / (JOURNAL_NAME[kind] + a.journal_suffix + ext))
         else:
             fig.savefig(a.out / f"{stem}.png")
         plt.close(fig)
         (a.out / f"{stem}_caption.md").write_text(caption(kind, occs, ds).replace(f"noise_{kind}_occ25_occ100", stem), encoding="utf-8")
-        print("wrote", (a.journal_dir / JOURNAL_NAME[kind]) if a.journal else a.out / f"{stem}.png")
+        print("wrote", (a.journal_dir / (JOURNAL_NAME[kind] + a.journal_suffix)) if a.journal else a.out / f"{stem}.png")
 
 
 if __name__ == "__main__":
