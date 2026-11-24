@@ -503,6 +503,13 @@ foreach(RW_TASK ACROBOT:acrobot:SnnAcrobotTask CAR:car:SnnCarTask DISC_MC:disc_m
         wann_lib snn_engine_imp snn_encoding_imp snn_core_imp rl_tools_iface OpenMP::OpenMP_CXX)
 endforeach()
 
+# Acrobot with the pre-2026-11-23 shared-weight table {0.5,1,1.5,2,2.5,3}: replays old Acrobot networks (evaluation only).
+add_executable(wann_replay_weights_acrobot_legacy src/main_replay_weights.cpp src/SnnAcrobotTask.cpp)
+target_compile_definitions(wann_replay_weights_acrobot_legacy PRIVATE EVAL_TASK_ACROBOT WANN_ACROBOT_LEGACY_WEIGHTS)
+target_include_directories(wann_replay_weights_acrobot_legacy PRIVATE include)
+target_link_libraries(wann_replay_weights_acrobot_legacy PRIVATE
+    wann_lib snn_engine_imp snn_encoding_imp snn_core_imp rl_tools_iface OpenMP::OpenMP_CXX)
+
 # ---------------------------------------------------------------------------
 # BipedalWalker(Hardcore)-v3 – port a C++ sin Box2D que vive en snn-simulator
 # (include/rl/environments/bipedal_walker/, solo cabeceras, ya cubierto por las

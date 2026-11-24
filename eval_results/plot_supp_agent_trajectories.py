@@ -10,16 +10,17 @@ Networks (same family/rank as the paper's WANN figures; replicate unit = trained
   Mountain Car  disc_mc_small_rate_argmax_discrete     rank01   (discrete actions)
   Racing Car    car_ttfs_first_spike_discrete          rank00
 Each network is replayed with its own saved best shared weight (the one the revalidation in eval_results/*_best.csv uses),
-evaluation seed 0, first episode (episode seed = 0*10000 + weight_index*100) -- i.e. episode 0 of the revalidation, so the
+and the episode shown is the REPRESENTATIVE one: among the 121 revalidation episodes of the network (11 evaluation seeds x 11 episodes, at its own best
+shared weight; returns in eval_results/*_best_episodes.csv) the one whose return is closest to the network's revalidated mean return; so the
 return printed on every panel is one of the episodes behind the numbers in the paper. The replay is done by
 build/wann_replay_weights_<task> (evaluation only: nothing is trained) and cached as CSV in
-eval_results/supp_trajectories/<task>/seedNN.csv; delete the cache (or pass --refresh) to regenerate it.
+eval_results/supp_trajectories/<task>/seedNN_evalMM.csv (network seed NN, evaluation seed MM); delete the cache (or pass --refresh) to regenerate it.
 
 Output (graficos/paper/send_to_journal/): suppl_figure_S1_acrobot.{pdf,png}, suppl_figure_S2_mountain_car.{pdf,png},
 suppl_figure_S3_racing_car.{pdf,png} + suppl_figures_caption.md.   Style: the journal style of the main figures
 (plot_style.setup_journal_style: 190 mm wide, Liberation Sans, vector PDF with embedded fonts).
 
-Usage:  python eval_results/plot_supp_agent_trajectories.py [--refresh] [--seed 0]     (from anywhere)
+Usage:  python eval_results/plot_supp_agent_trajectories.py [--refresh]     (from anywhere)
 """
 import argparse
 import collections
@@ -45,6 +46,7 @@ from matplotlib.lines import Line2D
 from scipy.interpolate import PchipInterpolator
 
 from plot_style import JOURNAL_FULL_W, setup_journal_style
+from supp_caption import caption_height, draw_caption
 
 OUT = _ROOT / "graficos" / "paper" / "send_to_journal"
 CACHE = _ROOT / "eval_results" / "supp_trajectories"
@@ -56,7 +58,8 @@ C_EXC, C_INH = "#0072B2", "#CC79A7"
 
 TASKS = {
     "acrobot": dict(
-        label="Acrobot", fig="suppl_figure_S1_acrobot", binary="wann_replay_weights_acrobot", base="p/acrobot_snn.json",
+        # these Acrobot networks were trained with the old shared-weight table {0.5,1,1.5,2,2.5,3} (changed 2026-11-23), hence the _legacy replay tool
+        label="Acrobot", fig="suppl_figure_S1_acrobot", binary="wann_replay_weights_acrobot_legacy", base="p/acrobot_snn.json",
         run_key="acrobot_small_first_spike", rank=1, csv="eval_results/eval_p3_weights/acrobot_best.csv"),
     "disc_mc": dict(
         label="Mountain Car", fig="suppl_figure_S2_mountain_car", binary="wann_replay_weights_disc_mc",
@@ -67,13 +70,26 @@ TASKS = {
         run_key="car_ttfs_first_spike_discrete", rank=0, csv="eval_results/car_ttfs_first_spike_discrete/car_best.csv"),
 }
 N_NETS = 11
+COMMON = ("These are the 11 networks behind the reported WANN+SNN results (Figs. 1, 3, 4 and 5; one per training seed of the best hyperparameter configuration); Net 1 is the network ablated in Fig. 2. They are ordered from best to worst by revalidated mean return (11 evaluation seeds × 11 episodes; “mean”). "
+          "Left: network topology (inputs on the left, outputs on the right, hidden neurons by depth; edge colour: synapse polarity). "
+          "Right: {desc} in one representative episode (the one, among the network's 121 revalidation episodes, whose return is closest to its mean; “episode” is its return) at its best shared weight; "
+          "colour is the time step (strip below, common scale for all panels).")
+CAPTIONS = {
+    "acrobot": ("Fig. S1. Acrobot: the 11 evolved WANN+SNN networks and their behaviour.",
+                "the path of the tip of the second link (dot: pivot; circle: start; dashed line: goal height)"),
+    "disc_mc": ("Fig. S2. Mountain Car (discrete actions): the 11 evolved WANN+SNN networks and their behaviour.",
+                "the position of the car on the hill (circle: start; dashed line: goal; points are lifted with time so that repeated passes stay visible)"),
+    "car": ("Fig. S3. Racing Car: the 11 evolved WANN+SNN networks and their behaviour.",
+            "the path of the car over the track (grey; circle: start; laps after the first overlap the earlier ones)"),
+}
 
 
 # --------------------------------------------------------------------------------------------- data
 def load_models(task):
     t = TASKS[task]
     d = pd.read_csv(t["csv"])
-    d = d[(d["run_key"] == t["run_key"]) & (d["rank"] == t["rank"])].sort_values("seed_idx").reset_index(drop=True)
+    d = d[(d["run_key"] == t["run_key"]) & (d["rank"] == t["rank"])]
+    d = d.sort_values("reward", ascending=False).reset_index(drop=True)      # best -> worst revalidated mean return
     assert len(d) == N_NETS, (task, len(d))
     return d
 
@@ -90,17 +106,43 @@ def merged_config(t, cfg_path):
     return cfg
 
 
-def replay(task, row, seed, refresh):
-    """Run build/wann_replay_weights_<task> for one network (cached). Returns the trajectory DataFrame."""
+def replay(task, row, eval_seed, rep, refresh):
+    """Run build/wann_replay_weights_<task> for episode `rep` of evaluation seed `eval_seed` (cached). Returns the trajectory DataFrame."""
     t = TASKS[task]
-    csv = CACHE / task / f"seed{int(row.seed_idx):02d}.csv"
+    csv = CACHE / task / f"seed{int(row.seed_idx):02d}_eval{eval_seed:02d}_rep{rep:02d}.csv"
     if refresh or not csv.exists():
         net, cfg = model_paths(t, int(row.seed_idx))
         csv.parent.mkdir(parents=True, exist_ok=True)
         cmd = [f"./build/{t['binary']}", "-f", str(net), "-d", t["base"], "-p", str(cfg),
-               "--weight-index", str(int(row.weight_index)), "--seed", str(seed), "--nreps", "11", "-o", str(csv)]
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+               "--weight-index", str(int(row.weight_index)), "--seed", str(eval_seed), "--nreps", "11", "-o", str(csv)]
+        if rep:
+            cmd += ["--rep", str(rep)]
+        subprocess.run(cmd, check=True, capture_output=True, text=True, env={**os.environ, "OMP_NUM_THREADS": "1"})
     return pd.read_csv(csv)
+
+
+_EPISODES = {}
+
+
+def episodes_table(task):
+    """Returns of the 121 revalidation episodes of every network (winning weight): eval_results/*_best_episodes.csv."""
+    if task not in _EPISODES:
+        d = pd.read_csv(TASKS[task]["csv"].replace("_best.csv", "_best_episodes.csv"))
+        _EPISODES[task] = d[d["run_key"] == TASKS[task]["run_key"]]
+    return _EPISODES[task]
+
+
+def representative(task, row, refresh):
+    """Episode, among the network's 121 revalidation episodes, whose return is closest to its revalidated mean return."""
+    ep = episodes_table(task)
+    ep = ep[ep["train_seed_idx"] == int(row.seed_idx)].reset_index(drop=True)
+    assert len(ep) == 121 and abs(ep["reward"].mean() - float(row.reward)) < 1e-6 * max(1.0, abs(float(row.reward))), (task, row.seed_idx, len(ep))
+    k = int((ep["reward"] - float(row.reward)).abs().idxmin())
+    es, rp = int(ep["seed"][k]), int(ep["episode"][k])
+    df = replay(task, row, es, rp, refresh)
+    assert abs(episode_return(task, df) - float(ep["reward"][k])) < 1e-3 * max(1.0, abs(float(ep["reward"][k]))), \
+        (task, row.seed_idx, es, rp, episode_return(task, df), ep["reward"][k])      # the replay reproduces the evaluated episode
+    return es, rp, df, ep["reward"].to_numpy()
 
 
 def episode_return(task, df):
@@ -262,25 +304,33 @@ def nice_ceil(v):
             return int(np.ceil(v / step) * step)
 
 
-def make_figure(task, seed, refresh):
+def make_figure(task, refresh):
     t = TASKS[task]
     models = load_models(task)
-    trajs, nets, rets, dims = [], [], [], []
+    trajs, nets, rets, dims, means, chosen, spread = [], [], [], [], [], [], []
     for row in models.itertuples():
-        trajs.append(replay(task, row, seed, refresh))
+        es, rp, df_ep, all_rets = representative(task, row, refresh)
+        trajs.append(df_ep)
+        chosen.append((es, rp))
+        spread.append((all_rets.min(), all_rets.max()))
         net_path, cfg_path = model_paths(t, int(row.seed_idx))
         W = read_net(net_path)
         cfg = merged_config(t, cfg_path)
         nets.append((W, int(cfg["ann_nInput"]), int(cfg["ann_nOutput"])))
         rets.append(episode_return(task, trajs[-1]))
+        means.append(float(row.reward))
         dims.append((len(W), int(np.sum(np.isfinite(W) & (W != 0)))))
     longest = max(len(d) for d in trajs)
     tmax = nice_ceil(longest)
 
     n_rows, n_cols = 6, 2
-    fig_h = 8.3
+    ctitle, cdesc = CAPTIONS[task]
+    ctext = COMMON.format(desc=cdesc)
+    cap_h = caption_height(ctitle, ctext, JOURNAL_FULL_W)
+    fig_h = 8.3 + cap_h
     fig = plt.figure(figsize=(JOURNAL_FULL_W, fig_h))
-    grid = fig.add_gridspec(n_rows, n_cols, hspace=0.26, wspace=0.07, left=0.012, right=0.988, top=0.972, bottom=0.085)
+    grid = fig.add_gridspec(n_rows, n_cols, hspace=0.26, wspace=0.07, left=0.012, right=0.988, top=1 - 0.23 / fig_h,
+                            bottom=(cap_h + 0.70) / fig_h)
     for i in range(N_NETS):
         r, c = divmod(i, n_cols)
         cell = grid[r, c].subgridspec(1, 2, width_ratios=[1.25, 1.0], wspace=0.04)
@@ -291,7 +341,8 @@ def make_figure(task, seed, refresh):
         draw_agent(task, ax_a, trajs[i], tmax)
         ax_n.set_title(f"Net {i + 1}", loc="left", fontsize=7.5, fontweight="bold", pad=2)
         ax_n.set_title(f"{dims[i][0]} neurons · {dims[i][1]} synapses", loc="right", fontsize=6.5, pad=2, color="0.25")
-        ax_a.set_title(f"return {rets[i]:.0f} · {len(trajs[i])} steps", loc="right", fontsize=6.5, pad=2, color="0.25")
+        mfmt = f"{means[i]:.0f}" if task == "car" else f"{means[i]:.1f}"
+        ax_a.set_title(f"mean {mfmt} · episode {rets[i]:.0f}", loc="right", fontsize=6.5, pad=2, color="0.25")
     # 12th cell: legend
     r, c = divmod(N_NETS, n_cols)
     ax_l = fig.add_subplot(grid[r, c])
@@ -306,7 +357,7 @@ def make_figure(task, seed, refresh):
     ax_l.legend(handles=handles, loc="center left", ncol=1, frameon=False, fontsize=7, handletextpad=0.6, labelspacing=0.45,
                 borderaxespad=0.0, bbox_to_anchor=(0.02, 0.5))
     # time strip along the bottom
-    ax_t = fig.add_axes([0.18, 0.04, 0.64, 0.016])
+    ax_t = fig.add_axes([0.18, (cap_h + 0.33) / fig_h, 0.64, 0.13 / fig_h])
     ax_t.imshow(np.linspace(0, 1, 512)[None, :], aspect="auto", cmap=CMAP, extent=[0, tmax, 0, 1])
     ax_t.set_yticks([])
     ticks = np.linspace(0, tmax, 6) if tmax % 5 == 0 else [0, tmax]
@@ -315,44 +366,36 @@ def make_figure(task, seed, refresh):
     ax_t.tick_params(axis="x", length=2.5, width=0.6, labelsize=7, pad=1.5)
     for s in ax_t.spines.values():
         s.set_linewidth(0.4)
+    draw_caption(fig, ctitle, ctext)
     OUT.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUT / f"{t['fig']}.pdf")
     fig.savefig(OUT / f"{t['fig']}.png")
     plt.close(fig)
     print(f"wrote {OUT / t['fig']}.pdf/.png   (episode lengths {[len(d) for d in trajs]}, colour scale 0-{tmax})")
-    return dict(task=task, lengths=[len(d) for d in trajs], returns=rets, tmax=tmax, weights=models["weight_value"].tolist())
+    return dict(task=task, lengths=[len(d) for d in trajs], returns=rets, tmax=tmax, weights=models["weight_value"].tolist(),
+                seeds=models["seed_idx"].tolist(), means=means, chosen=chosen, spread=spread, caption=(ctitle, ctext))
 
 
 def write_caption(info):
-    L = ["# Supplementary Figures S1-S3 - caption draft", ""]
-    names = {"acrobot": ("S1", "Acrobot", "acrobot_small_first_spike, rank 01", "the path of the tip of the second link (the pivot is the black dot, the circle marks the start); the dashed line is the goal height"),
-             "disc_mc": ("S2", "Mountain Car (discrete actions)", "disc_mc_small_rate_argmax_discrete, rank 01", "the car's position is drawn on the hill profile; to keep repeated passes over the same stretch visible, each point is lifted above the hill in proportion to its time step; the dashed line is the goal position"),
-             "car": ("S3", "Racing Car", "car_ttfs_first_spike_discrete, rank 00", "the car's path over the track (grey = drivable area); the circle marks the start")}
+    """Plain-text copy of the captions drawn inside the figures, plus the Net -> training seed mapping."""
+    L = ["# Supplementary Figures S1-S3 - captions (the same text is drawn inside each figure)", ""]
     for i in info:
-        s, nm, rk, desc = names[i["task"]]
-        L.append(f"**Figure {s}. {nm}: the 11 evolved networks and their behaviour.** Each pair of panels shows one of the 11 "
-                 f"networks obtained in phase 3 of the hyperparameter optimisation ({rk}; one network per training seed, Net 1-11 = seed 0-10) "
-                 f"and one episode of the agent it controls. Network panels: layered layout (inputs on the left, outputs on the right, "
-                 f"hidden neurons placed by longest path from the inputs); node colour = role, edge colour = synapse polarity; all "
-                 f"synapses share one scalar weight, so edges are drawn with a single width. Agent panels: {desc}. "
-                 f"The colour of the path/arm is the time step of the episode (colour strip at the bottom; common scale 0-{i['tmax']} for "
-                 f"all 11 panels, so a network whose episode ends earlier covers only part of the scale). Every network is run with "
-                 f"its own best shared weight (as in the revalidation of the paper) and evaluation seed 0, episode 0 (the first "
-                 f"of the 11 evaluation episodes behind the revalidated return). Episode lengths (steps): "
-                 f"{', '.join(str(v) for v in i['lengths'])}. Shared weights used: {', '.join(f'{w:g}' for w in i['weights'])}.")
-        L.append("")
+        title, text = i["caption"]
+        L += [f"**{title}** {text}", "",
+              "Net -> training seed (revalidated mean return): " + "; ".join(
+                  f"Net {k + 1} = seed {sd} (mean {m:.1f}; episode {c[1]} of evaluation seed {c[0]}, return {r:.0f})"
+                  for k, (sd, m, c, r) in enumerate(zip(i["seeds"], i["means"], i["chosen"], i["returns"]))), ""]
     (OUT / "suppl_figures_caption.md").write_text("\n".join(L), encoding="utf-8")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--refresh", action="store_true", help="re-run the replay binaries even if the CSV cache exists")
-    ap.add_argument("--seed", type=int, default=0, help="evaluation seed of the shown episode (default 0)")
     ap.add_argument("--task", choices=list(TASKS), nargs="*", default=list(TASKS))
     a = ap.parse_args()
     setup_journal_style()
     plt.rcParams["axes.grid"] = False
-    infos = [make_figure(t, a.seed, a.refresh) for t in a.task]
+    infos = [make_figure(t, a.refresh) for t in a.task]
     if len(infos) == len(TASKS):
         write_caption(infos)
 

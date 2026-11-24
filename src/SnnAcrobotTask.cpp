@@ -71,9 +71,17 @@ namespace wann {
 // them far more fragile to per-synapse perturbation than Car / Mountain Car. Now the same grid as those tasks.
 // Runs/results produced with the old grid index into a different table: evaluate them with
 // `wann_eval_weights_acrobot --weights 0.5,1,1.5,2,2.5,3`.
+#ifdef WANN_ACROBOT_LEGACY_WEIGHTS
+// Only for the evaluation-only tool wann_replay_weights_acrobot_legacy: the pre-2026-11-23 table, so that old Acrobot networks
+// (weight_index/.wi into this table) can be replayed. Never defined for training or for the regular binaries.
+const double SnnAcrobotTask::WEIGHT_VALS[N_WEIGHTS] = {
+    0.5, 1.0, 1.5, 2.0, 2.5, 3.0
+};
+#else
 const double SnnAcrobotTask::WEIGHT_VALS[N_WEIGHTS] = {
     0.5, 1.0, 2.0, 3.0, 5.0, 8.0
 };
+#endif
 
 SnnAcrobotTask::SnnAcrobotTask(const Hyperparams& hyp)
     : nInput_(hyp.ann_nInput), nOutput_(hyp.ann_nOutput), nReps_(hyp.alg_nReps)
