@@ -163,7 +163,9 @@ TASKS = {
     "acrobot": dict(
         label="Acrobot", binary="./build/wann_acrobot_noise", base_config="p/acrobot_snn.json",
         sg_study="acrobot-f2", sg_task="acrobot", ret_floor=-500.0, graficos="Acrobot", prefix="acrobot_wann_vs_sgrl",
-        eval_csvs=["eval_results/eval_p3_weights/acrobot_best.csv"]),
+        # `_w8` search (shared weights {0.5,1,2,3,5,8} since 2026-11-23); the old-table nets are in
+        # eval_results/eval_p3_weights/acrobot_best.csv (their weight_index points into {0.5..3})
+        eval_csvs=["eval_results/acrobot_w8/acrobot_best.csv"]),
 }
 
 # Variantes de SGRL con la red del tamaño de la de WANN: carpeta de corridas y de screening (relativas a --sg-repo).

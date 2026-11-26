@@ -44,7 +44,8 @@ TASKS = {
     "car": dict(label="CarTrack", graficos="Racing Car", eval_csvs=["eval_results/car_ttfs_first_spike_discrete/car_best.csv"]),
     "disc_mc": dict(label="Mountain Car (discrete)", graficos="Mountain Car",
                     eval_csvs=sorted(Path("eval_results").glob("disc_mc_*_discrete/mountain_car_best.csv"))),
-    "acrobot": dict(label="Acrobot", graficos="Acrobot", eval_csvs=["eval_results/eval_p3_weights/acrobot_best.csv"]),
+    # `_w8` search (weights {0.5,1,2,3,5,8}); the old-table revalidation was eval_results/eval_p3_weights/acrobot_best.csv
+    "acrobot": dict(label="Acrobot", graficos="Acrobot", eval_csvs=["eval_results/acrobot_w8/acrobot_best.csv"]),
 }
 RUN_RE = re.compile(r"^(?P<task>.+?)-(?:p3-(?P<model>rank\d+)|f2-(?P<trial>t\d+))-s(?P<seed>\d+)$")
 FAMILIES = [("sgrl", "SGRL 64×64"), ("sgrl_con", "SGRL same connections"), ("sgrl_neu", "SGRL same neurons")]

@@ -46,6 +46,12 @@ ORDER = [("acrobot", "acrobot", "small_fs/", "Acrobot"),
          ("disc_mc", "mountain_car", "small_ra/", "Mountain Car\n(discrete)"),
          ("car", "coche", "", "Racing Car")]
 XS = {"wann": 0.0, "wann_odin": 1.0, "sgrl": 2.4, "sgrl_con": 3.4, "sgrl_neu": 4.4}
+# Replicas directory per task (models.csv, protocol.json, sweep_all.csv with the noise-free `none` cells); default
+# eval_results/<task>_replicas. Acrobot: the `_w8` nets (weights {0.5,1,2,3,5,8}), noise-free cells only, until the
+# cluster's full replicas run of those nets replaces eval_results/acrobot_replicas (old-table nets).
+REPLICAS_DIR = {"acrobot": Path("eval_results/acrobot_w8_noisefree/acrobot_replicas")}
+# Tasks whose WANN-on-ODIN box is left out: the ODIN CSV only has the old-table Acrobot nets.
+NO_ODIN = ("acrobot",)
 WANN_GRAY = "0.45"
 
 
@@ -63,15 +69,20 @@ def main():
                     help="draw at the final journal size (190 mm wide, >= 7 pt text, embedded fonts) and write vector PDF + 600 dpi PNG "
                          "to --journal-out instead of --out (the caption and summary CSV are still written next to --out)")
     ap.add_argument("--journal-out", type=Path, default=Path("graficos/paper/send_to_journal/figura_03"), help="stem, no extension")
+    ap.add_argument("--replicas-dir", nargs="+", default=[], metavar="TASK=DIR",
+                    help="override the replicas directory of a task (default: REPLICAS_DIR, else eval_results/<task>_replicas)")
+    ap.add_argument("--no-odin", nargs="*", default=list(NO_ODIN), metavar="TASK",
+                    help=f"tasks without a WANN-on-ODIN box (default: {' '.join(NO_ODIN)}; pass --no-odin alone to draw all)")
     a = ap.parse_args()
+    rep_dirs = {**REPLICAS_DIR, **{k: Path(v) for k, v in (s.split("=", 1) for s in a.replicas_dir)}}
     odin = pd.read_csv(a.odin_csv)
     qcsv = pd.read_csv(Path(a.sg_repo) / "runs_quant" / "odin" / "quantization.csv")
     (setup_journal_style if a.journal else setup_publication_style)()
 
     fig, axs = plt.subplots(3, 1, figsize=(JOURNAL_FULL_W, 7.6) if a.journal else (8.2, 9.6), sharex=True)
-    rows, hid_all = [], {}
+    rows, hid_all, wann_runs = [], {}, {}
     for ax, (task, tarea, prefix, label) in zip(axs, ORDER):
-        D = Path(f"eval_results/{task}_replicas")
+        D = rep_dirs.get(task, Path(f"eval_results/{task}_replicas"))
         models = pd.read_csv(D / "models.csv")
         proto = json.loads((D / "protocol.json").read_text())
         floor = float(proto["ret_floor"])
@@ -86,7 +97,9 @@ def main():
         wl_s = base[base.source == "wann"].set_index("replica_seed").ret_abs.sort_index()
         dw, n_exw = drop_pct(wo.rename_axis("seed").sort_index().reset_index(drop=True), wl_s.reset_index(drop=True), floor, min_den)
         groups.append(("wann", dw.dropna().to_numpy(), n_exw))
-        groups.append(("wann_odin", wann_odin_loss(odin, tarea, prefix), 0))
+        if task not in a.no_odin:
+            groups.append(("wann_odin", wann_odin_loss(odin, tarea, prefix), 0))
+        wann_runs[task] = f"{proto['wann']['run_key']} rank{int(proto['wann']['rank']):02d}"
         for src, _ in FAMILIES:
             p = pairs[src]
             d, n_ex = drop_pct(p["float"].reset_index(drop=True), p.q3.reset_index(drop=True), floor, min_den)
@@ -127,20 +140,26 @@ def main():
     summ = pd.DataFrame(rows)
     summ.to_csv("eval_results/quant_vs_odin_macro_summary.csv", index=False)
     print(summ.round(2).to_string(index=False))
-    write_caption(a.out.with_name(a.out.stem + "_caption.md"), summ, hid_all)
+    write_caption(a.out.with_name(a.out.stem + "_caption.md"), summ, hid_all, wann_runs)
     print("->", a.out)
 
 
-def write_caption(path: Path, s: pd.DataFrame, hid: dict):
+def write_caption(path: Path, s: pd.DataFrame, hid: dict, wann_runs: dict):
     def m(task, g):
-        r = s[(s.task == task) & (s.group == g)].iloc[0]
-        return r
+        r = s[(s.task == task) & (s.group == g)]
+        return r.iloc[0] if len(r) else None
+
+    def f(task, g, col, fmt):
+        r = m(task, g)
+        return "n/a" if r is None else format(r[col], fmt)
     names = {"wann": "WANN software", "wann_odin": "WANN on ODIN", "sgrl": "SG 64×64", "sgrl_con": "SG same connections", "sgrl_neu": "SG same neurons"}
     tasks = [("acrobot", "Acrobot"), ("disc_mc", "Mountain Car"), ("car", "Racing Car")]
-    med = "; ".join(f"{t}: " + " / ".join(f"{m(k, g).median_pct:.1f}" for g in names) for k, t in tasks)
-    nn = "; ".join(f"{t}: " + " / ".join(f"{int(m(k, g).n)}" for g in names) for k, t in tasks)
-    worse = "; ".join(f"{t}: " + " / ".join(f"{int(m(k, g).n_worse)}" for g in names) for k, t in tasks)
-    excl = [f"{t} {names[g]} ({int(m(k, g).n_excluded)})" for k, t in tasks for g in names if m(k, g).n_excluded]
+    med = "; ".join(f"{t}: " + " / ".join(f(k, g, "median_pct", ".1f") for g in names) for k, t in tasks)
+    nn = "; ".join(f"{t}: " + " / ".join(f(k, g, "n", ".0f") for g in names) for k, t in tasks)
+    worse = "; ".join(f"{t}: " + " / ".join(f(k, g, "n_worse", ".0f") for g in names) for k, t in tasks)
+    excl = [f"{t} {names[g]} ({int(m(k, g).n_excluded)})" for k, t in tasks for g in names
+            if m(k, g) is not None and m(k, g).n_excluded]
+    no_odin = [t for k, t in tasks if m(k, "wann_odin") is None]
     sizes = "; ".join(f"{t}: {hid[k]['sgrl_con']} / {hid[k]['sgrl_neu']}" for k, t in tasks)
     path.write_text(
         "**Figure X. Reward lost when the networks are moved to low-precision hardware (no memristor noise), per task.**\n"
@@ -166,9 +185,9 @@ def write_caption(path: Path, s: pd.DataFrame, hid: dict):
         + ("Networks excluded because their starting reward lies within 5% of the range of the floor (loss undefined): "
            + ", ".join(excl) + ". " if excl else "")
         + "Racing Car, WANN on ODIN: one of 11 networks (seed02) is excluded because its software reward is at or below the floor. "
-        "Evaluation episodes differ between WANN (ODIN) and SG (software); within each method, before and after use the same "
-        "episodes. WANN networks: acrobot_small_first_spike rank01, disc_mc_small_rate_argmax_discrete rank01 and "
-        "car_ttfs_first_spike_discrete rank00, 11 seeds each.\n", encoding="utf-8")
+        + (f"WANN on ODIN not shown for {', '.join(no_odin)} (board data pending for these networks). " if no_odin else "")
+        + "Evaluation episodes differ between WANN (ODIN) and SG (software); within each method, before and after use the same "
+        "episodes. WANN networks: " + ", ".join(wann_runs[k] for k, _ in tasks) + ", 11 seeds each.\n", encoding="utf-8")
     print("->", path)
 
 

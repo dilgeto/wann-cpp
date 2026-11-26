@@ -23,8 +23,10 @@ OUT = Path("graficos/paper/wann")
 
 # (panel title, TASKS key, grid-csv stem, networks-csv, run_key)
 PANELS = [
-    ("Acrobot", "acrobot", "acrobot",
-     "ablation_networks.csv", "acrobot_small_first_spike"),
+    # Acrobot: `_w8` search (shared weights {0.5,1,2,3,5,8} since 2026-11-23). The previous panel was
+    # ("acrobot", "ablation_networks.csv", "acrobot_small_first_spike"), old table {0.5..3}.
+    ("Acrobot", "acrobot", "acrobot_small_first_spike_w8",
+     "ablation_networks_acrobot_small_first_spike_w8.csv", "acrobot_small_first_spike_w8"),
     ("Mountain Car", "mountain_car", "disc_mc_small_rate_argmax_discrete",
      "ablation_networks_disc_mc_small_rate_argmax_discrete.csv", "disc_mc_small_rate_argmax_discrete"),
     ("Racing Car", "car", "car_ttfs_first_spike_discrete",
