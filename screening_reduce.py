@@ -317,6 +317,19 @@ def space_for_task(space: dict[str, tuple], task: str,
     return out
 
 
+def parse_weight_vals(text: str | None) -> list[float] | None:
+    """--weight-vals "0.5,1,1.5,2,2.5,3" -> [0.5, 1.0, ...] (None if unset).
+    Becomes the alg_weight_vals fixed override (see Hyperparams.h): the
+    shared-weight table every trial trains with, recorded in every override
+    JSON / p3_config so evaluation picks it up again. Must have 6 values."""
+    if not text:
+        return None
+    vals = [float(t) for t in text.split(",") if t.strip()]
+    if len(vals) != 6:
+        raise SystemExit(f"--weight-vals needs exactly 6 values, got {len(vals)}: {text}")
+    return vals
+
+
 def micro_flag_overrides(task: str) -> dict[str, Any]:
     """Fixed override enabling the microparameters in tasks that need it."""
     return {"snn_micro_active": True} if task in SNN_MICRO_NEEDS_FLAG else {}
@@ -703,6 +716,7 @@ def cmd_full(
     decoder:         str | None = None,
     tag:             str | None = None,
     space_override:  dict[str, tuple] | None = None,
+    weight_vals:     list[float] | None = None,
 ) -> None:
     fidelity = dict(TASK_DEFAULTS[task]["fidelity"])
     rkey = make_run_key(task, encoder, decoder)
@@ -724,6 +738,8 @@ def cmd_full(
         if n_output is not None:
             fixed_overrides["ann_nOutput"] = n_output
     fixed_overrides.update(micro_flag_overrides(task))
+    if weight_vals:
+        fixed_overrides["alg_weight_vals"] = weight_vals
 
     out_dir = Path("screening_reduce") / rkey
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -971,6 +987,12 @@ def parse_args() -> argparse.Namespace:
                          "entries that override INITIAL_SPACE for this run "
                          "only (in-memory; INITIAL_SPACE itself is untouched, "
                          "so other tasks/runs are unaffected).")
+    ap.add_argument("--weight-vals", default=None, dest="weight_vals",
+                    help="Comma-separated shared-weight table (6 values) to "
+                         "train with instead of the task's compiled WEIGHT_VALS, "
+                         "e.g. '0.5,1,1.5,2,2.5,3'. Passed as the alg_weight_vals "
+                         "fixed override. Use together with --tag so the run "
+                         "doesn't resume/collide with a default-table run.")
     return ap.parse_args()
 
 
@@ -1016,6 +1038,7 @@ def main() -> None:
         decoder        = args.decoder,
         tag            = args.tag,
         space_override = space_override,
+        weight_vals    = parse_weight_vals(args.weight_vals),
     )
 
 

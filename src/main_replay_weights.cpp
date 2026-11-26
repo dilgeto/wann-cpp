@@ -83,7 +83,7 @@ int main(int argc, char* argv[]) {
     } else {
         task.exportTrajectory(wVec, aVec, weightIndex, seed, outFile);
     }
-    std::cout << "wrote " << outFile << " (weight " << EvalTask::WEIGHT_VALS[weightIndex]
+    std::cout << "wrote " << outFile << " (weight " << task.weightVal(weightIndex)
               << ", seed " << seed << ")\n";
     return 0;
 }

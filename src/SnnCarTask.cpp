@@ -83,6 +83,7 @@ SnnCarTask::SnnCarTask(const Hyperparams& hyp)
     , tauInh_(hyp.snn_tau_inh)
     , ttfsThreshold_(hyp.snn_ttfs_threshold)
 {
+    weightVals_ = resolveWeightVals(hyp, WEIGHT_VALS, N_WEIGHTS);
     // populationVectorDecode indexes outSpikes[0..2*neuronsPerVar_-1]
     // unconditionally (throttle population, then steering population) — a
     // mismatched ann_nOutput means an out-of-bounds vector access, not a
@@ -411,7 +412,7 @@ double SnnCarTask::evaluateWeight(const Network& templateNet, int wi, int seed) 
     double total = 0.0;
     for (int rep = 0; rep < nReps_; ++rep) {
         long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-        total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
+        total += runEpisode(net, weightVals_[wi], episodeSeed).first;
     }
     return total / static_cast<double>(nReps_);
 }
@@ -437,7 +438,7 @@ std::vector<double> SnnCarTask::getDistFitness(
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
             long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
+            total += runEpisode(net, weightVals_[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
     }
@@ -495,7 +496,7 @@ void SnnCarTask::exportTrajectory(const std::vector<double>& wVec,
     } else {
         episodeSeed = static_cast<long long>(evalSeed) * 10000 + bestWi * 100 + 0;
     }
-    const double weight = WEIGHT_VALS[bestWi];
+    const double weight = weightVals_[bestWi];
 
     DEVICE device;
     Env env;

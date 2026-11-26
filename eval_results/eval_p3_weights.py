@@ -53,6 +53,7 @@ import argparse
 import concurrent.futures
 import io
 import os
+import json
 import re
 import subprocess
 import sys
@@ -109,6 +110,29 @@ STATS_COLS = ["evals", "fitMed", "fitMax", "fitTop", "fitPeak", "nodeMed",
               "connMed", "fitTopOrig"]
 
 MODEL_RE = re.compile(r"^rank(\d+)_seed(\d+)$")
+
+
+def weight_vals_for(td: dict, *cfg_paths) -> list[float]:
+    """Shared-weight table a model was trained/evaluated with: the last
+    `alg_weight_vals` found among cfg_paths (base JSON first, override JSON
+    last, same merge order as the binaries' -d/-p), else the task's default
+    td["weight_vals"]. Only the value *labels* depend on this — the binaries
+    read alg_weight_vals themselves from the same -d/-p configs."""
+    vals = td["weight_vals"]
+    for cp in cfg_paths:
+        if not cp:
+            continue
+        try:
+            if isinstance(cp, str) and cp.lstrip().startswith("{"):
+                cfg = json.loads(cp)          # inline JSON, as -p accepts
+            else:
+                with open(cp) as f:
+                    cfg = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if cfg.get("alg_weight_vals"):
+            vals = [float(v) for v in cfg["alg_weight_vals"]]
+    return vals
 
 
 def find_models(prefix: str, run_keys: set[str] | None = None) -> list[dict]:
@@ -377,7 +401,7 @@ def run_task(task: str, seeds: list[int], nreps: int, jobs: int, omp: int,
             "rank":                  w["rank"],
             "seed_idx":              w["seed_idx"],
             "weight_index":          w["weight_index"],
-            "weight_value":          td["weight_vals"][w["weight_index"]],
+            "weight_value":          weight_vals_for(td, td["base_config"], w["cfg_path"])[w["weight_index"]],
             "reward_type":           td["reward"],
             "training_fitPeak":      w["fitPeak"],
             "training_fitTop":       w["fitTop"],

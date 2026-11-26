@@ -12,6 +12,13 @@ struct Hyperparams {
     std::string task          = "swingup";
     std::string alg_wDist     = "standard";
     int    alg_nVals          = 6;
+    // Shared-weight values swept per individual (index wi -> value). Empty
+    // (default) = the task's compiled WEIGHT_VALS table, i.e. the historical
+    // behaviour. Non-empty must have exactly the task's N_WEIGHTS (6) values.
+    // Honoured by SnnCarTask, SnnDiscMCTask, SnnAcrobotTask and SnnBipedalTask
+    // (training and wann_eval_weights_* / wann_replay_weights_* when given the
+    // same -d/-p config); other tools still read the compiled table.
+    std::vector<double> alg_weight_vals;
     int    alg_nReps          = 4;
     double alg_probMoo        = 0.80;
     int    maxGen             = 2048;
@@ -195,6 +202,19 @@ struct Hyperparams {
     double bottleneck_reverse_penalty_scale = 0.0;
 };
 
+// Resolve the shared-weight table for a task: hyp.alg_weight_vals if set,
+// else the task's compiled table. Throws on a size mismatch.
+inline std::vector<double> resolveWeightVals(const Hyperparams& hyp,
+                                             const double* compiled, int n) {
+    if (hyp.alg_weight_vals.empty())
+        return std::vector<double>(compiled, compiled + n);
+    if (static_cast<int>(hyp.alg_weight_vals.size()) != n)
+        throw std::runtime_error("alg_weight_vals must have exactly " +
+            std::to_string(n) + " values, got " +
+            std::to_string(hyp.alg_weight_vals.size()));
+    return hyp.alg_weight_vals;
+}
+
 namespace detail {
 
 inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
@@ -205,6 +225,7 @@ inline void applyJson(Hyperparams& p, const nlohmann::json& j) {
     get(p.task,                   "task");
     get(p.alg_wDist,              "alg_wDist");
     get(p.alg_nVals,              "alg_nVals");
+    get(p.alg_weight_vals,        "alg_weight_vals");
     get(p.alg_nReps,              "alg_nReps");
     get(p.alg_probMoo,            "alg_probMoo");
     get(p.maxGen,                 "maxGen");

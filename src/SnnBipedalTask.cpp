@@ -171,6 +171,7 @@ SnnBipedalTask::SnnBipedalTask(const Hyperparams& hyp)
     , hardcore_(hyp.bipedal_hardcore)
     , maxSteps_(hyp.bipedal_max_steps)
 {
+    weightVals_ = resolveWeightVals(hyp, WEIGHT_VALS, N_WEIGHTS);
     // decodeActions indexes outSpikes by action unconditionally; catch a
     // mismatched geometry here instead of an out-of-bounds access later.
     const int expectedOut = (decoder_ == SnnDecoder::POPULATION_VECTOR)
@@ -426,7 +427,7 @@ double SnnBipedalTask::evaluateWeight(const Network& templateNet, int wi, int se
     double total = 0.0;
     for (int rep = 0; rep < nReps_; ++rep) {
         long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-        total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
+        total += runEpisode(net, weightVals_[wi], episodeSeed).first;
     }
     return total / static_cast<double>(nReps_);
 }
@@ -486,7 +487,7 @@ void SnnBipedalTask::exportTrajectory(const std::vector<double>& wVec,
         ? static_cast<long long>(evalSeed)
         : static_cast<long long>(evalSeed) * 10000 + bestWi * 100 + 0;
 
-    runEpisode(net, WEIGHT_VALS[bestWi], episodeSeed, &csv);
+    runEpisode(net, weightVals_[bestWi], episodeSeed, &csv);
     std::cout << "Trayectoria guardada en: " << outFile << '\n';
 }
 

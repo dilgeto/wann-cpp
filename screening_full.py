@@ -81,6 +81,7 @@ from screening_reduce import (
     space_for_task,
     effective_encoder,
     micro_flag_overrides,
+    parse_weight_vals,
     TASK_DEFAULTS,
     VALID_ENCODERS,
     VALID_DECODERS,
@@ -730,6 +731,11 @@ def parse_args() -> argparse.Namespace:
                          "early_stop_patience is only wired into main_car.cpp, "
                          "a no-op for every other task.")
     # Post-Phase-3 evaluation + bootstrap
+    ap.add_argument("--weight-vals", default=None, dest="weight_vals",
+                    help="Comma-separated shared-weight table (6 values) to "
+                         "train with instead of the task's compiled WEIGHT_VALS "
+                         "(alg_weight_vals fixed override, recorded in every "
+                         "p3_config). Must match what phase 1 used for this --tag.")
     ap.add_argument("--no-post-eval", action="store_true", dest="no_post_eval",
                     help="Do not run the shared-weight evaluation + bootstrap "
                          "(bootstrap_compare_<task>_auto.py) after Phase 3.")
@@ -783,6 +789,9 @@ def main() -> None:
                   file=sys.stderr)
         fixed_overrides["early_stop_patience"] = args.early_stop_patience
     fixed_overrides.update(micro_flag_overrides(args.task))
+    weight_vals = parse_weight_vals(args.weight_vals)
+    if weight_vals:
+        fixed_overrides["alg_weight_vals"] = weight_vals
 
     if args.mode == "analyse":
         cmd_analyse(rkey, args.top_analyse)

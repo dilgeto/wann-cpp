@@ -98,7 +98,9 @@ SnnDiscMCTask::SnnDiscMCTask(const Hyperparams& hyp)
     , tauExc_(hyp.snn_tau_exc)
     , tauInh_(hyp.snn_tau_inh)
     , ttfsThreshold_(hyp.snn_micro_active ? hyp.snn_ttfs_threshold : LEGACY_TTFS_THRESHOLD)
-{}
+{
+    weightVals_ = resolveWeightVals(hyp, WEIGHT_VALS, N_WEIGHTS);
+}
 
 NeuronType SnnDiscMCTask::wannActToNeuronType(int actId) {
     switch (actId) {
@@ -299,7 +301,7 @@ double SnnDiscMCTask::evaluateWeight(const Network& templateNet, int wi, int see
     double total = 0.0;
     for (int rep = 0; rep < nReps_; ++rep) {
         long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-        total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
+        total += runEpisode(net, weightVals_[wi], episodeSeed).first;
     }
     return total / static_cast<double>(nReps_);
 }
@@ -320,7 +322,7 @@ double SnnDiscMCTask::evaluateOriginal(const Ind& ind, int seed) const {
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
             long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).second;
+            total += runEpisode(net, weightVals_[wi], episodeSeed).second;
         }
         sum += total / static_cast<double>(nReps_);
     }
@@ -339,7 +341,7 @@ std::vector<double> SnnDiscMCTask::getDistFitness(
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
             long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
+            total += runEpisode(net, weightVals_[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
     }
@@ -397,10 +399,10 @@ void SnnDiscMCTask::exportTrajectory(const std::vector<double>& wVec,
         // Warm-up: reproduce SNN state from training
         for (int wi = 0; wi < bestWi; ++wi)
             for (int rep = 0; rep < nReps_; ++rep)
-                runEpisode(net, WEIGHT_VALS[wi], static_cast<long long>(evalSeed) * 10000 + wi * 100 + rep);
+                runEpisode(net, weightVals_[wi], static_cast<long long>(evalSeed) * 10000 + wi * 100 + rep);
         episodeSeed = static_cast<long long>(evalSeed) * 10000 + bestWi * 100 + 0;
     }
-    const double weight = WEIGHT_VALS[bestWi];
+    const double weight = weightVals_[bestWi];
 
     DEVICE device;
     Env env;

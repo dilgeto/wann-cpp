@@ -68,24 +68,24 @@ int main(int argc, char* argv[]) {
     if (maxSteps > 0) task.setEpisodeSteps(maxSteps);
 
     int    chosenWiIdx  = 0;
-    double chosenWeight = wann::SnnCarTask::WEIGHT_VALS[0];
+    double chosenWeight = task.weightVal(0);
 
     if (weightArg == "best") {
         std::string wiFile = netFile.substr(0, netFile.rfind('.')) + ".wi";
         std::ifstream wif(wiFile);
         if (wif) {
             wif >> chosenWiIdx;
-            chosenWeight = wann::SnnCarTask::WEIGHT_VALS[chosenWiIdx];
+            chosenWeight = task.weightVal(chosenWiIdx);
             std::cout << "Peso cargado de " << wiFile << ": " << chosenWeight
                       << "  (wi=" << chosenWiIdx << ")\n";
         } else {
             auto allRewards = task.getDistFitness(wVec, aVec, seed);
             chosenWiIdx = static_cast<int>(
                 std::max_element(allRewards.begin(), allRewards.end()) - allRewards.begin());
-            chosenWeight = wann::SnnCarTask::WEIGHT_VALS[chosenWiIdx];
+            chosenWeight = task.weightVal(chosenWiIdx);
             std::cout << "Pesos evaluados: ";
             for (int i = 0; i < wann::SnnCarTask::N_WEIGHTS; ++i)
-                std::cout << wann::SnnCarTask::WEIGHT_VALS[i]
+                std::cout << task.weightVal(i)
                           << "→" << std::fixed << std::setprecision(2) << allRewards[i]
                           << (i+1 < wann::SnnCarTask::N_WEIGHTS ? "  " : "\n");
             std::cout << "Mejor peso: " << chosenWeight
@@ -94,9 +94,9 @@ int main(int argc, char* argv[]) {
     } else {
         chosenWeight = std::stod(weightArg);
         // find closest index
-        double best_dist = std::abs(wann::SnnCarTask::WEIGHT_VALS[0] - chosenWeight);
+        double best_dist = std::abs(task.weightVal(0) - chosenWeight);
         for (int i = 1; i < wann::SnnCarTask::N_WEIGHTS; ++i) {
-            double d = std::abs(wann::SnnCarTask::WEIGHT_VALS[i] - chosenWeight);
+            double d = std::abs(task.weightVal(i) - chosenWeight);
             if (d < best_dist) { best_dist = d; chosenWiIdx = i; }
         }
         std::cout << "Peso fijo: " << chosenWeight << '\n';

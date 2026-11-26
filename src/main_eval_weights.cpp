@@ -104,7 +104,7 @@ std::vector<double> getDistFitnessOriginal(EvalTask& task,
     for (int wi = 0; wi < nW; ++wi) {
         const int baseSeed = seed * 10000 + wi * 100;
         auto [shaped, original] = task.evalEpisodes(wVec, aVec,
-                                                     EvalTask::WEIGHT_VALS[wi],
+                                                     task.weightVal(wi),
                                                      nReps, baseSeed);
         double total = 0.0;
         for (double o : original) total += o;
@@ -258,7 +258,7 @@ int main(int argc, char* argv[]) {
         for (int seed : seeds) {
             const int baseSeed = seed * 10000 + weightIndex * 100;
             auto [shaped, original] = task.evalEpisodes(wVec, aVec,
-                                                         EvalTask::WEIGHT_VALS[weightIndex],
+                                                         task.weightVal(weightIndex),
                                                          hyp.alg_nReps, baseSeed);
             const auto& rewards = useOriginal ? original : shaped;
             for (int ep = 0; ep < static_cast<int>(rewards.size()); ++ep)

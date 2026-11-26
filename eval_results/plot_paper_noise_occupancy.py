@@ -86,7 +86,11 @@ def build(task, occ, a):
         frames[0] = frames[0][frames[0].noise_model.isin(["none", "pcm"])]
     has64 = bool((nm.source == "sgrl_64_occ").any())
     for s in ("sgrl_con", "sgrl_neu") + (("sgrl_64",) if has64 else ()):
-        if np.isclose(occ, 1.0) and s not in FULL_FROM_OCC:
+        # 100 %: from the earlier replicas (old_dir / cmo_dir) unless this sweep simulated the variant at 100 % itself
+        # (--sgrl-full-occupancy; e.g. Acrobot `_w8`, whose SG same-connections / same-neurons nets were retrained and
+        # no longer match the ones in eval_results/acrobot_replicas)
+        full_here = "occupancy" in nm and not nm[(nm.source == VARIANT[s]) & close(nm)].empty
+        if np.isclose(occ, 1.0) and s not in FULL_FROM_OCC and not full_here:
             om = pd.read_csv(old / "models.csv")
             om = om[om.source == s]
             parts = [pd.read_csv(old / "sweep_all.csv").query("source == @s and noise_model in ['none', 'pcm']")]

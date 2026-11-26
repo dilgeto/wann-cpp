@@ -99,7 +99,9 @@ SnnAcrobotTask::SnnAcrobotTask(const Hyperparams& hyp)
     , tauExc_(hyp.snn_tau_exc)
     , tauInh_(hyp.snn_tau_inh)
     , ttfsThreshold_(hyp.snn_micro_active ? hyp.snn_ttfs_threshold : LEGACY_TTFS_THRESHOLD)
-{}
+{
+    weightVals_ = resolveWeightVals(hyp, WEIGHT_VALS, N_WEIGHTS);
+}
 
 NeuronType SnnAcrobotTask::wannActToNeuronType(int actId) {
     switch (actId) {
@@ -370,7 +372,7 @@ double SnnAcrobotTask::evaluateWeight(const Network& templateNet, int wi, int se
     double total = 0.0;
     for (int rep = 0; rep < nReps_; ++rep) {
         long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-        total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
+        total += runEpisode(net, weightVals_[wi], episodeSeed).first;
     }
     return total / static_cast<double>(nReps_);
 }
@@ -391,7 +393,7 @@ double SnnAcrobotTask::evaluateOriginal(const Ind& ind, int seed) const {
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
             long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).second;
+            total += runEpisode(net, weightVals_[wi], episodeSeed).second;
         }
         sum += total / static_cast<double>(nReps_);
     }
@@ -413,7 +415,7 @@ std::vector<double> SnnAcrobotTask::getDistFitness(
         double total = 0.0;
         for (int rep = 0; rep < nReps_; ++rep) {
             long long episodeSeed = static_cast<long long>(seed < 0 ? 0 : seed) * 10000 + wi * 100 + rep;
-            total += runEpisode(net, WEIGHT_VALS[wi], episodeSeed).first;
+            total += runEpisode(net, weightVals_[wi], episodeSeed).first;
         }
         rewards[wi] = total / static_cast<double>(nReps_);
     }
@@ -470,7 +472,7 @@ void SnnAcrobotTask::exportTrajectory(const std::vector<double>& wVec,
     } else {
         episodeSeed = static_cast<long long>(evalSeed) * 10000 + bestWi * 100 + 0;
     }
-    const double weight = WEIGHT_VALS[bestWi];
+    const double weight = weightVals_[bestWi];
 
     DEVICE device;
     Env env;

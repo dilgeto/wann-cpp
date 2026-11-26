@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
         int  best_i  = 0;
         for (int i = 1; i < static_cast<int>(rewards.size()); ++i)
             if (rewards[i] > rewards[best_i]) best_i = i;
-        chosenWeight = wann::SnnCarTask::WEIGHT_VALS[best_i];
+        chosenWeight = task.weightVal(best_i);
         std::cout << "Peso seleccionado automáticamente: " << chosenWeight
                   << "  (reward=" << rewards[best_i] << ")\n";
     } else {

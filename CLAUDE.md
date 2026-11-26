@@ -243,6 +243,18 @@ them very fragile to per-synapse memristor noise. Consequence: every Acrobot run
 `eval_p3_weights.py` / `weight_sweep_eval.py` tables were switched to the new values, so re-running them on old
 Acrobot run_keys gives wrong `weight_value` labels). New search: `run_optuna_acrobot_w8.sh` (tag `w8`).
 
+**Runtime shared-weight table: `alg_weight_vals` (added 2026-11-26).** Hyperparams field (6 values; empty = the
+task's compiled `WEIGHT_VALS`, byte-identical to before — verified). Honoured by `SnnCarTask`, `SnnDiscMCTask`,
+`SnnAcrobotTask`, `SnnBipedalTask` (via `task.weightVal(wi)`) in training and in `wann_eval_weights_*`,
+`wann_replay_weights_*`, `wann_<task>_eval`, `wann_car_replay`, `wann_car_neighborhood` when given the same
+`-d/-p` config. Screening:
+`--weight-vals 0.5,1,1.5,2,2.5,3` on both `screening_reduce.py`/`screening_full.py` writes it into every trial JSON
+and `p3_config`; `eval_p3_weights.weight_vals_for()` reads it back for the `weight_value` labels (also used in
+`bootstrap_auto_lib.py`). First use: `run_optuna_w3.sh` (tag `w3`: `disc_mc_small_rate_argmax_w3`,
+`car_ttfs_first_spike_w3`, with the old Acrobot table). **Not** honoured by `wann_<task>_noise`,
+`wann_car_odin_*`, `wann_odin_export` — they still use the compiled table, so for a `w3` net pass the weight value
+explicitly / check `--w-max` there.
+
 **Logging** (`src/DataGatherer.cpp`): appends per-generation population statistics,
 writes `<prefix>_best.gen`/`.wi` (best individual + which shared-weight index won)
 and Pareto snapshots consumed by `graph.py`/`graph_network.py`. Mirrors a Python

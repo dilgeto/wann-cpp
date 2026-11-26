@@ -60,6 +60,8 @@ public:
             int seed = -1) override;
 
     int numWeightVals() const override { return N_WEIGHTS; }
+    // Shared-weight value at index wi (hyp.alg_weight_vals or WEIGHT_VALS).
+    double weightVal(int wi) const { return weightVals_[wi]; }
 
     // Run nEpisodes with the given shared weight.
     // Returns {shaped_rewards, original_rewards}; shaped == original (no shaping).
@@ -80,6 +82,7 @@ public:
                           bool directSeed = false) const;
 
 private:
+    std::vector<double> weightVals_;
     int        nInput_;
     int        nOutput_;
     int        nReps_;
