@@ -1,0 +1,71 @@
+==================================================================
+  Full-budget analysis — run: acrobot_small_first_spike_w8
+==================================================================
+
+Phase 2: 40/40 successful trials   peak range [-194.0000, -36.3000]
+
+── Top 5 configs (Phase 2) ──
+ trial  peak_fitness  alg_probMoo  prob_addConn  prob_addNode  prob_enable  prob_mutAct  prob_toggleExcitatory  prob_initEnable  select_cullRatio  select_eliteRatio  select_tournSize  snn_window_ms  snn_tau_exc  snn_tau_inh
+     6      -36.3000       0.6000        0.5000        0.3800       0.0800       0.3000                 0.2400           0.2000            0.2200             0.1000                13             43       7.0900      18.9300
+    38      -36.3000       0.2700        0.3800        0.2300       0.2000       0.4200                 0.1500           0.3400            0.1800             0.3800                 8             60       5.1900      16.4900
+    12      -36.9000       0.6600        0.4600        0.3200       0.0700       0.3100                 0.2600           0.3000            0.1900             0.0900                14             51       4.8900      14.7400
+    25      -37.9000       0.2400        0.4100        0.2800       0.2400       0.3100                 0.1400           0.3400            0.0500             0.3700                 9             63       5.7200      15.6300
+    29      -37.9000       0.3100        0.3700        0.2900       0.2500       0.5000                 0.1400           0.2900            0.0600             0.2700                 6             63       2.8800      13.8300
+
+── Spearman ρ  (Phase 2, |ρ| descending) ──
+  Parameter                                  ρ     p-val  sig
+  snn_tau_exc                           -0.336    0.0343  *
+  prob_initEnable                       -0.300    0.0603    
+  select_cullRatio                      -0.251    0.1178    
+  alg_probMoo                           +0.142    0.3806    
+  prob_addConn                          -0.124    0.4452    
+  prob_mutAct                           +0.121    0.4587    
+  snn_tau_inh                           -0.102    0.5321    
+  prob_enable                           +0.051    0.7554    
+  select_tournSize                      -0.046    0.7777    
+  prob_toggleExcitatory                 -0.040    0.8041    
+  select_eliteRatio                     +0.022    0.8947    
+  snn_window_ms                         -0.012    0.9392    
+  prob_addNode                          -0.006    0.9713    
+
+── Random-Forest importance  (Phase 2) ──
+  Parameter                               Gini       Perm     ±std
+  snn_tau_exc                           0.2111    +0.2366   0.0390
+  snn_window_ms                         0.1481    +0.2005   0.0366
+  snn_tau_inh                           0.0919    +0.0636   0.0128
+  select_eliteRatio                     0.0902    +0.0824   0.0196
+  prob_toggleExcitatory                 0.0895    +0.0854   0.0185
+  prob_mutAct                           0.0885    +0.1219   0.0276
+  prob_initEnable                       0.0598    +0.0694   0.0160
+  prob_addNode                          0.0547    +0.0473   0.0088
+  alg_probMoo                           0.0431    +0.0366   0.0065
+  select_cullRatio                      0.0397    +0.0319   0.0063
+  select_tournSize                      0.0310    +0.0274   0.0053
+  prob_enable                           0.0269    +0.0214   0.0020
+  prob_addConn                          0.0256    +0.0202   0.0044
+
+── Phase 3 Validation ──
+  Rank        Mean     ±Std       Min       Max  n_ok
+  2       -35.8182   0.9642  -37.0000  -34.3000    11
+  1       -35.9909   0.9853  -37.6000  -34.3000    11
+  0       -36.2909   0.8666  -37.3000  -34.4000    11
+
+── Best validated config (rank 2) ──
+  mean=-35.8182  std=0.9642  min=-37.0000  max=-34.3000
+  orig_mean                             -69.6636
+  orig_std                              1.2948
+  alg_probMoo                           0.6600
+  prob_addConn                          0.4600
+  prob_addNode                          0.3200
+  prob_enable                           0.0700
+  prob_mutAct                           0.3100
+  prob_toggleExcitatory                 0.2600
+  prob_initEnable                       0.3000
+  select_cullRatio                      0.1900
+  select_eliteRatio                     0.0900
+  select_tournSize                      14.0000
+  snn_window_ms                         51.0000
+  snn_tau_exc                           4.8900
+  snn_tau_inh                           14.7400
+
+==================================================================
