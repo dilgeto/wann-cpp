@@ -66,8 +66,11 @@ class OD(P.D):
         self.t, self.devs = t, devs
 
 
-def build(task, occ, a):
-    old, cmo, new = a.old_dir / f"{task}_replicas", a.cmo_dir / f"{task}_replicas", a.occ_dir / f"{task}_replicas"
+def build(task, occ, a, rep=None):
+    """rep: replicas folder name inside occ_dir / cmo_aihwkit_dir (default <task>_replicas; e.g. acrobot_replicas_pre_w8
+    for the Acrobot networks trained with the old 0.5-3.0 weight table)."""
+    rep = rep or f"{task}_replicas"
+    old, cmo, new = a.old_dir / f"{task}_replicas", a.cmo_dir / f"{task}_replicas", a.occ_dir / rep
     if not (new / "sweep_all.csv").is_file():
         sys.exit(f"No data in {new}. Run eval_results/run_paper_noise_occupancy.sh (on the cluster) first.")
     ns, nm = pd.read_csv(new / "sweep_all.csv"), pd.read_csv(new / "models.csv")
@@ -79,7 +82,7 @@ def build(task, occ, a):
     have_cmo = bool((ns.noise_model == "reramcmo").any())
     ac = None
     if a.cmo_aihwkit_dir is not None:      # ReRAM-CMO from the aihwkit-range sweep (all methods, every occupancy, 100 % included)
-        ac = a.cmo_aihwkit_dir / f"{task}_replicas"
+        ac = a.cmo_aihwkit_dir / rep
         if not (ac / "sweep_all.csv").is_file():
             sys.exit(f"No data in {ac}. Run eval_results/run_paper_noise_cmo_mapping.sh (on the cluster) first.")
         have_cmo = True
@@ -119,7 +122,7 @@ def build(task, occ, a):
             frames.append(f)
             models.append(sm.assign(source=s, model_id="cmo_" + sm.model_id)[["model_id", "source", "replica_seed"]])
     df = pd.concat(frames, ignore_index=True)[KEEP]
-    dst = a.cache_dir / f"{task}_occ{tag(occ)}"
+    dst = a.cache_dir / f"{rep.removesuffix('_replicas')}_occ{tag(occ)}"
     dst.mkdir(parents=True, exist_ok=True)
     df.to_csv(dst / "sweep_all.csv", index=False)
     pd.concat(models).to_csv(dst / "models.csv", index=False)

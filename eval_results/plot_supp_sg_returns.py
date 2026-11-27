@@ -27,6 +27,9 @@ import numpy as np
 import pandas as pd
 
 from plot_noise_compare import METHODS
+# Same replicas directory per task as Figure 3 (Acrobot: the _w8 nets and their SG families sized to them, 9x9 runs_w8 /
+# 25x24 runs_neuronas_w8; eval_results/acrobot_replicas still holds the old-table nets' SG 4x4 / 14x13).
+from plot_paper_quant_macro import REPLICAS_DIR
 from plot_quant_noisefree import FAMILIES, box, sgrl_pairs
 from plot_style import JOURNAL_FULL_W, setup_journal_style
 from supp_caption import caption_height, draw_caption
@@ -54,7 +57,7 @@ def main():
     fig, axs = plt.subplots(3, 1, figsize=(fw, fig_h), sharex=True)
     rows, hid = [], {}
     for ax, (task, label) in zip(axs, ORDER):
-        models = pd.read_csv(f"eval_results/{task}_replicas/models.csv")
+        models = pd.read_csv(REPLICAS_DIR.get(task, Path(f"eval_results/{task}_replicas")) / "models.csv")
         pairs = sgrl_pairs(task, models, q)
         hid[task] = {s: str(models[models.source == s].hidden.iloc[0]).replace("x", "×") for s, _ in FAMILIES}
         allv = []

@@ -6,7 +6,7 @@ The agent's path is coloured by the time step at which it was visited; a strip a
 step each colour stands for.
 
 Networks (same family/rank as the paper's WANN figures; replicate unit = trained network, n = 11):
-  Acrobot       acrobot_small_first_spike              rank01
+  Acrobot       acrobot_small_first_spike_w8           rank02   (shared weights {0.5,1,2,3,5,8})
   Mountain Car  disc_mc_small_rate_argmax_discrete     rank01   (discrete actions)
   Racing Car    car_ttfs_first_spike_discrete          rank00
 Each network is replayed with its own saved best shared weight (the one the revalidation in eval_results/*_best.csv uses),
@@ -58,9 +58,11 @@ C_EXC, C_INH = "#0072B2", "#CC79A7"
 
 TASKS = {
     "acrobot": dict(
-        # these Acrobot networks were trained with the old shared-weight table {0.5,1,1.5,2,2.5,3} (changed 2026-11-23), hence the _legacy replay tool
-        label="Acrobot", fig="suppl_figure_S1_acrobot", binary="wann_replay_weights_acrobot_legacy", base="p/acrobot_snn.json",
-        run_key="acrobot_small_first_spike", rank=1, csv="eval_results/eval_p3_weights/acrobot_best.csv"),
+        # w8 networks (shared-weight table {0.5,1,2,3,5,8}, 2026-11-23), winner of eval_results/acrobot_w8/acrobot_best.csv.
+        # The pre-w8 figure used acrobot_small_first_spike rank01 with wann_replay_weights_acrobot_legacy (old table
+        # {0.5,1,1.5,2,2.5,3}); its replay cache stays in supp_trajectories/acrobot/, hence the separate cache dir here.
+        label="Acrobot", fig="suppl_figure_S1_acrobot", binary="wann_replay_weights_acrobot", base="p/acrobot_snn.json",
+        run_key="acrobot_small_first_spike_w8", rank=2, csv="eval_results/acrobot_w8/acrobot_best.csv", cache="acrobot_w8"),
     "disc_mc": dict(
         label="Mountain Car", fig="suppl_figure_S2_mountain_car", binary="wann_replay_weights_disc_mc",
         base="p/disc_mc_snn.json", run_key="disc_mc_small_rate_argmax_discrete", rank=1,
@@ -109,7 +111,7 @@ def merged_config(t, cfg_path):
 def replay(task, row, eval_seed, rep, refresh):
     """Run build/wann_replay_weights_<task> for episode `rep` of evaluation seed `eval_seed` (cached). Returns the trajectory DataFrame."""
     t = TASKS[task]
-    csv = CACHE / task / f"seed{int(row.seed_idx):02d}_eval{eval_seed:02d}_rep{rep:02d}.csv"
+    csv = CACHE / t.get("cache", task) / f"seed{int(row.seed_idx):02d}_eval{eval_seed:02d}_rep{rep:02d}.csv"
     if refresh or not csv.exists():
         net, cfg = model_paths(t, int(row.seed_idx))
         csv.parent.mkdir(parents=True, exist_ok=True)

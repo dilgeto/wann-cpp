@@ -52,6 +52,7 @@ def occ_text(occ):
 ZOOM = False         # set from --zoom: panels whose mean curves and CIs all stay high get a truncated y axis
 ZOOM_MIN_FLOOR = 15.0   # panels whose lowest mean / CI bound is below this keep the axis down to 0 (%)
 ZOOMED = {}          # kind -> number of zoomed panels (for the caption)
+OCC_LABEL = True     # bold "<occ> of g_max" label at the far left of each row group (off: single-occupancy figures)
 JOURNAL = False      # set from --journal: draw at 190 mm wide with >= 7 pt text and thinner marks
 
 
@@ -82,7 +83,7 @@ def draw_lines(ax, d, task, dev, xs, getter, rng):
         ax._stat = (min(lo_s, np.nanmin(ci[:, 0]), tab.mean(axis=0).min()), max(hi_s, np.nanmax(ci[:, 1]), tab.mean(axis=0).max()))
         ax.fill_between(range(len(xs)), ci[:, 0], ci[:, 1], color=P.STYLE[src]["color"], alpha=0.15, lw=0, zorder=3)
         ax.plot(range(len(xs)), tab.mean(axis=0).to_numpy(), color=P.STYLE[src]["color"], lw=thick,
-                marker=P.STYLE[src]["marker"], ms=ms, zorder=4)
+                marker=P.STYLE[src]["marker"], ms=ms, zorder=4, ls=P.STYLE[src].get("ls", "-"))
     ax.axhline(100, color="0.5", lw=0.6 if JOURNAL else 1, ls=":")
 
 
@@ -115,17 +116,19 @@ def finish(fig, axs, occs, devs, xlabel):
         axs[i][0].annotate(P.DEV_LABEL[dev], xy=(-0.36 if JOURNAL else -0.30, 0.5), xycoords="axes fraction", rotation=90,
                            va="center", ha="center", color=P.DEV_COLOR[dev], fontweight="bold", fontsize=7.5 if JOURNAL else 13)
     h = [Line2D([], [], color=P.STYLE[s]["color"], marker=P.STYLE[s]["marker"], lw=1.4 if JOURNAL else 2.2,
-                ms=3.5 if JOURNAL else 7, label=P.LABEL[s]) for s in P.SRC]
+                ms=3.5 if JOURNAL else 7, label=P.LABEL[s], ls=P.STYLE[s].get("ls", "-")) for s in P.SRC]
     fig.legend(handles=h, loc="lower center", ncol=len(P.SRC), frameon=False, bbox_to_anchor=(0.5, 0.0),
                columnspacing=1.2 if JOURNAL else 2.0, handlelength=1.8 if JOURNAL else 2.0)
-    fig.tight_layout(rect=(0.095 if JOURNAL else 0.06, 0.04 if JOURNAL else 0.035, 1, 1), h_pad=0.6 if JOURNAL else 1.08,
+    left = (0.095 if JOURNAL else 0.06) if OCC_LABEL else (0.06 if JOURNAL else 0.04)
+    fig.tight_layout(rect=(left, 0.04 if JOURNAL else 0.035, 1, 1), h_pad=0.6 if JOURNAL else 1.08,
                      w_pad=0.6 if JOURNAL else 1.08)
     # occupancy of each row group: bold label at the far left and a thin separator between groups
     for o, occ in enumerate(occs):
         top = axs[o * nd][0].get_position().y1
         bot = axs[o * nd + nd - 1][0].get_position().y0
-        fig.text(0.015 if JOURNAL else 0.012, (top + bot) / 2, f"{occ_text(occ)} of $g_{{max}}$", rotation=90, va="center", ha="center",
-                 fontweight="bold", fontsize=8 if JOURNAL else 14)
+        if OCC_LABEL:
+            fig.text(0.015 if JOURNAL else 0.012, (top + bot) / 2, f"{occ_text(occ)} of $g_{{max}}$", rotation=90, va="center",
+                     ha="center", fontweight="bold", fontsize=8 if JOURNAL else 14)
         if o:
             y = (axs[o * nd - 1][0].get_position().y0 + top) / 2
             fig.add_artist(Line2D([0.01, 0.995], [y, y], color="0.6", lw=1.0, ls="--", transform=fig.transFigure))

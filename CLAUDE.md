@@ -253,7 +253,11 @@ and `p3_config`; `eval_p3_weights.weight_vals_for()` reads it back for the `weig
 `bootstrap_auto_lib.py`). First use: `run_optuna_w3.sh` (tag `w3`: `disc_mc_small_rate_argmax_w3`,
 `car_ttfs_first_spike_w3`, with the old Acrobot table). **Not** honoured by `wann_<task>_noise`,
 `wann_car_odin_*`, `wann_odin_export` — they still use the compiled table, so for a `w3` net pass the weight value
-explicitly / check `--w-max` there.
+explicitly / check `--w-max` there. (The paper noise protocol already does: `run_noise_compare.py --replicas` passes
+`--weight <ODIN level> --w-max <level/occ>`.) Noise for the `w3` nets: `eval_results/run_paper_noise_w3.sh` (cluster;
+WANN only via `run_noise_compare.py --no-sg --wann-eval-csv ... --rep-suffix _w3`, output in
+`<occ dir>/<task>_replicas_w3` — own folder because WANN model_ids lack the run_key and existing parts are skipped);
+`plot_paper_noise_occ_single.py` (figura_04D/05D) draws the orange 0.5–3 line in every task whose `_w3` data exist.
 
 **Logging** (`src/DataGatherer.cpp`): appends per-generation population statistics,
 writes `<prefix>_best.gen`/`.wi` (best individual + which shared-weight index won)

@@ -440,7 +440,7 @@ def chosen_odin_levels(task: str, a) -> dict[int, float]:
     """Nivel ODIN (1..7) de cada red WANN (replica_seed -> nivel), elegido SIN ruido con la semilla reservada 999
     en la celda `none` de <--levels-from>/<tarea>_replicas (el mismo criterio de stats_noise_replicas.network_table).
     Como la ocupación solo reescala la conductancia, el desempeño sin ruido (y por tanto el nivel elegido) no cambia."""
-    d = Path(a.levels_from) / f"{task}_replicas"
+    d = Path(a.levels_from) / f"{task}_replicas{a.rep_suffix}"
     sw, mo = d / "sweep_all.csv", d / "models.csv"
     if not (sw.is_file() and mo.is_file()):
         sys.exit(f"Error [{task}]: --occupancies necesita {sw} y {mo} (réplicas ODIN ya calculadas) para elegir el nivel de "
@@ -514,7 +514,9 @@ class TaskCtx:
     """Todo lo que depende de la tarea: modelos elegidos, rutas de salida, binario, episodios."""
 
     def __init__(self, task: str, a):
-        self.name, self.spec = task, TASKS[task]
+        self.name, self.spec = task, dict(TASKS[task])
+        if a.wann_eval_csv:              # p. ej. las redes `_w3` (pesos 0.5..3): otra revalidación, otra carpeta
+            self.spec["eval_csvs"] = list(a.wann_eval_csv)
         spec = self.spec
         self.wann = pick_wann_best(task, spec, a)
         self.binary = spec["binary"]
@@ -522,7 +524,7 @@ class TaskCtx:
         if not Path(self.binary).is_file() and not a.skip_run:
             sys.exit(f"Error [{task}]: no existe {self.binary}. Compilar primero: ./build.sh")
         self.episodes = a.episodes or read_alg_nreps(Path(self.base_config), self.wann["override"]) or 6
-        suffix = "replicas" if a.replicas else "wann_vs_sgrl"
+        suffix = ("replicas" + a.rep_suffix) if a.replicas else "wann_vs_sgrl"
         self.out_dir = Path(a.out_dir) / f"{task}_{suffix}" if a.out_dir else Path("eval_results") / f"{task}_{suffix}"
         self.graficos = a.graficos_dir or f"graficos/{spec['graficos']}"
         self.prefix = spec["prefix"]
@@ -535,11 +537,11 @@ class TaskCtx:
                 sys.exit("Error: --occupancies solo con --replicas.")
             self.models = occupancy_models(task, spec, a, w)
         elif a.replicas:
-            self.models = select_wann_replicas(task, spec, a, w) + select_sgrl(task, spec, a)
+            self.models = select_wann_replicas(task, spec, a, w) + ([] if a.no_sg else select_sgrl(task, spec, a))
         else:
             self.models = [dict(model_id=f"wann_w{wi}", source="wann", label=f"{wlabel} (w idx {wi})",
                                 path=w["net"], train_return=w["reward"], weight_index=wi)
-                           for wi in a.wann_weights] + select_sgrl(task, spec, a)
+                           for wi in a.wann_weights] + ([] if a.no_sg else select_sgrl(task, spec, a))
         for variant in ([] if a.occupancies else a.sg_variants):
             self.models += select_sgrl_variant(task, spec, a, variant)
         if a.replicas and not a.occupancies:   # réplica = el nº de semilla de entrenamiento de cada red SGRL
@@ -878,6 +880,9 @@ def main():
     g.add_argument("--wann-run-key", default=None, help="restringe la búsqueda del mejor modelo a run_keys que contengan este texto")
     g.add_argument("--wann-weights", default="0,1,2,3,4,5",
                    help="índices de peso compartido a evaluar (WANN es agnóstica al peso: se muestran todos)")
+    g.add_argument("--wann-eval-csv", nargs="+", default=None,
+                   help="CSV(s) de revalidación (eval_p3_weights.py) de donde elegir la red/las réplicas WANN, en vez de los "
+                        "de TASKS[tarea] (solo con una tarea; p. ej. las redes `_w3`, entrenadas con pesos 0.5..3)")
     g.add_argument("--wann-net", default=None, help="red .out manual (solo con una tarea; si no, se elige la mejor)")
     g.add_argument("--wann-override", default=None, help="override JSON de esa red (con --wann-net)")
     g.add_argument("--wann-winner-weight", type=int, default=1, help="índice del peso ganador (con --wann-net)")
@@ -907,6 +912,12 @@ def main():
     g.add_argument("--sg-neu-runs", default="runs_neuronas", help="corridas de la variante por neuronas")
     g.add_argument("--sg-neu-screening", default="screening_neuronas")
     g = ap.add_argument_group("Protocolo de ruido (igual en ambos lados)")
+    g.add_argument("--rep-suffix", default="",
+                   help="--replicas: sufijo de la carpeta (<tarea>_replicas<sufijo>, también en --levels-from). Obligatorio "
+                        "para evaluar OTRAS redes WANN de la misma tarea en una --out-dir ya usada: los model_id no llevan "
+                        "el run_key y las partes existentes se saltan (se reutilizarían en silencio las de otras redes)")
+    g.add_argument("--no-sg", action="store_true",
+                   help="solo WANN: no se eligen ni evalúan redes SGRL (ni variantes ni cuantizadas)")
     g.add_argument("--replicas", action="store_true",
                    help="evaluar las 11 semillas de cada método (ver el docstring); salida en <tarea>_replicas/")
     g.add_argument("--replica-wann-weights", choices=["odin", "original", "best"], default="odin",
@@ -971,8 +982,10 @@ def main():
                         "corrélo en el PC y en el clúster y compará con diff")
     a = ap.parse_args()
 
-    if len(a.task) > 1 and (a.wann_net or a.sg_runs or a.sg_study or a.graficos_dir):
-        sys.exit("Error: --wann-net/--sg-runs/--sg-study/--graficos-dir valen para UNA tarea (--task X).")
+    if len(a.task) > 1 and (a.wann_net or a.wann_eval_csv or a.sg_runs or a.sg_study or a.graficos_dir):
+        sys.exit("Error: --wann-net/--wann-eval-csv/--sg-runs/--sg-study/--graficos-dir valen para UNA tarea (--task X).")
+    if a.no_sg:
+        a.sg_variants, a.sgrl_full_occupancy, a.sg_quant_bits = [], [], 0
     a.wann_weights = [int(x) for x in a.wann_weights.split(",") if x.strip()]
     a.n_chips = a.n_chips or 30
     a.reads_per_chip = a.reads_per_chip or (1 if a.replicas else 3)
