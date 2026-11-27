@@ -784,7 +784,8 @@ def consolidate(ctx: TaskCtx, jobs: list[Job], a) -> int:
     # principal: WANN = el peso ganador; SGRL = la mejor semilla (la primera seleccionada)
     mf["main"] = 0
     wm = mf[mf.source == "wann"]
-    pick = wm[wm.weight_index == ctx.wann["weight_index"]]
+    # sin columna weight_index (réplicas ODIN con --no-sg: solo la ponían las filas SGRL) no hay peso ganador que marcar
+    pick = wm[wm.weight_index == ctx.wann["weight_index"]] if "weight_index" in wm.columns else wm.iloc[0:0]
     if len(wm):
         mf.loc[(pick.index[0] if len(pick) else wm.index[0]), "main"] = 1
     if a.replicas:
